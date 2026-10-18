@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Hono } from 'hono';
 import { ConnectTokenRequest, type ConnectStatus, type ConnectToken } from '@y/schema';
 import type { CoreDeps } from '../../contracts.js';
+import { fallbackUserHandle, handleScreensClean } from '../handles.js';
 import { authenticate } from '../http.js';
 import { hmacHex, iso, mintInstallToken, parseOr, readJson, sha256Hex } from '../util.js';
 
@@ -49,7 +50,10 @@ export function registerConnectRoutes(app: Hono, deps: CoreDeps): void {
     let newHandle: string | null = null;
     if (!agentId) {
       const suffix = HARNESS_SUFFIX[harness] ?? 'agent';
-      const handle = `${pre.userHandle.slice(0, 32 - 1 - suffix.length)}-${suffix}`;
+      // Agent handles go out on push paths (P1): a user handle that does not pass the handle
+      // screen (one created before screening, or under a newer rule) is never the base (#110).
+      const base = handleScreensClean(pre.userHandle) ? pre.userHandle : fallbackUserHandle(caller.userId);
+      const handle = `${base.slice(0, 32 - 1 - suffix.length)}-${suffix}`;
       // handle_registry isn't readable by the API roles; this is a read-only availability check.
       const taken = await deps.db.asService((s) => s.query('select 1 from public.handle_registry where handle = $1', [handle]));
       newHandle = taken.rowCount ? `${handle.slice(0, 27)}-${randomUUID().slice(0, 4)}` : handle;

@@ -22,6 +22,7 @@ import {
 } from '@y/schema';
 import type { Tx } from '@y/db';
 import type { App, Caller, CoreDeps } from '../contracts.js';
+import { cleanProductLabel } from '../builders/labels.js';
 import { commentPrecheck, postHumanComment, routeOrDefer } from './comment.js';
 import { issueOwnerInstruction } from './instruct.js';
 import {
@@ -109,7 +110,13 @@ async function buildThreads(deps: CoreDeps, caller: Caller, loaded: Awaited<Retu
       viewer: { canInstruct: owns && remoteOn, remoteInstructionsOn: remoteOn, needsStepUp: false },
     };
     const product = t.product_id ? products.get(t.product_id) : undefined;
-    if (product) out.product = { id: wire('product', product.id), slug: product.slug, name: product.name };
+    // Name and slug are screened at claim time; a stored label that no longer passes the label
+    // screen (an older row, a newer rule) is left out, as find_builder hides it (#13).
+    if (product && cleanProductLabel(product.name) && cleanProductLabel(product.slug)) {
+      out.product = { id: wire('product', product.id), slug: product.slug, name: product.name };
+    } else if (product) {
+      deps.log('warn', 'thread: product label no longer passes the label screen; left out', { product_id: wire('product', product.id) });
+    }
     if (t.last_body) out.lastPreview = t.last_body.slice(0, PREVIEW_MAX);
     if (t.last_q) out.lastPreviewQuarantined = true;
     return out;

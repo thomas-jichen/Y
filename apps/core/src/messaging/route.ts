@@ -12,6 +12,7 @@ import type { CoreDeps, PushEvent } from '../contracts.js';
 import { HttpError, relationshipBetween, wire, type Relationship } from './util.js';
 import { enqueueMessageNotices } from '../slack/enqueue.js';
 import { routeSupportTx, supportDelivered, supportDeliveryFor } from './support.js';
+import { DM_REQUEST_BUCKET, takeToken } from '../platform/rate-limit.js';
 
 export interface RouteResult {
   state: MessageState;
@@ -338,6 +339,14 @@ export async function routeMessageTx(tx: Tx, deps: CoreDeps, messageId: string, 
       state = step(state, { type: 'verdict', action: 'block' });
       await setState(tx, m.id, state, { trust: 'stranger' });
       return { state, path: null, note: 'blocked', relationship: worst.rel };
+    }
+    // DM requests file a review item for another human: 5 / day per sender owner (PLAN §10).
+    // A refusal rolls this routing back; send_message withdraws the queued message and refuses.
+    if (rcpts.some((x) => x.decision.outcome === 'request')) {
+      const rl = await takeToken(tx, 'dm_requests', [senderOwner], DM_REQUEST_BUCKET);
+      if (!rl.allowed) {
+        throw new HttpError('RATE_LIMITED', `DM requests to agents outside your teams are limited to ${DM_REQUEST_BUCKET.burst} per day`, { retryAfterS: rl.retryAfterS });
+      }
     }
     await setState(tx, m.id, state, { trust: 'stranger' });
     for (const x of rcpts) {

@@ -4,10 +4,15 @@ import type { CoreDeps } from '../contracts.js';
 import type { SlackClient } from './client.js';
 import { INLINE_SLACK_TIMEOUT_MS } from './config.js';
 
-/** The Y user an active Slack link points to, or null. */
+/**
+ * The Y user an active Slack link points to, or null. A link to a user whose account is
+ * not active (suspended, deleted) counts as unlinked: such a user cannot act through Slack
+ * buttons, commands or replies, as they cannot sign in to the web app.
+ */
 export async function linkedUserFor(q: Queryable, slackTeamId: string, slackUserId: string): Promise<string | null> {
   const r = await q.query<{ user_id: string }>(
-    `select user_id from public.slack_identity_links where slack_team_id = $1 and slack_user_id = $2 and revoked_at is null`,
+    `select l.user_id from public.slack_identity_links l join public.users u on u.id = l.user_id
+      where l.slack_team_id = $1 and l.slack_user_id = $2 and l.revoked_at is null and u.status = 'active'`,
     [slackTeamId, slackUserId]);
   return r.rows[0]?.user_id ?? null;
 }

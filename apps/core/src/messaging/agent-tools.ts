@@ -21,6 +21,7 @@ import {
 import type { Tx } from '@y/db';
 import type { Caller, CoreDeps } from '../contracts.js';
 import { routeMessage } from './route.js';
+import { crossOwnerThreadBucket, refundToken, takeToken } from '../platform/rate-limit.js';
 import {
   HttpError,
   agentInfos,
@@ -53,6 +54,8 @@ export async function sendMessage(deps: CoreDeps, caller: Caller, input: ToolInp
 
     let threadId: string;
     let recipientOwnerId: string;
+    let newThread = false;
+    let crossOwnerBucket: ReturnType<typeof crossOwnerThreadBucket> | null = null;
     if (to.startsWith('@')) {
       const res = await tx.query<{ agent_id: string; owner_user_id: string }>(
         `select agent_id, owner_user_id from api.resolve_agent_handle($1)`, [to]);
@@ -74,6 +77,18 @@ export async function sendMessage(deps: CoreDeps, caller: Caller, input: ToolInp
         threadId = ex.id;
         await precheck(tx, ex.state, ex.created_by_agent_id === agentId, threadId);
       } else {
+        // New threads with an agent outside the sender's teams: 10 / day per owner, 3 for accounts
+        // younger than 7 days (PLAN §10). Refused before anything is written.
+        if ((await relationshipBetween(tx, caller.userId, rcpt.owner_user_id)) === 'stranger') {
+          const age = await tx.query<{ created_at: Date | string }>('select created_at from public.users where id = $1', [caller.userId]);
+          const created = age.rows[0]?.created_at;
+          crossOwnerBucket = crossOwnerThreadBucket(created === undefined ? null : new Date(created), deps.now());
+          const rl = await takeToken(tx, 'cross_owner_threads', [caller.userId], crossOwnerBucket.spec);
+          if (!rl.allowed) {
+            throw new HttpError('RATE_LIMITED', `new threads with agents outside your teams are limited to ${crossOwnerBucket.spec.burst} per day`, { retryAfterS: rl.retryAfterS });
+          }
+        }
+        newThread = true;
         threadId = ulid();
         const teamId = await sharedTeamId(tx, caller.userId, rcpt.owner_user_id);
         await tx.query(
@@ -109,7 +124,7 @@ export async function sendMessage(deps: CoreDeps, caller: Caller, input: ToolInp
        values ($1, $2, 'agent', $3, $4, $5, $6, 'queued', $7)`,
       [messageId, threadId, agentId, input.intent, input.urgency, input.body, input.idempotency_key],
     );
-    return { messageId, threadId } as const;
+    return { messageId, threadId, newThread, crossOwnerBucket } as const;
   });
 
   if ('duplicate' in prepared) {
@@ -124,6 +139,18 @@ export async function sendMessage(deps: CoreDeps, caller: Caller, input: ToolInp
   try {
     routed = await routeMessage(deps, prepared.messageId);
   } catch (err) {
+    if (err instanceof HttpError && err.code === 'RATE_LIMITED') {
+      // A daily cap refused it at routing (DM requests): the send did not happen. Withdraw the
+      // queued message, the thread this call opened and its cross-owner token, then refuse.
+      await deps.db.asService(async (tx) => {
+        await tx.query(`delete from public.messages where id = $1 and state = 'queued'`, [prepared.messageId]);
+        if (prepared.newThread) {
+          await tx.query(`delete from public.threads t where t.id = $1 and not exists (select 1 from public.messages m where m.thread_id = t.id)`, [prepared.threadId]);
+        }
+        if (prepared.crossOwnerBucket) await refundToken(tx, 'cross_owner_threads', [caller.userId], prepared.crossOwnerBucket.spec);
+      });
+      throw err;
+    }
     // Leave it queued for the route_message job to retry.
     deps.log('warn', 'inline routing failed; deferred', { err: String(err) });
     await deps.jobs.enqueue('route_message', { messageId: prepared.messageId }, { dedupeKey: `route:${prepared.messageId}` });

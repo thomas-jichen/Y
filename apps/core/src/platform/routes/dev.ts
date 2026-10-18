@@ -9,6 +9,7 @@ import type { Hono } from 'hono';
 import { z } from 'zod';
 import { GithubLogin, Slug } from '@y/schema';
 import type { CoreDeps } from '../../contracts.js';
+import { screenUserHandle } from '../handles.js';
 import { authenticate } from '../http.js';
 import { fail, mintWebToken, parseOr, readJson, sha256Hex } from '../util.js';
 
@@ -42,6 +43,8 @@ async function ensureUser(deps: CoreDeps, login: string): Promise<string | null>
      values ($1, $2, $3::jsonb, $4::jsonb, now())`,
     [id, `${login.toLowerCase()}@dev.y.test`, JSON.stringify({ user_name: login, full_name: login }), JSON.stringify({ provider: 'dev', providers: ['dev'] })],
   );
+  // The trigger derived the handle from the login: screen it like any GitHub-derived handle (#110).
+  await screenUserHandle(deps.db, id, deps.log);
   return id;
 }
 

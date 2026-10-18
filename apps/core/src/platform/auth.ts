@@ -11,6 +11,7 @@ import {
   parseInternalSignatureHeader,
 } from '@y/schema';
 import type { AuthService, Caller, CoreConfig } from '../contracts.js';
+import { screenUserHandle } from './handles.js';
 import {
   INSTALL_TOKEN_PREFIX,
   PULSE_TOKEN_PREFIX,
@@ -337,6 +338,9 @@ export class PlatformAuth implements AuthService {
     await this.db.asService((tx) =>
       tx.query('select y_private.provision_user($1, $2::jsonb, $3::jsonb)', [sub, JSON.stringify(obj(meta)), JSON.stringify(obj(app))]),
     );
+    // The handle came from the GitHub login (handle_new_auth_user or provision_user): screen it (#110).
+    // A failure here never refuses the sign-in; the next process to see the user screens it again.
+    await screenUserHandle(this.db, sub).catch(() => undefined);
     if (this.provisioned.size > 10_000) this.provisioned.clear();
     this.provisioned.add(sub);
   }
