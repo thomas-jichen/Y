@@ -284,12 +284,13 @@ export function p1(i: { pendingId: string; targets: { agentId: string; handle: s
   return { text: 'Send this to your agent?', blocks };
 }
 
-export function pDone(outcome: 'sent' | 'cancelled' | 'expired' | 'handled' | 'remote_off', agent?: string | null, web?: string): SlackMessage {
+export function pDone(outcome: 'sent' | 'cancelled' | 'expired' | 'handled' | 'remote_off' | 'failed', agent?: string | null, web?: string): SlackMessage {
   const text = outcome === 'sent' ? `Sent to ${at(agent)} as an owner instruction.`
     : outcome === 'cancelled' ? 'Cancelled. Nothing was sent.'
       : outcome === 'expired' ? 'Expired: reply again.'
         : outcome === 'handled' ? 'Already handled.'
-          : e6(agent ?? null, web ?? '');
+          : outcome === 'failed' ? 'Not sent: Y hit an error. Reply again.'
+            : e6(agent ?? null, web ?? '');
   return { text: outcome === 'sent' ? 'Sent' : outcome === 'cancelled' ? 'Cancelled' : outcome === 'expired' ? 'Expired' : 'Not sent', blocks: [section(text)] };
 }
 
@@ -370,6 +371,7 @@ export const E1 = 'Not delivered: link your Slack account with /y connect.';
 export const E2 = "Not delivered: you're not part of this conversation.";
 export const E3 = 'Not delivered: messages to Y must be 1–4000 characters.';
 export const E5 = "Held by screening; the other side won't see it unless it's released.";
+export const E7 = 'Not delivered: this Slack thread was for a different Y account. Reply to a newer Y notice.';
 
 const E4_TEXT: Record<string, string> = {
   CONFLICT: 'this thread is archived',
