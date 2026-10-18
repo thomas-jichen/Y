@@ -98,8 +98,11 @@ The forwarded header set also fingerprints the platform:
 ```
 
 plus `fly-request-id`, `fly-region`, `fly-forwarded-proto`. **Manufact Cloud is Fly.io behind a Cloudflare
-Worker.** Worth knowing: `apps/core` was already slated for Fly.io, so both halves can sit in the same region —
-and a Cloudflare Worker in front means Worker request limits and timeouts apply to us, not just Fly's.
+Worker.** Two things follow. A Cloudflare Worker in front means Worker request limits and timeouts apply to us,
+not just the origin's. And since §1 now rules out a Fly.io account of our own (the core API goes on Vercel
+Hobby), `apps/mcp` on Manufact and the core API on Vercel are in different clouds — so the
+`apps/mcp` → `apps/core` hop is public internet, not same-region. Egress is open (§4), so it works; just do not
+assume single-digit-millisecond latency between them.
 
 ### 4. Egress: open
 
@@ -153,6 +156,15 @@ Established from the CLI contract and the server record rather than by burning e
   `mcp-use servers` for managing them on an existing server. The server record carries an `environments` array
   with a `production` entry.
 
+### 7. Free-plan limits (§1's added question)
+
+Partly answered, and the gap is worth stating plainly. **Measured:** one server deploys and runs on the free
+tier; instances are **not** scaled to zero at ten minutes idle (§2 — an instance survived 11 minutes with the
+same pid); redeploys roll over in ~80–100 s. **Not established:** any published request-per-month quota,
+concurrent-instance cap, or project count limit — these are not exposed in the CLI's server record and we did
+not find a figure we would be willing to quote. Treat "no cold start at 11 min" as the one hard datum and get
+the quotas from Manufact directly — which pairs with the organiser question already in §4 of the task doc.
+
 ## Decision
 
 **Default: host `apps/mcp` on Manufact Cloud.** It clears every requirement we actually have — stateless HTTP
@@ -168,9 +180,11 @@ Build notes for whoever owns `apps/mcp`:
 - Keep `MCP_USE_API_KEY` / `MCP_USE_ORG` out of the repo (already in `.gitignore`); CI authenticates with
   `npx mcp-use login --api-key "$MCP_USE_API_KEY" --org "$MCP_USE_ORG"`.
 
-**Fallback:** `apps/mcp` is a plain stateless fetch handler, so it ports to Fly.io next to `apps/core` with no
-architectural change if Manufact's Worker-layer limits or cold starts bite. That is a deployment swap, not a
-rewrite — do not let anything Manufact-specific leak past the serving boundary.
+**Fallback:** `apps/mcp` is a plain stateless fetch handler, so if Manufact's Worker-layer limits bite it ports
+to wherever the core API lives — Vercel Hobby, per §1 — with no architectural change, which would also collapse
+the cross-cloud hop noted in §3. That is a deployment swap, not a rewrite: do not let anything Manufact-specific
+leak past the serving boundary. Note the Manufact track is a deliverable in its own right, so moving off it is a
+last resort, not a convenience.
 
 ## Appendix: cold start after >10 min idle
 

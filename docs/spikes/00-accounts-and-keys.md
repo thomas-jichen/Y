@@ -1,8 +1,11 @@
-# Accounts and keys: status, runbook, and two conflicts to settle
+# Accounts and keys: status and runbook
 
 - **Date:** 2026-10-17 / laurence (driven from a Claude Code agent session)
-- **Read this before section 1 of [README.md](README.md).** Two things in that section conflict with the
-  "$0, free plans only" constraint, and one of them turns out to be free after all.
+- **Tracks [README.md](README.md) §1 as of `ff136db`** (the $0 free-tier rewrite). It answers §1's own open
+  question — whether the OAuth 2.1 server exists on the Free plan — and records what each remaining signup needs.
+- **Correction:** an earlier version of this file argued that §1's "Supabase Pro" and the Anthropic API key
+  conflicted with the $0 constraint. That was written against a stale local copy of §1 and is withdrawn; the
+  current §1 already specifies Free everywhere and marks the Anthropic key optional.
 
 ## What I could and could not do
 
@@ -11,90 +14,96 @@ all need an interactive browser signup with email verification and OAuth consent
 have no access to the password manager, so **no key below is stored anywhere by me** — the runbook tells you
 where each value comes from and what name to file it under.
 
-**Did do:** verified the one account that already exists, established which pieces are genuinely free (this is
-where the plan conflict got resolved), deployed to Manufact to prove the account works end to end, and wrote the
-exact settings for each remaining signup so each one is a few minutes of clicking rather than a research task.
+**Did do:** verified the one account that already exists by deploying to it end to end, answered §1's open
+question about the Free plan's OAuth server, worked out the schema consequence of the free embeddings path, and
+wrote the exact settings for each remaining signup so each one is a few minutes of clicking rather than a
+research task.
 
 ## Status
 
-| # | Account | Plan needed | Status |
-|---|---|---|---|
-| 1 | Anthropic API key | pay-as-you-go | **not created** — not free; see "Cost reality" below |
-| 2 | Vercel AI Gateway key | Hobby | **not created** — needed only if we use OpenAI embeddings; see conflict 2 |
-| 3 | Supabase project | **Free is enough** | **not created** — runbook below |
-| 4 | GitHub OAuth app | free | **not created** — runbook below |
-| 5 | Manufact | free | **DONE** (2026-10-17) — verified, see below |
-| 6 | Fly.io | Hobby/free allowance | **not created** |
-| 7 | Slack internal app | free | **not created** — not needed until M6 |
+The account list below follows [README.md](README.md) §1 as it stands on `main` after `ff136db`
+("Update teammate tasks for $0 hosting on free tiers"): everything free, **no Fly.io, no AWS, no Vercel AI
+Gateway, no Supabase Pro**.
 
-### 5. Manufact — verified working
+| # | Account | Plan | Status |
+|---|---|---|---|
+| 1 | **Supabase** | Free | **not created** — runbook below |
+| 2 | **GitHub OAuth app** | free | **not created** — runbook below |
+| 3 | **Vercel** | Hobby | **not created** — hosts the core API and the web app |
+| 4 | **Manufact** | free | **DONE** (2026-10-17) — verified, see below |
+| 5 | **Slack internal app** | free | **not created** — not needed until M6 |
+| — | Anthropic API key | — | **not needed.** §1 marks it optional: summaries run on each user's own Claude subscription; a key only adds server-side summaries and the AI safety judge |
+
+### 4. Manufact — verified working
 
 `npx mcp-use whoami` → `lapark714@gmail.com — Primary`, org `Primary` (`org-6c1711a6-cv6rx`).
 `MCP_USE_API_KEY` / `MCP_USE_ORG` are in the local gitignored `.env`; `.env.example` documents them.
 Proven beyond login: a hello MCP server was built, deployed and called over the public URL — see
 [S3](S3-manufact-cloud.md). Keys are prefixed `mcp_`; rotate by re-running `npx mcp-use login`.
 
-## Conflict 1: Supabase "Pro plan" vs "$0" — resolved, Free is enough
+## Answering §1's open question: is the OAuth 2.1 server on the Free plan?
 
-`README.md` section 1 says **Supabase Pro**; your instruction says **Free, no paid plans**. These are reconcilable,
-because the feature the Pro line was presumably protecting is not actually gated:
+§1 says "Enable the **OAuth 2.1 server** and dynamic client registration, **if the Free plan offers them**. Note
+it if it doesn't; S4 checks this", and S4 step 0 asks the same thing with a Better Auth fallback behind it.
 
-- **The OAuth 2.1 authorization server is available on every plan, including Free, at no separate charge**, and
-  its **Dynamic Client Registration** endpoint (`POST /oauth/clients/register`, RFC 7591) is a **per-project
-  toggle with no plan gate**. So [S4](S4-supabase-oauth.md) and the whole MCP-OAuth design can proceed on Free.
-- Still in **public beta** (since 2025-11-26, no GA announcement as of today). Treat it as beta for planning.
-- Free gives **50,000 MAU**, far beyond a pilot.
+**Answer: yes, and no fallback is needed.** The Supabase OAuth 2.1 Server is available on **every plan including
+Free**, at no separate charge, and its **Dynamic Client Registration** endpoint (`POST /oauth/clients/register`,
+RFC 7591) is a **per-project toggle with no plan gate**. So the design proceeds as written and we do not need to
+fall back to Better Auth inside our own server.
 
-**The real Free-plan risk is not features, it is auto-pause.** A Free project with too little database activity
-over a week is **automatically paused — and that takes the authorization server offline with it.** For a product
-whose entire premise is agents connecting at unpredictable times, a paused auth server means every agent in the
-pilot fails to authenticate at once, and it will look like our bug. Mitigate with a cheap keep-alive (a scheduled
-query every few days) and know that this is the thing that will eventually force the upgrade.
+Two caveats to carry:
 
-**Recommendation:** build on Free now, and treat "Supabase Pro" as a launch-time line item justified by
-auto-pause and payload limits, not by the OAuth feature.
+- It is still in **public beta** (since 2025-11-26; no GA announcement as of 2026-10-17).
+- Free includes **50,000 MAU**, far beyond a pilot — but **the real Free-plan risk is auto-pause.** A Free project
+  with too little database activity over a week is paused automatically, and that takes the authorization server
+  down with it: every agent in the pilot fails to authenticate at once, looking exactly like our bug. Add a
+  keep-alive (a scheduled query every few days) before the pilot. This, not any missing feature, is what would
+  eventually justify paying for Supabase.
 
-## Conflict 2: embeddings — two incompatible plans, and they change the schema
+## The embeddings decision is now a schema decision
 
-`README.md` section 1 specifies a **Vercel AI Gateway key** for `openai/text-embedding-3-small`. Your message
-instead asks whether **Supabase's free `gte-small`** works. Both work, but they are not interchangeable:
+§1 rules out the Vercel AI Gateway, and S4 step 4 asks for a check that `new Supabase.ai.Session('gte-small')`
+"returns 384 numbers". So the direction is already chosen; what matters is the consequence.
 
-| | `openai/text-embedding-3-small` via Vercel AI Gateway | `gte-small` in Supabase Edge Functions |
+| | `gte-small` (chosen) | `openai/text-embedding-3-small` (ruled out) |
 |---|---|---|
-| Cost | paid per token (Gateway key, Hobby plan) | **free, no AI line item on any plan** |
-| Dimensions | **1536** | **384** |
-| Runs | Vercel's hosted gateway | locally in the Edge Function, no external API |
-| Limits | API rate limits | **512-token input truncation, English only**, 2 s CPU / 256 MB per request |
+| Cost | **free**, no AI line item on any plan | paid per token via an AI Gateway key |
+| Dimensions | **384** | 1536 |
+| Runs | locally inside the Edge Function, no external API | Vercel's hosted gateway |
+| Limits | **512-token input truncation, English only**, 2 s CPU / 256 MB per request | API rate limits |
 
-**This is a schema decision, not a config flag:** the `vector(N)` column dimension differs, so switching later
-means a migration and a full re-embed of every highlight. `gte-small` also silently truncates at 512 tokens, and
-if you ask for any other model name it **falls back to an external Ollama host** you have to supply via
-`AI_INFERENCE_API_HOST` — a quiet failure mode worth guarding.
+Three things for whoever writes the migrations:
 
-**Recommendation for $0:** `gte-small`, `vector(384)`, and chunk highlight bodies to stay under 512 tokens. Tell
-the core owner before the migrations are written — this needs to be settled *before* `apps/core` lands its schema.
+- **The column is `vector(384)`, not `vector(1536)`.** Changing this later means a migration *and* a full
+  re-embed of every highlight, so it needs to be right the first time.
+- **Chunk highlight bodies under 512 tokens.** `gte-small` silently truncates past that — no error, just a
+  worse embedding, which is the kind of bug that never gets found.
+- **Guard the model name.** `gte-small` is the only built-in model; any other name falls back to an external
+  Ollama host supplied via `AI_INFERENCE_API_HOST`, so a typo becomes a confusing network failure rather than
+  a validation error.
 
-## Cost reality: $0 does not reach all the way
+Live confirmation of the 384-number result and its latency needs the Supabase project, so it stays on S4 step 4.
 
-Two items in section 1 are not free at all, and the plan depends on them:
+## Does $0 actually reach all the way? Yes, on the current plan
 
-- **Anthropic API key** — session summaries (the doc names Haiku/Sonnet 5.5) and the safety judge. There is no
-  free tier. If `$0` is a hard constraint for M0–M1, these two features cannot run on a real key: either stub the
-  summariser and judge behind an interface and seed their outputs by hand, or accept a small spend. When you do
-  create the key, **set a monthly spend cap in the console on day one.**
-- **Fly.io** — has a free allowance but requires a card on file.
+I previously flagged that "$0" and "session summaries plus a safety judge" could not both be true. **That was
+wrong** — it was written against a stale copy of §1. The current §1 marks the Anthropic key *optional and not
+needed*: "Session summaries run on each user's own Claude subscription by default; a key only enables
+server-side summaries and the AI safety judge." So the default path costs nothing, and the key is a later
+upgrade for server-side summarisation, not a prerequisite.
 
-Flagging rather than deciding: "spend $0" and "generate session summaries with Haiku and run a safety judge" are
-not simultaneously satisfiable, and it is better to know that now than at M3.
+The one genuine spend risk left is not an account at all — it is **Supabase Free auto-pause** taking the auth
+server offline mid-pilot (above). Budget for the upgrade when the pilot starts, not before.
 
 ## Runbook for the remaining accounts
 
 Create each, then file the named values in the password manager. **Nothing goes in the repo** — `.env` is
 gitignored and `.env.example` carries names only.
 
-### 3 + 4. Supabase project with GitHub login (do these together)
+### 1 + 2. Supabase project with GitHub login (do these together)
 
-1. **Supabase** → new project on **Free**. Pick the region closest to Fly's `apps/core` region. Record:
+1. **Supabase** → new project on **Free**. Pick the region closest to where the core API will run on
+   Vercel. Record:
    - `SUPABASE_URL` → `https://<ref>.supabase.co`
    - `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (service role is a secret — server only, never in `apps/web`)
    - JWKS URL → `https://<ref>.supabase.co/auth/v1/.well-known/jwks.json`
@@ -107,20 +116,17 @@ gitignored and `.env.example` carries names only.
 3. Back in Supabase → Authentication → Providers → **GitHub** → paste Client ID/Secret → enable.
 4. Authentication → **OAuth Server** (beta) → enable, and turn on **Dynamic Client Registration**.
    Record the issuer URL and the registration endpoint.
-5. Add a keep-alive against auto-pause before you forget (see conflict 1).
+5. Add a keep-alive against auto-pause before you forget (see the OAuth section above).
 
-### 2. Vercel
+### 3. Vercel
 
-Hobby plan. Only create the **AI Gateway** key if conflict 2 resolves toward OpenAI embeddings. If we go
-`gte-small`, skip it — and note `README.md` does not list Vercel as a hosting target at all (`apps/core` → Fly,
-`apps/mcp` → Manufact), so Vercel Hobby is only relevant for `apps/web`, which the UI teammate owns.
+**Hobby plan.** Per §1 this hosts **the core API and the web app** — so it is not optional, and it is not just
+the UI teammate's concern. Create the account now and link the project later. Do **not** create an AI Gateway
+key: §1 rules it out, and the embeddings decision above no longer needs it.
 
-### 6. Fly.io
+`apps/mcp` stays on Manufact ([S3](S3-manufact-cloud.md)); there is no Fly.io account to create.
 
-Hobby. Card required. Create the app for `apps/core` in the same region as Supabase. Record the app name and
-deploy token (`fly tokens create deploy`), not your personal credentials.
-
-### 7. Slack internal app (defer to M6)
+### 5. Slack internal app (defer to M6)
 
 Workspace-internal app. Scopes: `chat:write`, `im:write`, `commands` — nothing more.
 Record the signing secret and bot token. Not needed before M6; creating it early just means a secret sitting
@@ -128,22 +134,23 @@ around unused.
 
 ## Keys index for the password manager
 
-Use these exact names so `.env.example` and the vault agree:
+Use these exact names so `.env.example` and the vault agree.
 
 ```
 MCP_USE_API_KEY            done
 MCP_USE_ORG                done
-ANTHROPIC_API_KEY          pending — set a spend cap
-AI_GATEWAY_API_KEY         pending — only if we choose OpenAI embeddings
 SUPABASE_URL               pending
 SUPABASE_ANON_KEY          pending
-SUPABASE_SERVICE_ROLE_KEY  pending — server only
+SUPABASE_SERVICE_ROLE_KEY  pending — server only, never in apps/web
 SUPABASE_JWKS_URL          pending
 DATABASE_URL               pending — pooled, :6543
 DIRECT_URL                 pending — direct, :5432
 GITHUB_OAUTH_CLIENT_ID     pending
 GITHUB_OAUTH_CLIENT_SECRET pending
-FLY_API_TOKEN              pending
 SLACK_SIGNING_SECRET       M6
 SLACK_BOT_TOKEN            M6
 ```
+
+Deliberately absent, because §1 rules them out or marks them optional:
+`ANTHROPIC_API_KEY` (optional — user's own Claude subscription by default), `AI_GATEWAY_API_KEY` (no Vercel AI
+Gateway), `FLY_API_TOKEN` (no Fly.io).

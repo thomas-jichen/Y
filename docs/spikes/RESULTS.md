@@ -32,13 +32,22 @@ machine at `/usr/local/bin/claude`) · Codex CLI **0.163.0** (model `gpt-6-luna`
    hooks do nothing until trusted, and a project skill written into a `.claude/skills` dir created mid-session is
    invisible until restart. (S6, S13)
 
-## Two things to settle with the core owner before schema work
+## Two things now settled (and one correction)
 
-- **Embeddings dimension.** `README.md` §1 specifies Vercel AI Gateway + `openai/text-embedding-3-small`
-  (**1536** dims, paid); the $0 route is Supabase `gte-small` (**384** dims, free, 512-token truncation). This is
-  a `vector(N)` column decision — changing it later means a migration plus a full re-embed.
-- **Supabase plan.** Free is enough for the OAuth 2.1 server and DCR, so §1's "Pro" is not required for M0–M1.
-  The reason to upgrade later is Free-project **auto-pause**, which takes the auth server offline with it.
+Both of these were written up first as conflicts with `README.md` §1. They are not conflicts — §1 had already
+been rewritten for $0 hosting in `ff136db`, and an earlier draft of these docs was written against a stale local
+copy of it. Restated as answers:
+
+- **The OAuth 2.1 server *is* on the Supabase Free plan**, DCR included, with no plan gate — which answers §1's
+  "if the Free plan offers them" and S4 step 0. **Do not build the Better Auth fallback.** The operational risk
+  to plan for is Free-project **auto-pause**, which takes the authorization server down with it.
+- **Embeddings are `gte-small`, so the column is `vector(384)`** — not 1536. §1 rules out the Vercel AI Gateway,
+  so this is already decided; what matters is that changing it later costs a migration plus a full re-embed, and
+  that `gte-small` silently truncates past 512 tokens. Chunk accordingly.
+
+**Correction:** an earlier draft also claimed "$0" and "session summaries plus a safety judge" could not both be
+true. Wrong — §1 marks the Anthropic key optional, with summaries running on each user's own Claude
+subscription. There is no required paid account.
 
 ## Still open
 
