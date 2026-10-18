@@ -77,6 +77,18 @@ export function humanMessage(ctx: HookCtx, brief: CachedBrief | undefined): stri
       if (!url) continue;
       lines.push(`Y: ${NOTICE_TEXT[n.kind](n.count)}: ${url}`);
     }
+    // Unread DMs and owner instructions, for the human too: rendered locally from the same
+    // validated pointer params the agent gets (counts and screened handles only, I3).
+    if (brief.tokenState === 'ok' && pushPathsAllowed(brief)) {
+      for (const p of brief.pointers) {
+        if (p.template_id === 'P1' && p.params.count > 0) {
+          const from = p.params.handle ? ` from ${p.params.handle}` : '';
+          lines.push(`Y: ${p.params.count} unread DM(s)${from}. Claude will read them when you send your first message.`);
+        } else if (p.template_id === 'P4' && p.params.count > 0) {
+          lines.push(`Y: ${p.params.count} of your instruction(s) are waiting for Claude.`);
+        }
+      }
+    }
     if (brief.tokenState !== 'ok' && lines.length === 0) {
       const kind = brief.tokenState === 'expired' ? 'token_expired' : brief.tokenState === 'unknown_install' ? 'unknown_install' : 'token_revoked';
       lines.push(`Y: ${NOTICE_TEXT[kind]()}.`);

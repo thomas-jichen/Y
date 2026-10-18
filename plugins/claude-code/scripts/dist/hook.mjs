@@ -21093,6 +21093,14 @@ var Thread = external_exports.object({
   product: external_exports.object({ id: ProductId.optional(), slug: Slug, name: singleLine(64, 1) }).optional(),
   claims: external_exports.array(WorkClaim).max(50),
   lastMessageAt: IsoTimestamp,
+  /**
+   * First 280 characters of the latest delivered or released message the
+   * viewer may read. UNTRUSTED: plain text only. Never taken from a
+   * quarantined or request_pending message.
+   */
+  lastPreview: external_exports.string().max(280).optional(),
+  /** A quarantined message is newer than the preview (show a warning, not its text). */
+  lastPreviewQuarantined: external_exports.boolean().optional(),
   unread: Count,
   viewer: external_exports.object({
     canInstruct: external_exports.boolean(),
@@ -22149,7 +22157,22 @@ var StatusOutput = external_exports.object({
   kill_switches: McpKillSwitches,
   min_plugin_version: Semver.nullable(),
   sign_in_url: external_exports.url().nullable(),
-  server_time: IsoTimestamp
+  server_time: IsoTimestamp,
+  /**
+   * Active agents of the caller's teammates (and the caller's other agents),
+   * excluding the caller: handles to `send_message` to. Identity metadata
+   * only, no content. Source: `team_members` + `agents` + `agent_presence`.
+   */
+  teammates: external_exports.array(
+    external_exports.object({
+      handle: Handle,
+      owner_handle: Handle,
+      harness: Harness,
+      presence: Presence.optional()
+    })
+  ).max(50).optional(),
+  /** The caller's team room thread ids (`group` threads it can `send_message` to by thread id). */
+  team_rooms: external_exports.array(external_exports.object({ thread_id: ThreadId, team: singleLine(120) })).max(20).optional()
 });
 var SearchScope = external_exports.enum(["team", "public", "all"]);
 var SearchNetworkInput = external_exports.object({
@@ -22632,6 +22655,11 @@ var InstructResponse = external_exports.object({
   id: OwnerInstructionId,
   state: external_exports.enum(["queued", "delivered", "awaiting_confirm"])
 });
+var NewThreadRequest = external_exports.object({
+  to: Handle,
+  body: multiLine(MESSAGE_BODY_MAX, 1),
+  subject: singleLine(120).optional()
+});
 var ConnectTokenRequest = external_exports.object({
   harness: Harness.optional(),
   machineLabel: singleLine(64).optional()
@@ -22742,6 +22770,43 @@ var SafetyScorecard = external_exports.object({
       lastRunAt: IsoTimestamp.optional()
     })
   ).max(11)
+});
+var UsageRange = external_exports.enum(["7d", "30d", "90d"]);
+var UsageQuery = external_exports.object({
+  agent: external_exports.string().regex(/^@?[a-z0-9-]{3,32}$/, { error: "agent must be a handle" }),
+  range: UsageRange.default("30d")
+});
+var UsageDay = external_exports.object({
+  day: IsoTimestamp,
+  tokensIn: Count,
+  tokensOut: Count,
+  cacheRead: Count,
+  sessions: Count,
+  costUsd: Usd,
+  activeMs: Count,
+  green: Count,
+  tokensToGreen: Count
+});
+var UsageTotals = external_exports.object({
+  tokens: Count,
+  sessions: Count,
+  activeMs: Count,
+  costUsd: Usd,
+  greenRate: Probability
+});
+var UsageSeries = external_exports.object({
+  agent: AgentRef,
+  model: ModelId.optional(),
+  range: UsageRange,
+  days: external_exports.array(UsageDay).max(90),
+  heat: external_exports.array(external_exports.object({ day: IsoTimestamp, sessions: Count })).max(90),
+  hours: external_exports.array(Probability).length(24),
+  tools: external_exports.record(external_exports.string().max(140), Count),
+  // StatKey (<=128) plus the `MCP: ` prefix
+  models: external_exports.object({ opus: Probability, sonnet: Probability, haiku: Probability }),
+  totals: UsageTotals.extend({ cacheShare: Probability }),
+  prior: UsageTotals,
+  streak: Count
 });
 
 // ../../packages/capture/src/stats.ts
@@ -24499,6 +24564,16 @@ function humanMessage(ctx, brief) {
       const url2 = safeNoticeUrl(n.url, ctx);
       if (!url2) continue;
       lines.push(`Y: ${NOTICE_TEXT[n.kind](n.count)}: ${url2}`);
+    }
+    if (brief.tokenState === "ok" && pushPathsAllowed(brief)) {
+      for (const p of brief.pointers) {
+        if (p.template_id === "P1" && p.params.count > 0) {
+          const from = p.params.handle ? ` from ${p.params.handle}` : "";
+          lines.push(`Y: ${p.params.count} unread DM(s)${from}. Claude will read them when you send your first message.`);
+        } else if (p.template_id === "P4" && p.params.count > 0) {
+          lines.push(`Y: ${p.params.count} of your instruction(s) are waiting for Claude.`);
+        }
+      }
     }
     if (brief.tokenState !== "ok" && lines.length === 0) {
       const kind = brief.tokenState === "expired" ? "token_expired" : brief.tokenState === "unknown_install" ? "unknown_install" : "token_revoked";
