@@ -1,0 +1,187 @@
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { api } from './client'
+import type {
+  Activity,
+  AgentProfile,
+  Comment,
+  ConnectToken,
+  Me,
+  Message,
+  Post,
+  ReactionKind,
+  ReviewDetail,
+  ReviewItem,
+  ScrollSession,
+  StoryGroup,
+  Team,
+  Thread,
+  Trending,
+  UsageRange,
+  UsageSeries,
+} from './types'
+
+export const useMe = () => useQuery({ queryKey: ['me'], queryFn: () => api.get<Me>('/me') })
+export const useStories = () => useQuery({ queryKey: ['stories'], queryFn: () => api.get<StoryGroup[]>('/stories') })
+export const usePosts = (tab: string) =>
+  useQuery({ queryKey: ['posts', tab], queryFn: () => api.get<{ items: Post[] }>(`/posts?tab=${tab}`), placeholderData: keepPreviousData })
+export const usePost = (id: string) => useQuery({ queryKey: ['post', id], queryFn: () => api.get<{ post: Post; comments: Comment[] }>(`/posts/${id}`) })
+export const useActivity = (id: string) => useQuery({ queryKey: ['activity', id], queryFn: () => api.get<Activity>(`/activities/${id}`) })
+export const useAgent = (handle: string) => useQuery({ queryKey: ['agent', handle], queryFn: () => api.get<AgentProfile>(`/agents/${handle}`) })
+export const useAgentPosts = (handle: string) =>
+  useQuery({ queryKey: ['agent-posts', handle], queryFn: () => api.get<{ items: Post[] }>(`/agents/${handle}/posts`) })
+export const useAgentActivities = (handle: string) =>
+  useQuery({ queryKey: ['agent-activities', handle], queryFn: () => api.get<{ items: Activity[] }>(`/agents/${handle}/activities`) })
+export const useAgentScrolls = (handle: string) =>
+  useQuery({ queryKey: ['agent-scrolls', handle], queryFn: () => api.get<{ items: ScrollSession[] }>(`/agents/${handle}/scrolls`) })
+export const useScroll = (id: string) => useQuery({ queryKey: ['scroll', id], queryFn: () => api.get<ScrollSession>(`/scrolls/${id}`) })
+export const useActiveScroll = () => useQuery({ queryKey: ['scroll-active'], queryFn: () => api.get<ScrollSession | null>('/scrolls/active') })
+export const useThreads = () => useQuery({ queryKey: ['threads'], queryFn: () => api.get<{ items: Thread[] }>('/threads') })
+export const useThread = (id: string) =>
+  useQuery({ queryKey: ['thread', id], queryFn: () => api.get<{ thread: Thread; messages: Message[] }>(`/threads/${id}`) })
+export const useUsage = (handle: string | undefined, range: UsageRange) =>
+  useQuery({
+    queryKey: ['usage', handle, range],
+    queryFn: () => api.get<UsageSeries>(`/usage?agent=${handle}&range=${range}`),
+    enabled: !!handle,
+    placeholderData: keepPreviousData,
+  })
+export const useTeam = () => useQuery({ queryKey: ['team'], queryFn: () => api.get<Team>('/team') })
+export const useTrending = () => useQuery({ queryKey: ['trending'], queryFn: () => api.get<Trending[]>('/trending') })
+export const useReviewItems = () => useQuery({ queryKey: ['review'], queryFn: () => api.get<{ items: ReviewItem[] }>('/review') })
+export const useReviewDetail = (id: string) => useQuery({ queryKey: ['review', id], queryFn: () => api.get<ReviewDetail>(`/review/${id}`) })
+export const useConnectStatus = (enabled: boolean) =>
+  useQuery({
+    queryKey: ['connect-status'],
+    queryFn: () => api.get<{ firstHookReceivedAt: string | null }>('/connect/status'),
+    enabled,
+    refetchInterval: enabled ? 4000 : false,
+  })
+
+// ---------- mutations ----------
+export function useReact(postId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (reaction: ReactionKind) => api.post(`/posts/${postId}/react`, { reaction }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['posts'] })
+      qc.invalidateQueries({ queryKey: ['post', postId] })
+    },
+  })
+}
+
+export function useCommentOnPost(postId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: string) => api.post<Comment>(`/posts/${postId}/comment`, { body }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['post', postId] })
+      qc.invalidateQueries({ queryKey: ['posts'] })
+    },
+  })
+}
+
+export function useAskOnPost(postId: string) {
+  return useMutation({ mutationFn: (body: string) => api.post(`/posts/${postId}/ask`, { body }) })
+}
+
+export function useStorySeen() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.post(`/stories/${id}/seen`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['stories'] }),
+  })
+}
+
+export function useStoryKudos() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.post(`/stories/${id}/kudos`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['stories'] }),
+  })
+}
+
+export function useActivityKudos(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post(`/activities/${id}/kudos`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['activity', id] }),
+  })
+}
+
+export function useFollow(handle: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post(`/agents/${handle}/follow`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['agent', handle] })
+      qc.invalidateQueries({ queryKey: ['posts'] })
+    },
+  })
+}
+
+export function useSendForScroll() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (handle: string) => api.post<{ scrollId: string }>(`/agents/${handle}/scroll`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['scroll-active'] }),
+  })
+}
+
+export function useThreadComment(threadId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: string) => api.post<Message>(`/threads/${threadId}/comment`, { body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['thread', threadId] }),
+  })
+}
+
+export function useInstruct(threadId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: string) => api.post<{ id: string }>(`/threads/${threadId}/instruct`, { body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['thread', threadId] }),
+  })
+}
+
+export function useThreadAction(threadId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (action: 'pause' | 'resolve') => api.post<Thread>(`/threads/${threadId}/${action}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['thread', threadId] })
+      qc.invalidateQueries({ queryKey: ['threads'] })
+    },
+  })
+}
+
+export function useStepUp() {
+  return useMutation({ mutationFn: () => api.post('/auth/step-up') })
+}
+
+export function useRemoteInstructions() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (on: boolean) => api.post<{ remoteInstructionsOn: boolean }>('/settings/remote-instructions', { on }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['me'] })
+      qc.invalidateQueries({ queryKey: ['thread'] })
+      qc.invalidateQueries({ queryKey: ['threads'] })
+    },
+  })
+}
+
+export function useDecision(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { decision: 'approve' | 'reject' | 'release' | 'hold' | 'publish'; patchHash?: string; idempotencyKey: string }) =>
+      api.post<ReviewItem>(`/review/${id}/decision`, { decision: v.decision, patchHash: v.patchHash }, v.idempotencyKey),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['review'] })
+      qc.invalidateQueries({ queryKey: ['me'] })
+    },
+  })
+}
+
+export function useMintToken() {
+  return useMutation({ mutationFn: () => api.post<ConnectToken>('/connect/token') })
+}
