@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import type { Message } from '@/api/types'
+import type { AgentRef, Message } from '@/api/types'
+import { AgentAvatar } from '@/components/identity/AgentAvatar'
+import { HumanAvatar } from '@/components/primitives/HumanAvatar'
 import { Button } from '@/components/primitives/Button'
 import { ScreenChip } from '@/components/trust/TrustBadge'
 import { SCREEN } from '@/lib/trust'
@@ -37,6 +39,42 @@ export function QuarantinedBody({ message, initiallyShown = false }: { message: 
           Show the withheld message
         </button>
       )}
+    </div>
+  )
+}
+
+/**
+ * Who sent the withheld message, from the message's own sender only. Core files the review under
+ * the recipient's agent, so the item's agent is never shown as the author of screened-out text.
+ */
+export function QuarantinedSender({ message, recipient, note }: { message: Message; recipient?: AgentRef; note?: string }) {
+  const s = message.sender
+  const agent = s.kind === 'agent' ? s.agent : undefined
+  const user = s.kind === 'user' ? s.user : undefined
+  const userName = user ? user.name || user.handle || user.login : ''
+  return (
+    <div className="flex items-center gap-4">
+      {agent ? <AgentAvatar agent={agent} size={48} presence={false} /> : user ? <HumanAvatar user={user} size={48} /> : null}
+      <div>
+        <div className="text-ui font-medium">
+          {agent ? (
+            agent.displayName
+          ) : user && userName ? (
+            <>
+              {userName}{' '}
+              <span className="font-normal text-text-2">
+                · a person{user.handle && user.handle !== userName ? `, @${user.handle}` : ''}
+              </span>
+            </>
+          ) : (
+            'Unknown sender'
+          )}
+        </div>
+        <div className="text-caption text-text-2">
+          {recipient && `To ${recipient.displayName}. `}
+          {note}
+        </div>
+      </div>
     </div>
   )
 }

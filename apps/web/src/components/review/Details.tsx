@@ -20,12 +20,27 @@ import { DraftFields, initialFields, publishEdits } from './DraftFields'
 import { Digest } from './Digest'
 import { Evidence } from './Evidence'
 import { REVIEW_KIND } from './kinds'
-import { QuarantinedAction, QuarantinedBody } from './QuarantinedMessage'
+import { QuarantinedAction, QuarantinedBody, QuarantinedSender } from './QuarantinedMessage'
 import { ReleaseAction, RequestIntro } from './RequestIntro'
 import { Receipt } from './Receipt'
 
 /** One decision per screen: the case on the page, the actions on a glass bar that floats over it. */
-function Shell({ item, title, subtitle, children, actions }: { item: ReviewItem; title: ReactNode; subtitle: ReactNode; children: ReactNode; actions: ReactNode }) {
+function Shell({
+  item,
+  title,
+  subtitle,
+  children,
+  actions,
+  byline,
+}: {
+  item: ReviewItem
+  title: ReactNode
+  subtitle: ReactNode
+  children: ReactNode
+  actions: ReactNode
+  /** Replaces the default "from <item.agent>" (a withheld message's item.agent is its recipient). */
+  byline?: string
+}) {
   const K = REVIEW_KIND[item.kind]
   return (
     <div className="relative flex h-full min-h-0 flex-col">
@@ -36,7 +51,7 @@ function Shell({ item, title, subtitle, children, actions }: { item: ReviewItem;
           </Link>
           <div className="text-caption text-text-2">
             {K.label}
-            {item.agent && ` · from ${item.agent.displayName}`} · {fmtAgo(item.createdAt)}
+            {byline !== undefined ? byline && ` · ${byline}` : item.agent && ` · from ${item.agent.displayName}`} · {fmtAgo(item.createdAt)}
           </div>
           <h1 className="display mt-2 text-title">{title}</h1>
           <p className="mt-2 text-body text-text-2">{subtitle}</p>
@@ -243,10 +258,13 @@ export function RequestView({ r }: { r: RequestReview }) {
 // ---------- quarantined message ----------
 export function QuarantinedView({ q }: { q: QuarantinedReview }) {
   const decide = useDecision(q.item.id)
-  const from = q.message.sender.agent ?? q.item.agent
+  // Core files the review under the recipient's agent: item.agent is never the sender, so the
+  // caption drops its usual "from <item.agent>" and the recipient is named as "To" below.
+  const to = q.item.agent
   return (
     <Shell
       item={q.item}
+      byline=""
       title="A message to your agent was withheld"
       subtitle="Screening held it before any agent could read it. Release delivers it as it is; reject keeps it from your agent."
       actions={
@@ -262,16 +280,11 @@ export function QuarantinedView({ q }: { q: QuarantinedReview }) {
       }
     >
       <div className="max-w-[640px] space-y-8">
-        <div className="flex items-center gap-4">
-          {from && <AgentAvatar agent={from} size={48} presence={false} />}
-          <div>
-            <div className="text-ui font-medium">{from?.displayName ?? 'Unknown sender'}</div>
-            <div className="text-caption text-text-2">
-              In {q.thread.subject}, sent {fmtAgo(q.message.createdAt)}
-              {q.item.expiresAt && `, expires in ${fmtCountdown(q.item.expiresAt)}`}
-            </div>
-          </div>
-        </div>
+        <QuarantinedSender
+          message={q.message}
+          recipient={to}
+          note={`In ${q.thread.subject}, sent ${fmtAgo(q.message.createdAt)}${q.item.expiresAt ? `, expires in ${fmtCountdown(q.item.expiresAt)}` : ''}`}
+        />
         <QuarantinedBody message={q.message} />
       </div>
     </Shell>

@@ -364,6 +364,8 @@ export interface DraftReview {
    * fields post as they are and show without a working switch. Missing: title, summary, highlight.
    */
   toggleable?: string[]
+  /** Core's id of the highlight a highlight draft (h_) publishes. Missing on an activity draft. */
+  highlightId?: string
 }
 
 export interface StaticFinding {

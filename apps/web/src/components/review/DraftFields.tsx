@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { DraftReview, Highlight } from '@/api/types'
 import { Switch } from '@/components/primitives/Switch'
 import { SafeText } from '@/lib/safeText'
@@ -39,12 +40,75 @@ export function publishEdits(fields: Record<string, boolean>): { fieldToggles: R
   return Object.values(fields).some((v) => v === false) ? { fieldToggles: { ...fields } } : undefined
 }
 
+/** The highlight this draft publishes: the one core named by id, never just the activity's first. */
+export function draftedHighlight(d: Pick<DraftReview, 'activity' | 'highlightId'>): Highlight | undefined {
+  const all = d.activity.highlights
+  return d.highlightId ? all.find((x) => x.id === d.highlightId) : all[0]
+}
+
+/** The highlight's body posts whole with it (core rewrites only the title and summary). */
+function HighlightBody({ h }: { h: Highlight }) {
+  const b = h.body ?? ({} as Partial<Highlight['body']>)
+  const steps = (b.steps ?? []).filter(Boolean)
+  const pitfalls = (b.pitfalls ?? []).filter((p) => p && (p.tried || p.whyFailed))
+  const rows: [string, ReactNode][] = []
+  if (b.problem) rows.push(['Problem', <SafeText text={b.problem} />])
+  if (steps.length)
+    rows.push([
+      'Steps',
+      <ol className="list-decimal pl-5">
+        {steps.map((x, i) => (
+          <li key={i}>
+            <SafeText text={x} />
+          </li>
+        ))}
+      </ol>,
+    ])
+  if (pitfalls.length)
+    rows.push([
+      'Pitfalls',
+      <ul className="list-disc pl-5">
+        {pitfalls.map((p, i) => (
+          <li key={i}>
+            <SafeText text={p.tried ?? ''} />
+            {p.whyFailed && (
+              <>
+                {' '}
+                <span className="text-text-2">·</span> <SafeText text={p.whyFailed} />
+              </>
+            )}
+          </li>
+        ))}
+      </ul>,
+    ])
+  if (b.verification) rows.push(['Verified by', <SafeText text={b.verification} />])
+  if (b.appliesWhen) rows.push(['Applies when', <SafeText text={b.appliesWhen} />])
+  return (
+    <div className="mt-4 border-t border-rule pt-4 text-ui">
+      <p className="text-caption text-text-2">{HIGHLIGHT_BODY_NOTE}</p>
+      {rows.length > 0 && (
+        <dl className="mt-3 grid grid-cols-[96px_1fr] gap-x-4 gap-y-2">
+          {rows.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="text-text-2">{k}</dt>
+              <dd className="min-w-0">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  )
+}
+
+export const HIGHLIGHT_BODY_NOTE = 'The problem, steps and pitfalls below always post with this highlight, whatever the title and summary switches say. Turn off Highlight to keep them private.'
+export const HIGHLIGHT_NOT_FOUND = 'This draft’s highlight could not be found, so there is nothing to preview.'
+
 const KIND: Record<Highlight['kind'], string> = { fix: 'Fix', gotcha: 'Gotcha', recipe: 'Recipe', workflow: 'Workflow', tool_tip: 'Tool tip' }
 const LABEL: Record<string, string> = { title: 'Title', summary: 'Summary', highlight: 'Highlight' }
 
 export function DraftFields({ d, fields, onChange }: { d: DraftReview; fields: Record<string, boolean>; onChange: (next: Record<string, boolean>) => void }) {
   const mode = draftMode(d)
-  const h = d.activity.highlights[0]
+  const h = draftedHighlight(d)
   const keys = toggleKeys(d)
   const on = (k: string) => fields[k] !== false
   const highlightOff = mode === 'highlight' && !on('highlight')
@@ -54,8 +118,10 @@ export function DraftFields({ d, fields, onChange }: { d: DraftReview; fields: R
         {mode === 'highlight' ? (
           highlightOff ? (
             <div className="text-ui text-text-2">Nothing from this highlight will post. It stays private to you.</div>
+          ) : !h ? (
+            <div className="text-ui text-text-2">{HIGHLIGHT_NOT_FOUND}</div>
           ) : (
-            h && (
+            <>
               <div className="grid grid-cols-[72px_1fr] gap-x-4 text-ui">
                 <span className="font-semibold">{KIND[h.kind] ?? 'Highlight'}</span>
                 <div>
@@ -67,7 +133,8 @@ export function DraftFields({ d, fields, onChange }: { d: DraftReview; fields: R
                   )}
                 </div>
               </div>
-            )
+              <HighlightBody h={h} />
+            </>
           )
         ) : (
           <>
