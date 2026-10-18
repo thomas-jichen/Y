@@ -304,7 +304,17 @@ export function componentName(r: Pick<CompRow, 'kind' | 'a' | 'b'>, memo: Map<st
   }
 }
 
-export async function compareSetups(deps: CoreDeps, caller: Caller | null): Promise<CompareSetupsOutput> {
+export interface CompareSetupsOptions {
+  /**
+   * Leave out component names that are not a plain ComponentName (the
+   * pre-SetupSignalName contract: no `[`/`]`, at most 64 chars), as core did
+   * before composed names were kept. For an apps/mcp build that still
+   * validates `name` as ComponentName and would reject the whole result.
+   */
+  legacyNames?: boolean;
+}
+
+export async function compareSetups(deps: CoreDeps, caller: Caller | null, opts: CompareSetupsOptions = {}): Promise<CompareSetupsOutput> {
   if (!caller) return EMPTY_SIGNED_OUT;
   // network_content kill switch: no teammates' component names while it is engaged.
   if (await networkContentBlocked(deps)) return { ...EMPTY_SIGNED_OUT, signed_in: true };
@@ -354,6 +364,7 @@ export async function compareSetups(deps: CoreDeps, caller: Caller | null): Prom
   for (const r of data.comps) {
     const name = componentName(r, memo); // only validated, screened names
     if (!name) continue;
+    if (opts.legacyNames && !ComponentName.safeParse(name).success) continue;
     const set = componentsBySetup.get(r.id) ?? new Set<string>();
     set.add(`${r.kind}\u0000${name}`);
     componentsBySetup.set(r.id, set);

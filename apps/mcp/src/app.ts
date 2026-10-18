@@ -6,7 +6,7 @@ import { TOOLS } from '@y/schema';
 import { MCPServer, type StandardSchemaWithJSON } from 'mcp-use';
 import { configFromEnv, createCoreClient, type CoreClientConfig } from './core-client.js';
 import { SERVER_INSTRUCTIONS } from './instructions.js';
-import { SLICE_TOOLS, TOOL_SPECS, clientAddressFrom, normalizeAuthorization, runTool, toolMeta } from './tools.js';
+import { SLICE_TOOLS, TOOL_SPECS, clientAddressFrom, clientAddressSource, normalizeAuthorization, runTool, toolMeta } from './tools.js';
 
 export const SERVER_NAME = 'y';
 export const SERVER_VERSION = '0.0.0';
@@ -20,7 +20,9 @@ export interface CreateServerOptions {
   logging?: boolean;
   /**
    * A client-IP header the deploy's proxy always overwrites (default env
-   * Y_CLIENT_IP_HEADER). Unset: the rightmost X-Forwarded-For entry.
+   * Y_CLIENT_IP_HEADER). Unset: the rightmost X-Forwarded-For entry, which
+   * may be a shared proxy hop, so core puts those callers in its shared
+   * signed-out bucket instead of a per-client one (docs/DEPLOY.md step 7).
    */
   clientIpHeader?: string;
 }
@@ -28,6 +30,7 @@ export interface CreateServerOptions {
 export function createServer(opts: CreateServerOptions = {}) {
   const core = createCoreClient({ ...configFromEnv(), ...opts.core });
   const clientIpHeader = opts.clientIpHeader ?? process.env.Y_CLIENT_IP_HEADER;
+  const addressSource = clientAddressSource(clientIpHeader);
 
   const server = new MCPServer({
     name: SERVER_NAME,
@@ -59,6 +62,7 @@ export function createServer(opts: CreateServerOptions = {}) {
         clientName: ctx.client.info().name,
         clientVersion: ctx.client.info().version,
         clientAddress: clientAddressFrom((n) => ctx.request?.header(n), clientIpHeader),
+        clientAddressSource: addressSource,
       }) as never,
     );
   }

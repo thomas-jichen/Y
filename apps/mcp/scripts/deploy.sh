@@ -13,6 +13,18 @@
 #   Y_WEB_URL=https://y-web.vercel.app \
 #   Y_INTERNAL_SECRET=... \
 #   pnpm --filter @y/mcp run deploy:manufact [--new --yes ...extra mcp-use deploy flags]
+#
+# Y_CLIENT_IP_HEADER is deliberately not set here. Without it, signed-out
+# callers are keyed by the rightmost X-Forwarded-For hop. Behind Manufact's
+# Cloudflare Worker + Fly.io chain that hop may be shared by everyone, so
+# core gives those callers one shared signed-out bucket (10x the per-client
+# limit) and no per-client ones. Set it by hand to a header the platform
+# always overwrites with the caller's address (candidate: cf-connecting-ip),
+# and only after checking it (docs/DEPLOY.md step 7).
+#
+# Deploy order for this release: deploy apps/mcp BEFORE core. This build
+# sends meta.wideSetupNames, and an older apps/mcp that sends no meta would
+# reject compare_setups results that carry the wider names.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 MCP_DIR="$(pwd -P)"

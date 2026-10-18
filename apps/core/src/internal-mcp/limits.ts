@@ -1,13 +1,20 @@
 /**
  * Guards on the internal MCP API that run before a tool handler:
  * - the per-tool token buckets named by TOOL_POLICY[tool].rateLimit
- *   ('mcp' 60/min and 'search_network' 120/min per agent, RATE_LIMITS in
- *   @y/domain). Tools with their own buckets (send_message, ask_builder,
- *   scroll_feed, create_post) keep them. Signed-out calls are keyed by the
- *   client key apps/mcp puts in the signed `meta` (a hash of the address
- *   the nearest proxy saw, never the address itself). Calls without a
- *   client key share one bucket at ANON_SHARED_FACTOR times the limit;
- *   hitting it is logged.
+ *   ('mcp' and 'search_network', MCP_PER_MINUTE / SEARCH_PER_MINUTE per
+ *   agent). These sit above the 60/min and 120/min of RATE_LIMITS in
+ *   @y/domain on purpose: the agent is the install token, so every
+ *   session and subagent on one machine shares the bucket, and the server
+ *   instructions ask for status, inbox and report_outcome often. They are a
+ *   flood bound, not a per-session budget. Tools with their own buckets
+ *   (send_message, ask_builder, scroll_feed, create_post) keep them.
+ *   Signed-out calls are keyed by the client key apps/mcp puts in the
+ *   signed `meta` (a hash of the address, never the address itself) when
+ *   it came from a trusted client-IP header (`clientKeySource` 'header', or
+ *   no source from an older sender). A key from the rightmost
+ *   X-Forwarded-For hop ('forwarded_for') may be one proxy shared by every
+ *   caller, so those calls, and calls without a key, share one bucket at
+ *   ANON_SHARED_FACTOR times the limit; hitting it is logged.
  * - a best-effort replay cache: a signed request that carries `meta.nonce`
  *   (inside the signed body) is accepted once per instance within the
  *   signature window.
@@ -20,27 +27,55 @@ import { takeToken, type BucketSpec } from '../platform/rate-limit.js';
 /** Max request body on /internal/mcp/* (every schema-allowed tool input is far below this). */
 export const INTERNAL_BODY_MAX = 256 * 1024;
 
-/** 'mcp': 60 / minute per agent. */
-export const MCP_BUCKET: BucketSpec = { rate: 60 / 60, burst: 60 };
-/** search_network: 120 / minute per agent. */
-export const SEARCH_BUCKET: BucketSpec = { rate: 120 / 60, burst: 120 };
+/** 'mcp' calls per minute per agent (or per trusted signed-out client). */
+export const MCP_PER_MINUTE = 300;
+/** search_network calls per minute per agent (or per trusted signed-out client). */
+export const SEARCH_PER_MINUTE = 300;
+/** 'mcp': MCP_PER_MINUTE per agent. */
+export const MCP_BUCKET: BucketSpec = { rate: MCP_PER_MINUTE / 60, burst: MCP_PER_MINUTE };
+/** search_network: SEARCH_PER_MINUTE per agent. */
+export const SEARCH_BUCKET: BucketSpec = { rate: SEARCH_PER_MINUTE / 60, burst: SEARCH_PER_MINUTE };
 /**
- * Signed-out calls that arrive without a client key (local dev, or a proxy
- * that forwards no address) share one bucket at this multiple of the
- * per-client limit. Calls with a client key only take their own bucket, so
- * no caller can drain a limit that other signed-out users depend on.
+ * Signed-out calls without a trusted client key (local dev, a proxy that
+ * forwards no address, or an address from X-Forwarded-For only) share one
+ * bucket at this multiple of the per-client limit. Calls with a trusted
+ * client key only take their own bucket, so no caller can drain a limit
+ * that other signed-out users depend on.
  */
 export const ANON_SHARED_FACTOR = 10;
 
 const BUCKETS: Partial<Record<(typeof TOOL_POLICY)[ToolName]['rateLimit'], { spec: BucketSpec; perMinute: number }>> = {
-  mcp: { spec: MCP_BUCKET, perMinute: 60 },
-  search_network: { spec: SEARCH_BUCKET, perMinute: 120 },
+  mcp: { spec: MCP_BUCKET, perMinute: MCP_PER_MINUTE },
+  search_network: { spec: SEARCH_BUCKET, perMinute: SEARCH_PER_MINUTE },
 };
 
 /** A client key from apps/mcp (`meta.clientKey`: hex hash), or null. */
 export function clientKeyOf(meta: unknown): string | null {
   const k = (meta as { clientKey?: unknown } | null | undefined)?.clientKey;
   return typeof k === 'string' && /^[a-f0-9]{16,64}$/.test(k) ? k : null;
+}
+
+/**
+ * The client key to give its own signed-out bucket, or null. A key whose
+ * `meta.clientKeySource` is 'forwarded_for' (the rightmost X-Forwarded-For
+ * hop, possibly a proxy every caller shares) is not one: those calls take
+ * the shared bucket. 'header' and an absent source keep their own bucket.
+ */
+export function trustedClientKeyOf(meta: unknown): string | null {
+  const src = (meta as { clientKeySource?: unknown } | null | undefined)?.clientKeySource;
+  if (src !== undefined && src !== 'header') return null;
+  return clientKeyOf(meta);
+}
+
+/**
+ * True when compare_setups must leave out names that are not ComponentName:
+ * the request carries meta (it came from an apps/mcp) without
+ * `wideSetupNames`, so it is a build from before SetupSignalName and would
+ * reject the whole result on a `model:...[1m]` or long plugin@marketplace
+ * name. Requests without meta keep the current contract.
+ */
+export function legacySetupNames(meta: unknown): boolean {
+  return typeof meta === 'object' && meta !== null && (meta as { wideSetupNames?: unknown }).wideSetupNames !== true;
 }
 
 /** A replay nonce from apps/mcp (`meta.nonce`), or null. */
@@ -61,7 +96,7 @@ export async function takeToolBucket(deps: CoreDeps, name: ToolName, caller: Cal
     if (!rl.allowed) throw new HttpError('RATE_LIMITED', msg, { retryAfterS: rl.retryAfterS });
     return;
   }
-  const client = clientKeyOf(meta);
+  const client = trustedClientKeyOf(meta);
   if (client) {
     const rl = await deps.db.asService((tx) => takeToken(tx, `mcp_anon_${policy}`, [client], b.spec));
     if (!rl.allowed) throw new HttpError('RATE_LIMITED', `${msg} when signed out`, { retryAfterS: rl.retryAfterS });
@@ -70,7 +105,9 @@ export async function takeToolBucket(deps: CoreDeps, name: ToolName, caller: Cal
   const shared: BucketSpec = { rate: b.spec.rate * ANON_SHARED_FACTOR, burst: b.spec.burst * ANON_SHARED_FACTOR };
   const rl = await deps.db.asService((tx) => takeToken(tx, `mcp_anon_shared_${policy}`, ['none'], shared));
   if (!rl.allowed) {
-    deps.log('warn', 'signed-out MCP calls without a client key hit the shared limit', { tool: name, bucket: policy });
+    deps.log('warn', 'signed-out MCP calls without a client key hit the shared limit', {
+      tool: name, bucket: policy, keyed: clientKeyOf(meta) ? 'forwarded_for' : 'none',
+    });
     throw new HttpError('RATE_LIMITED', `${msg} when signed out`, { retryAfterS: rl.retryAfterS });
   }
 }

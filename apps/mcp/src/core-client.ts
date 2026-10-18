@@ -119,7 +119,9 @@ export function createCoreClient(cfg: CoreClientConfig) {
   async function call(tool: ToolName, input: unknown, opts: CallOptions = {}): Promise<CoreResult> {
     const path = internalMcpPath(tool);
     // A fresh nonce per request: core refuses a replay of the same signed request.
-    const meta = { ...(opts.meta ?? {}), nonce: randomBytes(16).toString('hex') };
+    // wideSetupNames: this build parses compare_setups names as SetupSignalName,
+    // so core may send `model:...[1m]` and long plugin@marketplace keys.
+    const meta: InternalMcpMeta = { ...(opts.meta ?? {}), nonce: randomBytes(16).toString('hex'), wideSetupNames: true };
     const body = JSON.stringify({ input, meta });
     const headers: Record<string, string> = {
       'content-type': 'application/json',
