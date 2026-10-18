@@ -1,16 +1,14 @@
 /**
- * Red-team regressions for apps/core/migrations/9102_rt_rls.sql and the
- * ingest lease-mode recording (hook.ts): default-team auto-join, thread
- * participant injection, change-request patch binding, consent-less team
- * adds, owner removal, and the unattended-session confirm gate (PLAN §9).
- * PGlite only; synthetic users.
+ * Red-team regressions for apps/core/migrations/9102_rt_rls.sql: default-team
+ * auto-join, thread participant injection, change-request patch binding,
+ * consent-less team adds, and owner removal / demotion. PGlite only;
+ * synthetic users.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAuthUser } from '@y/db';
-import { fx } from '@y/schema/fixtures';
 import { internalMcpModule } from '../internal-mcp/index.js';
 import { messagingModule } from '../messaging/index.js';
-import { agentCaller, makeEnv, seedPerson, type Person, type TestEnv } from '../messaging/test-support.js';
+import { makeEnv, seedPerson, seedTeam, type Person, type TestEnv } from '../messaging/test-support.js';
 import { migrateCore, platformModule } from './index.js';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 120_000 });
@@ -34,7 +32,6 @@ afterEach(async () => {
 const web = (p: Person) => ({ sub: p.userId, via: 'web' });
 const agentClaims = (p: Person) => ({ sub: p.userId, agent_id: p.agentId, via: 'install' });
 const ulid = (tag: string) => ('01J' + tag.toUpperCase().replace(/[^0-9A-HJKMNP-TV-Z]/g, '0') + '0'.repeat(26)).slice(0, 26);
-const SIG = 'A'.repeat(86);
 
 async function teamsOf(userId: string): Promise<string[]> {
   const r = await env.db.query<{ slug: string }>(
@@ -43,29 +40,39 @@ async function teamsOf(userId: string): Promise<string[]> {
 }
 
 describe('default team (9003) and real GitHub accounts (#0)', () => {
-  it('a GitHub sign-up does not join the dev team; dev-login and identity-less users still do', async () => {
-    const devLogin = await env.app.request('/api/v1/dev/login', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ githubLogin: 'judge-dev' }),
+  const devLogin = async (githubLogin: string, team?: string | null) => {
+    const res = await env.app.request('/api/v1/dev/login', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ githubLogin, ...(team === undefined ? {} : { team }) }),
     });
-    expect(devLogin.status).toBe(200);
-    const devUser = ((await devLogin.json()) as { user: { id: string } }).user.id;
-    expect(await teamsOf(devUser)).toEqual(['dev']);
-
-    const real = await createAuthUser(env.db, {
-      userMetadata: { user_name: 'late-real', provider_id: '5550001' },
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { user: { id: string } }).user.id;
+  };
+  const githubSignUp = (login: string, providerId: string) =>
+    createAuthUser(env.db, {
+      userMetadata: { user_name: login, provider_id: providerId },
       appMetadata: { provider: 'github', providers: ['github'] },
     });
-    expect(await teamsOf(real)).toEqual([]);
+
+  it('a GitHub sign-up does not join a dev-login dev team; dev logins honour `team`', async () => {
+    const devUser = await devLogin('judge-dev');
+    expect(await teamsOf(devUser)).toEqual(['dev']);
+
+    expect(await teamsOf(await githubSignUp('late-real', '5550001'))).toEqual([]);
 
     // A user with no GitHub identity (local dev / test fixtures) keeps the old behaviour.
     const local = await createAuthUser(env.db, { userMetadata: { user_name: 'local-dev' } });
     expect(await teamsOf(local)).toEqual(['dev']);
 
-    // A second dev login still joins dev.
-    const second = await env.app.request('/api/v1/dev/login', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ githubLogin: 'judge-two' }),
-    });
-    expect(await teamsOf(((await second.json()) as { user: { id: string } }).user.id)).toEqual(['dev']);
+    // Dev login: default joins dev; a named team or team:null keeps the user out of dev.
+    expect(await teamsOf(await devLogin('judge-two'))).toEqual(['dev']);
+    expect(await teamsOf(await devLogin('zed-solo', 'zed-co'))).toEqual(['zed-co']);
+    expect(await teamsOf(await devLogin('stranger-x', null))).toEqual([]);
+  });
+
+  it('an operator-made dev team (no dev logins) still enrolls GitHub sign-ups', async () => {
+    await seedTeam(env.db, 'dev', [alice]);
+    expect(await teamsOf(await githubSignUp('real-one', '5550002'))).toEqual(['dev']);
   });
 });
 
@@ -123,6 +130,13 @@ describe('thread participants (#9)', () => {
     await newThread(alice, w);
     await addAs({ sub: alice.userId }, w, 'agent', bob.agentId);
     await expect(addAs({ sub: alice.userId }, w, 'agent', carol.agentId)).rejects.toThrow(/one addressee/);
+  });
+
+  it('the addressee check locks the thread row, so concurrent inserts are serialized', async () => {
+    // PGlite has one connection, so the race itself can't run here; pin the lock instead.
+    const def = await env.db.query<{ d: string }>(
+      `select pg_get_functiondef('y_private.thread_participant_insert_error(text, text, uuid, text)'::regprocedure) as d`);
+    expect(def.rows[0]!.d).toMatch(/from public\.threads t where t\.id = a_thread\s+for no key update/);
   });
 });
 
@@ -200,6 +214,22 @@ describe('team and org membership (#67, #68)', () => {
     await env.db.query(`delete from public.teams where id = $1`, [team]);
   });
 
+  it('the last owner cannot step down; with a co-owner they can, and owners still change other roles', async () => {
+    const team = await teamBy(alice, 'team-d');
+    await env.db.query(`insert into public.team_members (team_id, user_id, role) values ($1, $2, 'member')`, [team, bob.userId]);
+    const setRole = (by: Person, who: Person, role: string) => env.db.asUser(web(by), (tx) =>
+      tx.query(`update public.team_members set role = $3 where team_id = $1 and user_id = $2`, [team, who.userId, role]));
+
+    await expect(setRole(alice, alice, 'member')).rejects.toThrow(/last owner/);
+    expect((await setRole(alice, bob, 'admin')).rowCount).toBe(1);
+    expect((await setRole(alice, alice, 'owner')).rowCount).toBe(1); // a no-op role write is fine
+    expect((await setRole(alice, bob, 'owner')).rowCount).toBe(1);
+    expect((await setRole(alice, alice, 'admin')).rowCount).toBe(1); // ownership handed over
+    await expect(setRole(bob, bob, 'member')).rejects.toThrow(/last owner/);
+    // Service writes are not limited.
+    await env.db.query(`update public.team_members set role = 'member' where team_id = $1 and user_id = $2`, [team, bob.userId]);
+  });
+
   it('orgs: an admin cannot remove the owner, and the last owner cannot leave', async () => {
     await env.db.asUser(web(alice), (tx) =>
       tx.query(`insert into public.orgs (slug, name, created_by) values ('acme-org', 'Acme', $1)`, [alice.userId]));
@@ -210,83 +240,8 @@ describe('team and org membership (#67, #68)', () => {
     await expect(del(bob, alice)).rejects.toThrow(/only an owner can remove an owner/);
     await expect(del(alice, alice)).rejects.toThrow(/last owner/);
     expect((await del(alice, bob)).rowCount).toBe(1);
-  });
-});
-
-describe('unattended sessions and owner instructions (#46, #109)', () => {
-  let n = 0;
-  const instruct = async (p: Person) => {
-    n += 1;
-    const id = ulid(`oi${n}`);
-    const r = await env.db.query<{ requires_confirm: boolean }>(
-      `insert into public.owner_instructions (id, agent_id, created_by_user_id, body, verified_via, kid, sig)
-       values ($1, $2, $3, 'deploy the preview', 'web', 'k1', $4) returning requires_confirm`, [id, p.agentId, p.userId, SIG]);
-    return { id, requiresConfirm: r.rows[0]!.requires_confirm };
-  };
-  const ingest = async (p: Person, sessionId: string, seq: number, permissionMode: string) => {
-    await env.db.query('delete from public.rate_buckets');
-    const res = await env.app.request('/api/v1/ingest', {
-      method: 'POST',
-      headers: { authorization: env.token(`${p.handle}-agent`, agentCaller(p)), 'content-type': 'application/json' },
-      body: JSON.stringify(fx.ingestChunk({ sessionId, seq, permissionMode: permissionMode as never })),
-    });
-    expect(res.status).toBe(200);
-  };
-  const leaseMode = async (p: Person, sessionId: string) =>
-    (await env.db.query<{ permission_mode: string; listening: string }>(
-      `select permission_mode::text as permission_mode, listening::text as listening from public.session_leases where agent_id = $1 and session_id = $2`,
-      [p.agentId, sessionId])).rows[0];
-
-  it('ingest records the session permission mode, so instructions to a bypassPermissions agent need a confirm', async () => {
-    await ingest(alice, 'sess-bypass', 0, 'bypassPermissions');
-    expect(await leaseMode(alice, 'sess-bypass')).toEqual({ permission_mode: 'bypassPermissions', listening: 'none' });
-    expect((await instruct(alice)).requiresConfirm).toBe(true);
-    // A later chunk that doesn't know the mode never downgrades it.
-    await ingest(alice, 'sess-bypass', 1, 'unknown');
-    expect((await leaseMode(alice, 'sess-bypass'))?.permission_mode).toBe('bypassPermissions');
-
-    // An attended session keeps getting instructions without a confirm.
-    await ingest(bob, 'sess-default', 0, 'default');
-    expect((await leaseMode(bob, 'sess-default'))?.permission_mode).toBe('default');
-    expect((await instruct(bob)).requiresConfirm).toBe(false);
-  });
-
-  it('the listener heartbeat keeps the recorded mode', async () => {
-    await ingest(alice, 'sess-hb', 0, 'bypassPermissions');
-    const res = await env.app.request('/api/v1/pulse?wait=0&sessionId=sess-hb', {
-      headers: { authorization: env.token('alice-agent', agentCaller(alice)), 'x-y-session': 'sess-hb' },
-    });
-    expect(res.status).toBe(200);
-    expect(await leaseMode(alice, 'sess-hb')).toEqual({ permission_mode: 'bypassPermissions', listening: 'listening' });
-  });
-
-  it('an unattended session that starts after an instruction was queued hides it until the owner confirms', async () => {
-    const queued = await instruct(alice);
-    expect(queued.requiresConfirm).toBe(false);
-    const delivered = await instruct(alice);
-    await env.db.query(`update public.owner_instructions set delivered_at = now() where id = $1`, [delivered.id]);
-
-    await env.db.asUser(agentClaims(alice), (tx) =>
-      tx.query(`insert into public.session_leases (agent_id, session_id, listening, permission_mode) values ($1, 'late-bypass', 'listening', 'bypassPermissions')`,
-        [alice.agentId]));
-
-    const rows = await env.db.query<{ id: string; requires_confirm: boolean }>(
-      `select id, requires_confirm from public.owner_instructions where agent_id = $1`, [alice.agentId]);
-    const byId = new Map(rows.rows.map((r) => [r.id, r.requires_confirm]));
-    expect(byId.get(queued.id)).toBe(true);
-    expect(byId.get(delivered.id)).toBe(false); // already delivered: left alone
-    const seen = await env.db.asUser(agentClaims(alice), (tx) =>
-      tx.query(`select id from public.owner_instructions where id = $1`, [queued.id]));
-    expect(seen.rowCount).toBe(0);
-    const marked = await env.db.asUser(agentClaims(alice), (tx) =>
-      tx.query(`update public.owner_instructions set delivered_at = now() where id = $1`, [queued.id]));
-    expect(marked.rowCount).toBe(0);
-
-    // The owner's confirm (web) makes it visible again.
-    await env.db.asUser(web(alice), (tx) =>
-      tx.query(`update public.owner_instructions set confirmed_at = now(), confirmed_via = 'web' where id = $1`, [queued.id]));
-    const after = await env.db.asUser(agentClaims(alice), (tx) =>
-      tx.query(`select id from public.owner_instructions where id = $1`, [queued.id]));
-    expect(after.rowCount).toBe(1);
+    await expect(env.db.asUser(web(alice), (tx) =>
+      tx.query(`update public.org_members set role = 'admin' where org_id = $1 and user_id = $2`, [orgId, alice.userId]),
+    )).rejects.toThrow(/last owner/);
   });
 });

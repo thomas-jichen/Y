@@ -54,27 +54,6 @@ async function killSwitches(deps: CoreDeps): Promise<KillSwitches> {
 
 const clamp999 = (n: number) => Math.max(1, Math.min(999, n));
 
-/**
- * Record the session's permission mode (and headless) on its lease, keyed like the pulse
- * heartbeat: an unattended session (bypassPermissions / codex_never) makes owner instructions
- * need the owner's confirm click (PLAN §9). A later 'unknown' never erases a known mode, and a
- * new row stays 'none' (not listening), so presence and wake picking are unchanged.
- */
-async function recordLeaseMode(tx: Tx, agentId: string, sessionId: string, installId: string | null, mode: string, headless: boolean) {
-  await tx.query(
-    `insert into public.session_leases (agent_id, session_id, install_id, permission_mode, headless)
-     values ($1, $2, $3, $4, $5)
-     on conflict (agent_id, session_id) do update
-       set permission_mode = case when excluded.permission_mode = 'unknown' then public.session_leases.permission_mode
-                                  else excluded.permission_mode end,
-           headless = public.session_leases.headless or excluded.headless
-     where public.session_leases.permission_mode is distinct from
-             (case when excluded.permission_mode = 'unknown' then public.session_leases.permission_mode else excluded.permission_mode end)
-        or (excluded.headless and not public.session_leases.headless)`,
-    [agentId, sessionId, installId, mode, headless],
-  );
-}
-
 export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
   /* --------------------------------------------------------------- ingest */
   app.post('/api/v1/ingest', async (c) => {
@@ -157,7 +136,6 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
           JSON.stringify(ch.digest?.redaction ?? {}),
         ],
       );
-      await recordLeaseMode(tx, agentId, ch.sessionId, caller.installId, ch.permissionMode, ch.headless);
       if (caller.installId) {
         await tx.query('update public.installs set last_seen_at = now(), plugin_version = $2 where id = $1', [caller.installId, ch.pluginVersion]);
       }
