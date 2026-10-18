@@ -36,7 +36,7 @@ Gateway, no Supabase Pro**.
 
 ### 4. Manufact — verified working
 
-`npx mcp-use whoami` → `lapark714@gmail.com — Primary`, org `Primary` (`org-6c1711a6-cv6rx`).
+`npx mcp-use whoami` → `<Laurence's account> — Primary`, org `Primary` (`org-6c1711a6-cv6rx`).
 `MCP_USE_API_KEY` / `MCP_USE_ORG` are in the local gitignored `.env`; `.env.example` documents them.
 Proven beyond login: a hello MCP server was built, deployed and called over the public URL — see
 [S3](S3-manufact-cloud.md). Keys are prefixed `mcp_`; rotate by re-running `npx mcp-use login`.

@@ -2,7 +2,7 @@
 
 - **Date / tester:** 2026-10-17 / laurence (driven from a Claude Code agent session)
 - **Versions:** `mcp-use` **2.10.1** (CLI + library) · Node **24.21.0** · Claude Code **2.1.302** (for the client-side 401 check)
-- **Account:** org `Primary` (`org-6c1711a6-cv6rx`), `npx mcp-use whoami` → `lapark714@gmail.com — Primary`
+- **Account:** org `Primary` (`org-6c1711a6-cv6rx`), `npx mcp-use whoami` → `<Laurence's account> — Primary`
 - **Verdict: PASS.** Deploy works, headers pass through intact, egress is open, and Claude Code handles a 401 challenge correctly.
 
 ## Question
