@@ -5,11 +5,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 type Session = { access_token: string; user: { id: string } }
 type Listener = (event: string, session: Session | null) => void
 
+/**
+ * Like supabase-js 2.x refreshSession(): a success emits TOKEN_REFRESHED before it returns. A failure
+ * with a dead refresh token (`failure: 'dead'`) removes the session and emits SIGNED_OUT before it
+ * returns; a retryable one (`'retryable'`, e.g. a network error) keeps the session and emits nothing.
+ */
 const sb = {
   listeners: [] as Listener[],
   session: null as Session | null,
   refreshed: null as Session | null,
-  refreshSession: vi.fn(async () => ({ data: { session: sb.refreshed }, error: sb.refreshed ? null : { message: 'expired' } })),
+  failure: 'retryable' as 'retryable' | 'dead',
+  refreshSession: vi.fn(async () => {
+    await Promise.resolve()
+    if (sb.refreshed) {
+      sb.session = sb.refreshed
+      sb.emit('TOKEN_REFRESHED', sb.refreshed)
+      return { data: { session: sb.refreshed }, error: null }
+    }
+    if (sb.failure === 'dead') {
+      sb.session = null
+      sb.emit('SIGNED_OUT', null)
+    }
+    return { data: { session: null }, error: { message: 'Invalid Refresh Token' } }
+  }),
   signOut: vi.fn(async (_opts?: { scope?: string }) => ({ error: null })),
   emit(event: string, session: Session | null) {
     for (const l of sb.listeners) l(event, session)
@@ -70,6 +88,7 @@ beforeEach(() => {
   sb.listeners = []
   sb.session = null
   sb.refreshed = null
+  sb.failure = 'retryable'
   sb.refreshSession.mockClear()
   sb.signOut.mockClear()
 })
@@ -105,6 +124,54 @@ describe('401 handling (#54)', () => {
     expect(auth.get()).toMatchObject({ status: 'signed_out', notice: 'Your session ended. Sign in again.' })
     expect(sb.signOut).toHaveBeenCalledTimes(1)
     expect(sb.signOut).toHaveBeenCalledWith({ scope: 'local' })
+  })
+
+  it('a dead refresh token (supabase-js signs out during the refresh) still shows the notice', async () => {
+    sb.session = { access_token: 'sb_old', user: { id: 'u1' } }
+    sb.failure = 'dead'
+    const { auth, initAuth, core, CONNECT_KEY } = await load()
+    await initAuth()
+    sessionStorage.setItem(CONNECT_KEY, JSON.stringify({ owner: 'sb:u1', tokens: {}, installed: true }))
+    vi.stubGlobal('fetch', fakeCore(new Set()).fetch)
+
+    await expect(core('GET', '/me')).rejects.toMatchObject({ status: 401 })
+    await tick()
+    expect(sb.refreshSession).toHaveBeenCalledTimes(1)
+    expect(auth.get()).toMatchObject({ status: 'signed_out', notice: 'Your session ended. Sign in again.' })
+    expect(auth.get().account).toBeUndefined()
+    expect(sessionStorage.getItem(CONNECT_KEY)).toBeNull()
+    // supabase-js already ended this browser's session; nothing signs out anywhere else
+    expect(sb.signOut).not.toHaveBeenCalled()
+  })
+
+  it('concurrent 401s on a dead refresh share one refresh and end with the notice; signing in again clears it', async () => {
+    sb.session = { access_token: 'sb_old', user: { id: 'u1' } }
+    sb.failure = 'dead'
+    const { auth, initAuth, core } = await load()
+    await initAuth()
+    vi.stubGlobal('fetch', fakeCore(new Set(['sb_back'])).fetch)
+    const all = await Promise.allSettled([core('GET', '/me'), core('GET', '/feed'), core('GET', '/review')])
+    expect(all.every((r) => r.status === 'rejected')).toBe(true)
+    await tick()
+    expect(sb.refreshSession).toHaveBeenCalledTimes(1)
+    expect(auth.get()).toMatchObject({ status: 'signed_out', notice: 'Your session ended. Sign in again.' })
+    sb.emit('SIGNED_IN', { access_token: 'sb_back', user: { id: 'u1' } })
+    expect(auth.get()).toMatchObject({ status: 'signed_in', notice: undefined, account: 'sb:u1' })
+    await expect(core('GET', '/me')).resolves.toEqual({ ok: true })
+  })
+
+  it('a successful refresh (TOKEN_REFRESHED during refreshSession) keeps the account and its tab state', async () => {
+    sb.session = { access_token: 'sb_old', user: { id: 'u1' } }
+    sb.refreshed = { access_token: 'sb_new', user: { id: 'u1' } }
+    const { auth, initAuth, core, CONNECT_KEY } = await load()
+    await initAuth()
+    const saved = JSON.stringify({ owner: 'sb:u1', tokens: {}, installed: true })
+    sessionStorage.setItem(CONNECT_KEY, saved)
+    vi.stubGlobal('fetch', fakeCore(new Set(['sb_new'])).fetch)
+    await expect(core('GET', '/me')).resolves.toEqual({ ok: true })
+    expect(auth.get()).toMatchObject({ status: 'signed_in', token: 'sb_new', account: 'sb:u1', notice: undefined })
+    expect(sessionStorage.getItem(CONNECT_KEY)).toBe(saved)
+    expect(sb.signOut).not.toHaveBeenCalled()
   })
 
   it('a 401 for a token refreshed while the request was in flight retries with the current token', async () => {

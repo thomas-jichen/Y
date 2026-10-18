@@ -15,17 +15,50 @@ export function isLoopback(addr: string | undefined): boolean {
 type Req = { url?: string; socket?: { remoteAddress?: string } }
 type Res = { statusCode: number; setHeader(name: string, value: string): unknown; end(body?: string): unknown }
 
-/** Connect middleware: 403 for a proxied /api request from another machine, unless `allowLan`. */
-export function devProxyGuard(allowLan: boolean) {
+/**
+ * True when Vite would proxy `url` for `context`, or when it would once normalised. Vite's matcher
+ * is a bare `url.startsWith(context)` on the raw URL ('/apix' and '/api./../api/…' match), and the
+ * proxied path is normalised on its way to core, so both forms are checked.
+ */
+export function isProxied(url: string | undefined, context = '/api'): boolean {
+  const raw = url ?? ''
+  if (raw.startsWith(context)) return true
+  try {
+    return new URL(raw, 'http://dev.invalid').pathname.startsWith(context)
+  } catch {
+    return true // unparseable: refuse rather than guess
+  }
+}
+
+function refuse(res: Res) {
+  res.statusCode = 403
+  res.setHeader('Content-Type', 'application/json')
+  res.end(
+    JSON.stringify({
+      error: { code: 'FORBIDDEN', message: 'The dev server proxies /api to this machine only. Set Y_WEB_LAN_API=1 to allow other devices.', retryable: false },
+    }),
+  )
+}
+
+const allowed = (allowLan: boolean, req: Req) => allowLan || isLoopback(req.socket?.remoteAddress)
+
+/** Connect middleware, ahead of the proxy: 403 for a proxied /api request from another machine, unless `allowLan`. */
+export function devProxyGuard(allowLan: boolean, context = '/api') {
   return (req: Req, res: Res, next: () => void) => {
-    const path = req.url ?? ''
-    if (allowLan || !(path === '/api' || path.startsWith('/api/') || path.startsWith('/api?')) || isLoopback(req.socket?.remoteAddress)) return next()
-    res.statusCode = 403
-    res.setHeader('Content-Type', 'application/json')
-    res.end(
-      JSON.stringify({
-        error: { code: 'FORBIDDEN', message: 'The dev server proxies /api to this machine only. Set Y_WEB_LAN_API=1 to allow other devices.', retryable: false },
-      }),
-    )
+    if (!isProxied(req.url, context) || allowed(allowLan, req)) return next()
+    refuse(res)
+  }
+}
+
+/**
+ * The same check inside the proxy entry itself (`server.proxy['/api'].bypass`), so it runs on exactly
+ * the requests Vite is about to proxy, whatever their path looks like. Returning the URL after
+ * answering makes Vite stop (it returns once the response has ended).
+ */
+export function lanBypass(allowLan: boolean) {
+  return (req: Req, res: Res | undefined): string | undefined => {
+    if (allowed(allowLan, req)) return undefined
+    if (res) refuse(res)
+    return req.url ?? '/'
   }
 }

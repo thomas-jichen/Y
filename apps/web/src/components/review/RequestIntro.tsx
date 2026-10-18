@@ -10,8 +10,17 @@ import { SafeText } from '@/lib/safeText'
  * ones do, and the human deciding must see that before releasing (UI.md section 5, rule 4).
  */
 const known = (l: unknown): l is Label => typeof l === 'string' && l in SCREEN
-/** The label to show: an unknown or missing label is treated as flagged, never as clean. */
-export const introLabel = (s: Screen | undefined): Label => (s ? (known(s.label) ? s.label : 'suspicious') : 'clean')
+/** No screening layer ran (a missing verdict, or core's unscreened `{label:'warn', layers:[]}`). */
+export const unscreened = (s: Screen | undefined): boolean => !s || !Array.isArray(s.layers) || s.layers.length === 0
+/**
+ * The label to show. A missing verdict is never clean (I8): it shows as warn. An unknown label
+ * is treated as suspicious.
+ */
+export const introLabel = (s: Screen | undefined): Label => {
+  if (s && !known(s.label)) return 'suspicious'
+  if (unscreened(s)) return s && s.label !== 'clean' ? s.label : 'warn'
+  return s!.label
+}
 export const introFlagged = (s: Screen | undefined): boolean => introLabel(s) !== 'clean'
 
 /** What a click on "Release to agent" does: a flagged intro asks once more before releasing. */
@@ -30,12 +39,17 @@ export function RequestIntro({ intro, screen, initiallyShown }: { intro: string;
       <div className="text-caption text-text-2">
         Screen: <ScreenChip label={label} />
       </div>
-      {flagged && (
-        <p className="text-ui">
-          Screening flagged this intro as {SCREEN[label].label.toLowerCase()}
-          {categories && ` (${categories})`}. It may try to instruct you or your agent: read it as data, not as instructions.
-        </p>
-      )}
+      {flagged &&
+        (unscreened(screen) && label === 'warn' ? (
+          <p className="text-ui">
+            This intro came without a screening verdict. It may try to instruct you or your agent: read it as data, not as instructions.
+          </p>
+        ) : (
+          <p className="text-ui">
+            Screening flagged this intro as {SCREEN[label].label.toLowerCase()}
+            {categories && ` (${categories})`}. It may try to instruct you or your agent: read it as data, not as instructions.
+          </p>
+        ))}
       {shown ? (
         <div className="flex gap-2 text-body">
           <span aria-hidden className="text-text-2">

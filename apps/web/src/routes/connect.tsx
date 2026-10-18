@@ -9,7 +9,8 @@ import { useConnectStatus, useMintToken, useSlackStatus, useSlackUnlink } from '
 import type { ConnectToken } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { MOCKS } from '@/lib/env'
-import { CONNECT_KEY } from '@/api/auth'
+import { auth } from '@/api/auth'
+import { loadSaved, save, type HarnessTab } from '@/lib/connectSaved'
 
 export const Route = createFileRoute('/connect')({ component: Connect })
 
@@ -42,7 +43,6 @@ function Command({ cmd, copy, prompt = '$' }: { cmd: string; copy: string; promp
   )
 }
 
-type HarnessTab = 'claudeCode' | 'astra'
 /** UI harness ids for the mint call; real mode maps 'astra' to core's 'codex' at the API boundary (api/real.ts). */
 const HARNESS_ID: Record<HarnessTab, 'claude_code' | 'astra'> = { claudeCode: 'claude_code', astra: 'astra' }
 
@@ -60,38 +60,17 @@ function commandsFor(token: ConnectToken, harness: HarnessTab, reveal: boolean) 
   })
 }
 
-/**
- * The minted token and progress survive leaving the page and reloads within this browser tab
- * (sessionStorage), and are dropped when the tab closes or the account signs out (api/auth.ts). Core keeps only the hash.
- */
-const SAVED = CONNECT_KEY
-type Saved = { tokens: Partial<Record<HarnessTab, ConnectToken>>; installed: boolean }
-function loadSaved(): Saved {
-  try {
-    const v = JSON.parse(sessionStorage.getItem(SAVED) ?? 'null') as Saved | null
-    if (v && typeof v === 'object' && v.tokens && typeof v.tokens === 'object') return { tokens: v.tokens, installed: !!v.installed }
-  } catch {
-    /* unavailable or corrupt: start over */
-  }
-  return { tokens: {}, installed: false }
-}
-function save(v: Saved) {
-  try {
-    sessionStorage.setItem(SAVED, JSON.stringify(v))
-  } catch {
-    /* private mode: progress lasts while the page is open */
-  }
-}
-
 function Connect() {
   const mint = useMintToken()
+  // The account this page was opened for: AppShell remounts the signed-in tree when it changes.
+  const [owner] = useState(() => auth.get().account)
   // Core mints one agent per harness, so an Astra install gets its own token (minted on first switch).
-  const [tokens, setTokens] = useState<Partial<Record<HarnessTab, ConnectToken>>>(() => loadSaved().tokens)
+  const [tokens, setTokens] = useState<Partial<Record<HarnessTab, ConnectToken>>>(() => loadSaved(owner).tokens)
   const [reveal, setReveal] = useState(false)
   const [harness, setHarness] = useState<HarnessTab>('claudeCode')
-  const [installed, setInstalled] = useState(() => loadSaved().installed)
+  const [installed, setInstalled] = useState(() => loadSaved(owner).installed)
   const [mintError, setMintError] = useState<string | null>(null)
-  useEffect(() => save({ tokens, installed }), [tokens, installed])
+  useEffect(() => save(owner, { tokens, installed }), [owner, tokens, installed])
   // Polls only while waiting on step 3; one read up front tells us a machine is already connected.
   const status = useConnectStatus(true, installed)
   const first = !!status.data?.firstHookReceivedAt

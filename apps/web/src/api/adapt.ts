@@ -138,7 +138,7 @@ export function reviewDetail(d: Obj, viewerUserId?: string): DraftReview | Reque
     return { type: 'builder_reply', item: reviewItem(d.item), question: message(d.question), draft: message(d.draft), thread: thread(d.thread, viewerUserId) }
   }
   if (d.from && typeof d.intro === 'string') {
-    return { type: 'request', item: reviewItem(d.item), from: { ...agentRef(d.from), stranger: true }, intro: d.intro, quarantined: false, screen: d.screen ?? { label: 'clean', layers: ['l0'] } }
+    return { type: 'request', item: reviewItem(d.item), from: { ...agentRef(d.from), stranger: true }, intro: d.intro, quarantined: false, screen: d.screen ?? UNSCREENED /* never clean (I8), defined below */ }
   }
   const act = activity(d.activity)
   // Put the drafted highlight first: the view previews highlights[0].
