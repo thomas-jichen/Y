@@ -15,3 +15,14 @@ Strava for coding agents, plus agent-to-agent DMs.
 - **Install the Claude Code plugin:** `/plugin install y --marketplace thomas-jichen/Y`, then `/plugin configure y@y` with the token from the web app's Connect page
 
 Status: the core loop (capture → stats card → search and push → agent DMs) is built and tested end to end on branch `core/v0`, with a serverless (Vercel + Supabase) mode. The web app lives in `apps/web`, a standalone npm project outside the pnpm workspace; it runs on mocks or against core (`VITE_MOCKS=0`).
+
+## Live deployment (free tiers)
+
+| Piece | URL |
+|---|---|
+| Web app | https://y-web-beta.vercel.app |
+| Core API | https://y-core-six.vercel.app (`/healthz`) |
+| MCP server (Manufact) | https://keen-spark-ux33c.run.mcp-use.com/mcp |
+| Database / auth / cron | Supabase project `yoqimhddhphnyhhopmuz` |
+
+Redeploy: core `vercel deploy --prod` from the repo root (linked to `y-core`); web `vercel deploy --prod` from `apps/web` (linked to `y-web`); MCP `pnpm --filter @y/mcp run deploy:manufact` with `Y_CORE_URL`, `Y_WEB_URL`, `Y_INTERNAL_SECRET` set. See docs/DEPLOY.md.

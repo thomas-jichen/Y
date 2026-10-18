@@ -1,14 +1,19 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "installCommand": "cd ../.. && pnpm install --frozen-lockfile --filter @y/core...",
-  "buildCommand": "",
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
+  "buildCommand": "cd ../.. && pnpm --filter @y/core build:vercel",
   "outputDirectory": ".",
   "functions": {
-    "api/index.ts": {
+    "api/index.mjs": {
       "maxDuration": 30,
       "memory": 1024
     }
   },
-  "rewrites": [{ "source": "/(.*)", "destination": "/api" }]
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api"
+    }
+  ]
 }

@@ -19,23 +19,23 @@ cd "$(dirname "$0")/.."
 
 pnpm exec tsx scripts/prepare-deploy.ts
 
-env_file="$(mktemp)"
-trap 'rm -f "$env_file"' EXIT
-chmod 600 "$env_file"
-{
-  printf 'Y_CORE_URL=%s\n' "$Y_CORE_URL"
-  printf 'Y_WEB_URL=%s\n' "$Y_WEB_URL"
-  printf 'Y_INTERNAL_SECRET=%s\n' "$Y_INTERNAL_SECRET"
-} > "$env_file"
-
 cd deploy
-# The bundle entry is src/server.js, which mcp-use's entry auto-detection does not
-# look for, so pin the build and start commands to the package scripts.
+[ "${1:-}" = "--" ] && shift
+# Manufact's --env-file must live inside the uploaded folder (it would ship with the
+# source), so deploy first, then set the env vars on the server by id. The secret is
+# stored write-only. Env changes apply to the running server.
 npx mcp-use deploy --no-github --name y-mcp \
-  --env-file "$env_file" \
   --build-command "npm run build" \
   --start-command "npm start" \
   "$@"
+
+sid="$(npx mcp-use servers list --json 2>/dev/null | node -e '
+  let s=""; process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{const j=JSON.parse(s);
+  const l=Array.isArray(j)?j:(j.items??j.servers??[]); const x=l.find((x)=>x.name==="y-mcp"); if(x) console.log(x.id);});')"
+: "${sid:?could not find the y-mcp server id}"
+npx mcp-use servers env set "$sid" "Y_CORE_URL=$Y_CORE_URL" --json >/dev/null
+npx mcp-use servers env set "$sid" "Y_WEB_URL=$Y_WEB_URL" --json >/dev/null
+npx mcp-use servers env set "$sid" "Y_INTERNAL_SECRET=$Y_INTERNAL_SECRET" --secret --json >/dev/null
 
 echo
 echo "MCP URL (the slug is generated; never hard-code it):"

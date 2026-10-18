@@ -11,3 +11,8 @@ coverage/
 eval/results/
 .turbo/
 .mcp-use/usage.json
+.vercel
+.env*
+apps/core/api/index.mjs
+apps/core/api/index.mjs.map
+apps/mcp/.deploy-env.*

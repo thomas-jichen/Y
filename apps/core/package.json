@@ -14,7 +14,8 @@
     "start": "tsx src/main.ts",
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts",
-    "smoke:serverless": "tsx scripts/smoke-serverless.ts"
+    "smoke:serverless": "tsx scripts/smoke-serverless.ts",
+    "build:vercel": "tsx scripts/build-vercel.ts"
   },
   "dependencies": {
     "hono": "^4.13.13",
@@ -36,6 +37,7 @@
     "vitest": "^5.0.5",
     "typescript": "^7.0.2",
     "@types/node": "^26.6.5",
-    "tsx": "^4.23.15"
+    "tsx": "^4.23.15",
+    "esbuild": "^0.28.2"
   }
 }

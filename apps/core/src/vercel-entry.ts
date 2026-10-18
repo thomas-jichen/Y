@@ -4,7 +4,7 @@
  * the same shape hono/vercel's `handle(app)` produces, with the app built
  * lazily on the first request of a warm instance.
  */
-import { createServerlessHandler } from '../src/serverless.js';
+import { createServerlessHandler } from './serverless.js';
 
 const handler = createServerlessHandler();
 
