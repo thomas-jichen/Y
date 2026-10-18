@@ -129,6 +129,13 @@ describe('heuristicDrafts', () => {
     expect(d.body.steps).toEqual(['Bash: pnpm add -D vitest@5', 'Bash: pnpm test']);
     expect(d.body.verification).toBe('Bash: Test Files 4 passed (4)');
   });
+  it('clips titles to 90 chars that stay within the limit after NFKC', () => {
+    const long = DIGEST.replace(/^ERROR Bash: .*$/m, (l) => `${l} ${'ﬁx '.repeat(60)}`);
+    const d = heuristicDrafts({ digest: long, episodes: [], normalize: (t) => t })[0]!;
+    expect(d.title.length).toBeLessThanOrEqual(90);
+    expect(d.title.normalize('NFKC')).toBe(d.title);
+    expect(d.title.endsWith('...')).toBe(true);
+  });
   it('yields nothing without a fix', () => {
     expect(heuristicDrafts({ digest: 'TOOL Bash: x\nERROR Bash: boom', episodes: [], normalize: (t) => t })).toEqual([]);
   });

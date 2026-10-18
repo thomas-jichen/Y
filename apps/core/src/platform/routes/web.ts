@@ -26,6 +26,7 @@ import { requireRecentLogin } from '../web-guard.js';
 import { decideReviewTx } from '../review-decide.js';
 import { l0Scan, normalizeUntrusted } from '@y/safety';
 import { agentInfos, agentRef } from '../../messaging/util.js';
+import { builderReplyDetail } from '../../messaging/threads.js';
 import { bareId, fail, iso, num, parseOr, readJson, sha256Hex } from '../util.js';
 
 const PAGE = 20;
@@ -174,6 +175,7 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
       if (!row) return { status: 404 as const };
       const [item] = await reviewItemsFromRows(tx, [row]);
       if (row.kind === 'dm_request' && item) return { status: 'dm' as const, item, mid: bareId('m', String(row.ref_id)) };
+      if (row.kind === 'builder_reply' && item) return { status: 'builder' as const, item, mid: bareId('m', String(row.ref_id)) };
       if (row.kind !== 'draft') return { status: 501 as const, kind: row.kind as string };
       const hid = bareId('h', String(row.ref_id));
       const h = hid
@@ -242,6 +244,12 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
         screen: { label: l0Scan(norm, 'dm_stranger').label, layers: ['l0'] },
         threadId: `t_${intro.m.thread_id}`,
       };
+      return c.json(out);
+    }
+    if (detail.status === 'builder') {
+      // The draft is the owner's own agent's message; the question is customer text (untrusted, plain text in the UI).
+      const out = detail.mid ? await builderReplyDetail(deps, caller, detail.item, detail.mid) : null;
+      if (!out) return fail(c, 'NOT_FOUND', 'review item not found');
       return c.json(out);
     }
     if (detail.status === 404) return fail(c, 'NOT_FOUND', 'review item not found');

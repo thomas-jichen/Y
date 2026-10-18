@@ -4,6 +4,7 @@
 import type {
   Activity,
   AgentRef,
+  BuilderReplyReview,
   ConnectToken,
   DraftReview,
   Harness,
@@ -11,6 +12,7 @@ import type {
   Me,
   Message,
   ModelFamily,
+  Product,
   RealtimeChannel,
   RequestReview,
   ReviewItem,
@@ -120,8 +122,14 @@ export function reviewList(r: unknown): { items: ReviewItem[] } {
   return { items: arr.map(reviewItem) }
 }
 
-/** Core ReviewDetail has no `type` tag: a DmRequestReview has `from` + `intro`; otherwise it is a draft. */
-export function reviewDetail(d: Obj): DraftReview | RequestReview {
+/**
+ * Core ReviewDetail has no `type` tag: a DmRequestReview has `from` + `intro`, a BuilderReplyReview
+ * has `question` + `draft`; otherwise it is a draft. `viewerUserId` names the builder's side of the thread.
+ */
+export function reviewDetail(d: Obj, viewerUserId?: string): DraftReview | RequestReview | BuilderReplyReview {
+  if (d.draft && d.question && d.thread) {
+    return { type: 'builder_reply', item: reviewItem(d.item), question: message(d.question), draft: message(d.draft), thread: thread(d.thread, viewerUserId) }
+  }
   if (d.from && typeof d.intro === 'string') {
     return { type: 'request', item: reviewItem(d.item), from: { ...agentRef(d.from), stranger: true }, intro: d.intro, quarantined: false, screen: d.screen ?? { label: 'clean', layers: ['l0'] } }
   }
@@ -206,4 +214,9 @@ export function usage(u: Obj): UsageSeries {
 export function connectToken(t: Obj): ConnectToken {
   const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : v ? [String(v)] : [])
   return { token: String(t.token), shownOnce: true, installCommands: { claudeCode: list(t.installCommands?.claudeCode), astra: list(t.installCommands?.codex ?? t.installCommands?.astra) } }
+}
+
+/** Core Product: the builder agent is core's AgentRef. */
+export function product(p: Obj): Product {
+  return { ...(p as Product), builderAgent: p.builderAgent ? agentRef(p.builderAgent) : null, claims: p.claims ?? [] }
 }

@@ -39,15 +39,36 @@ export const HIGHLIGHT_COLS = `h.id, h.author_agent_id, h.owner_user_id, h.team_
   h.visibility::text as visibility, h.screen_label::text as screen_label, h.screen_layers::text[] as screen_layers,
   h.measured_help, h.measured_fail, h.confirmations, h.quality, h.activity_id`;
 
+/**
+ * At most `max` chars after NFKC. The envelope NFKC-normalizes content, which can grow stored
+ * text ('…' → '...') past the schema limit and fail the whole tool output.
+ */
+function fit(s: string, max: number): string {
+  const t = s.normalize('NFKC');
+  return t.length <= max ? t : `${t.slice(0, max - 3).trimEnd()}...`;
+}
+
+function fitBody(b: HighlightEnvelopeBody): HighlightEnvelopeBody {
+  return {
+    problem: fit(b.problem, 600),
+    steps: b.steps.map((s) => fit(s, 300)),
+    pitfalls: b.pitfalls.map((p) => ({ tried: fit(p.tried, 200), why_failed: fit(p.why_failed, 300) })),
+    verification: fit(b.verification, 300),
+    applies_when: fit(b.applies_when, 300),
+    not_applies_when: fit(b.not_applies_when, 300),
+  };
+}
+
 export async function highlightEnvelope(deps: CoreDeps, caller: Caller | null, h: HighlightRow, full: boolean) {
   const info = (await deps.db.asService((s) => agentInfos(s, [h.author_agent_id]))).get(h.author_agent_id);
   const rel = caller ? await deps.db.asService((s) => relationshipBetween(s, caller.userId, h.owner_user_id)) : 'stranger';
-  const content: Record<string, unknown> = { kind: h.kind, title: h.title, summary: h.summary, tags: h.tags ?? [] };
+  const content: Record<string, unknown> = { kind: h.kind, title: fit(h.title, 90), summary: fit(h.summary, 400), tags: h.tags ?? [] };
   if (full && h.body && typeof h.body === 'object' && Object.keys(h.body).length > 0) {
     // Stored bodies use the web casing (whyFailed, appliesWhen); envelopes use snake_case.
     const stored = HighlightBody.safeParse(h.body);
-    if (stored.success) content.body = toHighlightEnvelopeBody(stored.data);
-    else if (HighlightEnvelopeBody.safeParse(h.body).success) content.body = h.body;
+    const env = HighlightEnvelopeBody.safeParse(h.body);
+    if (stored.success) content.body = fitBody(toHighlightEnvelopeBody(stored.data));
+    else if (env.success) content.body = fitBody(env.data);
   }
   return makeEnvelope({
     kind: 'highlight',

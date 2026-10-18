@@ -26,9 +26,10 @@ function parseLines(digest: string): Line[] {
   });
 }
 
+/** One line of at most `n` chars. NFKC first and ASCII dots: envelopes NFKC-normalize text, which would grow '…' past the schema limit. */
 function clip(s: string, n: number): string {
-  const one = s.replace(/\s+/g, ' ').trim();
-  return one.length <= n ? one : `${one.slice(0, n - 1)}…`;
+  const one = s.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  return one.length <= n ? one : `${one.slice(0, n - 3).trimEnd()}...`;
 }
 
 export interface HeuristicInput {

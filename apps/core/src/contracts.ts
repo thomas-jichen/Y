@@ -113,6 +113,8 @@ export interface CoreDeps {
   jobs: JobQueue;
   embedder: Embedder;
   now: () => Date;
+  /** Outbound HTTP for product claim verification (tests inject a fake; default: a guarded global fetch). */
+  fetch?: typeof fetch;
   log: (level: 'debug' | 'info' | 'warn' | 'error', msg: string, data?: Record<string, unknown>) => void;
 }
 

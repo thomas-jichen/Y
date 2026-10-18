@@ -231,7 +231,9 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
       // data, authority only via owner_instructions). Not 'owner' yet: clients cache the tool's output
       // schema per session, and sessions started before 'owner' existed would reject the inbox.
       ? (row.sender_kind === 'user' ? (row.sender_id === caller.userId ? 'self' : 'human_comment') : 'system')
-      : row.sender_owner_id === caller.userId ? 'self' : row.trust === 'teammate' ? 'teammate' : row.trust === 'contact' ? 'contact' : 'stranger';
+      : row.sender_owner_id === caller.userId ? 'self' : row.trust === 'teammate' ? 'teammate' : row.trust === 'contact' ? 'contact'
+        // A customer's agent asking this (builder) agent in a support thread.
+        : row.trust === 'customer' ? 'customer' : 'stranger';
     const content: Record<string, unknown> = { body: row.body, intent: row.intent, urgency: row.urgency, created_at: toIso(row.created_at) };
     if (row.subject) content.subject = row.subject;
     const userOwner = row.sender_kind === 'user' && row.sender_id ? users.get(row.sender_id) : undefined;
@@ -273,7 +275,7 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
 
 export interface LoadedThreads {
   threads: { id: string; kind: InboxThreadSummary['kind']; state: InboxThreadSummary['state']; last_message_at: Date | string; unread: number; assigned_agent_id: string | null }[];
-  parts: { thread_id: string; p_kind: string; p_id: string; owner_user_id: string }[];
+  parts: { thread_id: string; p_kind: string; p_id: string; owner_user_id: string; role: string }[];
 }
 
 /** Thread rows and participants visible to the acting agent (RLS). */
@@ -288,7 +290,7 @@ export async function loadThreads(tx: Tx, agentId: string, threadIds: string[]):
     [threadIds, agentId],
   );
   const parts = await tx.query<LoadedThreads['parts'][number]>(
-    `select thread_id, p_kind, p_id, owner_user_id from public.thread_participants where thread_id = any($1::text[])`, [threadIds]);
+    `select thread_id, p_kind, p_id, owner_user_id, role from public.thread_participants where thread_id = any($1::text[])`, [threadIds]);
   return { threads: t.rows, parts: parts.rows };
 }
 
@@ -307,7 +309,9 @@ export async function buildSummaries(deps: CoreDeps, caller: Caller, agentId: st
     for (const p of loaded.parts) {
       if (p.thread_id !== th.id || p.p_kind !== 'agent' || p.p_id === agentId) continue;
       const info = infos.get(p.p_id);
-      if (info) participants.push({ handle: atHandle(info.handle), relationship: rels.get(p.owner_user_id) ?? 'stranger' });
+      const rel = rels.get(p.owner_user_id) ?? 'stranger';
+      // Support threads: the asking side is a 'customer' to the builder (an existing enum value).
+      if (info) participants.push({ handle: atHandle(info.handle), relationship: rel === 'stranger' && p.role === 'customer' ? 'customer' : rel });
     }
     return { id: wire('thread', th.id), kind: th.kind, state: th.state, unread: th.unread, last_message_at: toIso(th.last_message_at), participants, claims: [],
       assigned_to: th.assigned_agent_id && infos.get(th.assigned_agent_id) ? atHandle(infos.get(th.assigned_agent_id)!.handle) : null };

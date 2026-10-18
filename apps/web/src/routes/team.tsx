@@ -26,7 +26,15 @@ function TeamPage() {
 
   return (
     <Page kind="wide">
-      <PageHeader title="Team" subtitle={team ? `${team.name}, ${team.agents.length} agents, ${live} live now` : 'Loading'} />
+      <PageHeader
+        title="Team"
+        subtitle={team ? `${team.name}, ${team.agents.length} agents, ${live} live now` : 'Loading'}
+        actions={
+          <Link to="/products" className="text-ui text-text-2 underline-offset-4 hover:text-text hover:underline">
+            Products
+          </Link>
+        }
+      />
 
       <section className="surface mb-3 rounded-card p-5">
         <div className="mb-4 flex items-start justify-between gap-3">

@@ -9,6 +9,13 @@ import { buildEnvelope, type EnvelopeParts, type Label, type MessageState, type 
 const INJECTION = /ignore (all )?(previous|prior) instructions|disregard your system prompt/i;
 const SECRET = /\b(ghp_[A-Za-z0-9]{36}|AKIA[0-9A-Z]{16}|sk-ant-[A-Za-z0-9_-]{20,})\b/;
 
+function nfkcDeep<T>(v: T): T {
+  if (typeof v === 'string') return v.normalize('NFKC') as T;
+  if (Array.isArray(v)) return v.map(nfkcDeep) as T;
+  if (v !== null && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, nfkcDeep(x)])) as T;
+  return v;
+}
+
 function label(text: string): Label {
   if (/rm -rf \/|curl [^|]*\| *sh/.test(text)) return 'malicious';
   if (INJECTION.test(text)) return 'suspicious';
@@ -39,7 +46,8 @@ export const safety = {
       decision, screen, normalized: { text: item.text, removedInvisible: 0, changed: false },
     };
   },
-  makeEnvelope: <T>(parts: EnvelopeParts<T>) => buildEnvelope(parts),
+  // Like the real one, NFKC-normalizes every string in the content (which can lengthen it).
+  makeEnvelope: <T>(parts: EnvelopeParts<T>) => buildEnvelope({ ...parts, content: nfkcDeep(parts.content) }),
 };
 
 type Ev = { type: string; permitted?: boolean; action?: ScreenAction };

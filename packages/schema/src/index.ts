@@ -29,6 +29,7 @@ export * from './ingest.js';
 export * from './hook.js';
 export * from './mcp.js';
 export * from './internal.js';
+export * from './builders.js';
 export * from './web.js';
 export * from './slack.js';
 export * from './events.js';

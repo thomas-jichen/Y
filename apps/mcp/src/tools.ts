@@ -2,9 +2,10 @@
  * The Y MCP tool surface (v0 slice). Each tool validates its input with
  * the `@y/schema` contract, forwards to core, and maps the reply to an
  * MCP result. Tools cut from the slice (compare_setups,
- * propose_setup_change, find_builder, ask_builder, whats_happening) are not
- * registered. scroll_feed, create_post and scroll_action serve team posts
- * and go-scroll sessions (setup suggestions stay empty in v0).
+ * propose_setup_change, whats_happening) are not registered. scroll_feed,
+ * create_post and scroll_action serve team posts and go-scroll sessions
+ * (setup suggestions stay empty in v0). find_builder and ask_builder reach a
+ * product's builder agent.
  */
 import { TOOLS, TOOL_POLICY, makeError, toMcpErrorBody, type ErrorBody, type ToolName } from '@y/schema';
 import type { CallToolResult, ToolAnnotations } from 'mcp-use';
@@ -21,6 +22,8 @@ export const SLICE_TOOLS = [
   'inbox',
   'send_message',
   'update_thread',
+  'find_builder',
+  'ask_builder',
   'report_outcome',
   'post_activity',
   'review_queue',
@@ -29,6 +32,21 @@ export type SliceTool = (typeof SLICE_TOOLS)[number];
 
 /** `_meta` key that asks Claude clients to load a tool eagerly. */
 export const ALWAYS_LOAD_META = 'anthropic/alwaysLoad';
+
+/**
+ * `_meta` key that makes Claude clients show the approval card on every call
+ * (no stored grant or auto-approval answers it; see docs/spikes S16). Set on
+ * tools whose TOOL_POLICY is `requiresUserInteraction: 'always'`.
+ */
+export const REQUIRES_USER_INTERACTION_META = 'anthropic/requiresUserInteraction';
+
+/** Fixed-text `_meta` for a tool listing: alwaysLoad and requiresUserInteraction per TOOL_POLICY. */
+export function toolMeta(name: SliceTool): Record<string, unknown> | undefined {
+  const meta: Record<string, unknown> = {};
+  if (TOOL_SPECS[name].alwaysLoad) meta[ALWAYS_LOAD_META] = true;
+  if (TOOL_POLICY[name].requiresUserInteraction === 'always') meta[REQUIRES_USER_INTERACTION_META] = true;
+  return Object.keys(meta).length ? meta : undefined;
+}
 
 interface ToolSpec {
   title: string;
@@ -95,6 +113,18 @@ export const TOOL_SPECS: Record<SliceTool, ToolSpec> = {
     description:
       'Call after you have handled a thread from inbox: mark_handled, resolve, escalate to your human, assign, mute/unmute, or release a work claim. Accepting or declining DM requests is human-only and not available here.',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  find_builder: {
+    title: 'Find a product builder',
+    description:
+      "Call when stuck on a third-party dependency, SDK, API or error from a package you didn't write. Pass the package (with ecosystem npm or pypi), a GitHub owner/repo, a domain, or the error text. Returns verified products whose builder agent answers questions, with presence and reply SLA; ask one with ask_builder. Works signed out.",
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  ask_builder: {
+    title: 'Ask a product builder',
+    description:
+      "Call after find_builder returns a builder: ask one focused question in your own words (product is the product_id or slug; optional context: stack, package_version, error_signature). Never paste code, secrets, keys, file paths or customer data: those are blocked (HELD_FOR_SENDER). Your human approves each question. The answer arrives later in inbox after the builder's human approves it. Use a fresh idempotency_key per question.",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   report_outcome: {
     title: 'Report an item outcome',

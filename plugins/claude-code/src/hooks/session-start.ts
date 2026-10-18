@@ -3,14 +3,18 @@
  * the brief (800 ms), cache it, and print ≤800 chars of rendered pointers as
  * additionalContext plus a human-facing systemMessage. Offline → cached
  * pointers (≤6 h old). The human also hears how many new team posts wait,
- * from the listener's last pulse (a count only, fixed text, I3).
+ * from the listener's last pulse (a count only, fixed text, I3). When a
+ * local dependency has a builder on Y, a locally matched P7 is added (the
+ * claim list is public and cached 24 h; dependency names stay here).
  */
 import * as fs from 'node:fs';
 import { SESSION_START_POINTER_BUDGET_CHARS } from '@y/schema/pointers';
 import type { HumanNotice } from '@y/schema/brief';
+import type { Pointer } from '@y/schema/pointers';
 import { contextOutput, failOpen, remaining, type HookCtx, type HookResult } from '../context.js';
 import * as path from 'node:path';
 import { autoUpdateOffFor, httpJson, PLUGIN_VERSION, readJson, writeJsonAtomic } from '../runtime.js';
+import { loadClaims, localDependencies, matchBuilders } from '../builders.js';
 import { readBrief, readPulse, renderBlock, sanitizeBrief, writeBrief, pushPathsAllowed, type CachedBrief } from '../state.js';
 
 const BRIEF_TIMEOUT_MS = 800;
@@ -22,6 +26,24 @@ export function outboxPending(dir: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * P7 pointers for this project's own dependencies. Nothing is fetched when the
+ * project has no manifest we read; the request carries no project data.
+ */
+export async function builderPointers(ctx: HookCtx): Promise<{ pointers: Pointer[]; dependencies: string[] }> {
+  // No token, no brief: nothing would render, so don't fetch.
+  const deps = ctx.config.token ? localDependencies(typeof ctx.input.cwd === 'string' ? ctx.input.cwd : undefined) : [];
+  if (deps.length === 0) return { pointers: [], dependencies: [] };
+  const claims = await loadClaims({
+    fetch: ctx.fetch,
+    apiUrl: ctx.config.apiUrl,
+    paths: ctx.paths,
+    now: ctx.now(),
+    timeoutMs: Math.min(BRIEF_TIMEOUT_MS, remaining(ctx) - 100),
+  });
+  return { pointers: matchBuilders(deps, claims), dependencies: deps.map((d) => d.name) };
 }
 
 async function fetchBrief(ctx: HookCtx): Promise<CachedBrief | undefined> {
@@ -110,6 +132,7 @@ export function humanMessage(ctx: HookCtx, brief: CachedBrief | undefined): stri
 export function sessionStart(ctx: HookCtx): Promise<HookResult> {
   return failOpen(ctx, 'SessionStart', async () => {
     if (outboxPending(ctx.paths.outbox)) ctx.spawnDetached('uploader', []);
+    const builders = builderPointers(ctx).catch(() => ({ pointers: [], dependencies: [] as string[] }));
     let brief = await fetchBrief(ctx);
     if (brief) {
       try {
@@ -121,9 +144,16 @@ export function sessionStart(ctx: HookCtx): Promise<HookResult> {
       const cached = readBrief(ctx.paths);
       if (cached && ctx.now() - cached.fetchedAt < CACHE_MAX_AGE_MS) brief = cached;
     }
+    const local = await builders;
+    // P7 is only ever matched here: a P7 in the brief is dropped, so the server
+    // can't make a local dependency name appear next to a product of its choosing.
     const context =
       brief && brief.tokenState === 'ok' && pushPathsAllowed(brief)
-        ? renderBlock(brief.pointers, SESSION_START_POINTER_BUDGET_CHARS)
+        ? renderBlock(
+            [...brief.pointers.filter((p) => p.template_id !== 'P7'), ...local.pointers],
+            SESSION_START_POINTER_BUDGET_CHARS,
+            { dependencies: local.dependencies },
+          )
         : '';
     const lines = [humanMessage(ctx, brief), autoUpdateNudge(ctx)].filter(Boolean);
     return contextOutput('SessionStart', context, lines.length ? lines.join('\n') : undefined);

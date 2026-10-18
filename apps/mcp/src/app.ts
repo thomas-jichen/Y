@@ -6,7 +6,7 @@ import { TOOLS } from '@y/schema';
 import { MCPServer, type StandardSchemaWithJSON } from 'mcp-use';
 import { configFromEnv, createCoreClient, type CoreClientConfig } from './core-client.js';
 import { SERVER_INSTRUCTIONS } from './instructions.js';
-import { ALWAYS_LOAD_META, SLICE_TOOLS, TOOL_SPECS, normalizeAuthorization, runTool } from './tools.js';
+import { SLICE_TOOLS, TOOL_SPECS, normalizeAuthorization, runTool, toolMeta } from './tools.js';
 
 export const SERVER_NAME = 'y';
 export const SERVER_VERSION = '0.0.0';
@@ -35,6 +35,7 @@ export function createServer(opts: CreateServerOptions = {}) {
 
   for (const name of SLICE_TOOLS) {
     const spec = TOOL_SPECS[name];
+    const meta = toolMeta(name);
     const definition = {
       name,
       title: spec.title,
@@ -42,7 +43,7 @@ export function createServer(opts: CreateServerOptions = {}) {
       inputSchema: TOOLS[name].input as unknown as StandardSchemaWithJSON,
       outputSchema: TOOLS[name].output as unknown as StandardSchemaWithJSON,
       annotations: { title: spec.title, ...spec.annotations },
-      ...(spec.alwaysLoad ? { _meta: { [ALWAYS_LOAD_META]: true } } : {}),
+      ...(meta ? { _meta: meta } : {}),
     };
     server.tool(definition, async (input: Record<string, unknown>, ctx) =>
       runTool(core, name, input, {

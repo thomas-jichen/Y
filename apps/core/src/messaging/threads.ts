@@ -13,8 +13,10 @@ import {
   ThreadsQuery,
   ulid,
   validationError,
+  type BuilderReplyReview,
   type InstructResponse,
   type Message,
+  type ReviewItem,
   type ThreadDetail,
   type Thread,
 } from '@y/schema';
@@ -40,14 +42,14 @@ import {
 
 interface ThreadRow {
   id: string; kind: Thread['kind']; subject: string; state: Thread['state']; last_message_at: Date | string;
-  last_body: string | null; last_q: boolean;
+  last_body: string | null; last_q: boolean; product_id: string | null;
 }
 
 export const PREVIEW_MAX = 280;
 
 async function loadThreadRows(tx: Tx, userId: string, ids: string[] | null, unreadOnly: boolean) {
   const t = await tx.query<ThreadRow & { unread: number }>(
-    `select t.id, t.kind, t.subject, t.state, t.last_message_at,
+    `select t.id, t.kind, t.subject, t.state, t.last_message_at, t.product_id,
             (select count(*)::int from public.message_deliveries d join public.messages m on m.id = d.message_id
                join public.agents a on a.id = d.recipient_agent_id
               where m.thread_id = t.id and a.owner_user_id = $1 and d.state in ('pending','pointer_sent')) as unread,
@@ -75,9 +77,13 @@ async function loadThreadRows(tx: Tx, userId: string, ids: string[] | null, unre
 async function buildThreads(deps: CoreDeps, caller: Caller, loaded: Awaited<ReturnType<typeof loadThreadRows>>): Promise<Thread[]> {
   const agentIds = [...new Set(loaded.parts.filter((p) => p.p_kind === 'agent').map((p) => p.p_id))];
   const userIds = [...new Set(loaded.parts.filter((p) => p.p_kind === 'user').map((p) => p.p_id))];
-  const { agents, users, settings } = await deps.db.asService(async (s) => ({
+  const productIds = [...new Set(loaded.rows.map((t) => t.product_id).filter((x): x is string => !!x))];
+  const { agents, users, settings, products } = await deps.db.asService(async (s) => ({
     agents: await agentInfos(s, agentIds),
     users: await userInfos(s, userIds),
+    // Support threads name their product (slug and name are public identifiers).
+    products: new Map((productIds.length ? (await s.query<{ id: string; slug: string; name: string }>(
+      `select id, slug, name from public.products where id = any($1::text[])`, [productIds])).rows : []).map((p) => [p.id, p])),
     settings: new Map((await s.query<{ agent_id: string; remote_instructions: boolean }>(
       `select agent_id, remote_instructions from public.agent_settings where agent_id = any($1::uuid[])`, [agentIds])).rows
       .map((r) => [r.agent_id, r.remote_instructions])),
@@ -102,6 +108,8 @@ async function buildThreads(deps: CoreDeps, caller: Caller, loaded: Awaited<Retu
       lastMessageAt: toIso(t.last_message_at), unread: t.unread,
       viewer: { canInstruct: owns && remoteOn, remoteInstructionsOn: remoteOn, needsStepUp: false },
     };
+    const product = t.product_id ? products.get(t.product_id) : undefined;
+    if (product) out.product = { id: wire('product', product.id), slug: product.slug, name: product.name };
     if (t.last_body) out.lastPreview = t.last_body.slice(0, PREVIEW_MAX);
     if (t.last_q) out.lastPreviewQuarantined = true;
     return out;
@@ -168,6 +176,29 @@ async function threadDetail(deps: CoreDeps, caller: Caller, threadId: string, cu
   const last = page[page.length - 1];
   if (msgs.length > 200 && last) res.nextCursor = wire('message', last.id);
   return res;
+}
+
+/**
+ * `GET /api/v1/review/:id` for a builder_reply item: the builder agent's
+ * draft (its owner sees it in any state), the latest customer message
+ * before it, and the support thread, all read under the owner's RLS. Null
+ * when the draft is not in the viewer's view.
+ */
+export async function builderReplyDetail(deps: CoreDeps, caller: Caller, item: ReviewItem, draftId: string): Promise<BuilderReplyReview | null> {
+  const draftThread = await deps.db.asUser(caller.claims, async (tx) => (await tx.query<{ thread_id: string }>(
+    `select m.thread_id from public.messages m join public.threads t on t.id = m.thread_id
+      where m.id = $1 and t.kind = 'support' and m.sender_owner_id = $2`, [draftId, caller.userId])).rows[0]?.thread_id);
+  if (!draftThread) return null;
+  const detail = await threadDetail(deps, caller, draftThread, null);
+  const draft = detail.messages.find((m) => m.id === wire('message', draftId));
+  if (!draft) return null;
+  const customers = await deps.db.asUser(caller.claims, async (tx) => new Set((await tx.query<{ p_id: string }>(
+    `select p_id from public.thread_participants where thread_id = $1 and p_kind = 'agent' and role = 'customer'`, [draftThread])).rows.map((r) => r.p_id)));
+  const question = detail.messages
+    .filter((m) => m.id < draft.id && m.sender.kind === 'agent' && m.sender.agent && customers.has(m.sender.agent.id))
+    .at(-1);
+  if (!question) return null;
+  return { item, question, draft, thread: detail.thread };
 }
 
 export function registerThreadRoutes(app: App, deps: CoreDeps): void {

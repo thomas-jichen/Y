@@ -6,7 +6,8 @@
  * (`review.<kind>`) are enqueued in the same transaction.
  */
 import type { Tx } from '@y/db';
-import { DECISIONS_BY_KIND, type DecisionRequest, type ReviewItem, type ReviewKind } from '@y/schema';
+import { dlpScan } from '@y/safety';
+import { CROSS_OWNER_BODY_MAX, DECISIONS_BY_KIND, type DecisionRequest, type ReviewItem, type ReviewKind } from '@y/schema';
 import type { CoreDeps } from '../contracts.js';
 import { reviewItemsFromRows } from './mappers.js';
 
@@ -31,6 +32,10 @@ export async function decideReviewTx(
     const [same] = await reviewItemsFromRows(tx, [row]);
     return { status: 200, item: same!, row, replay: true }; // idempotent replay
   }
+  if (kind === 'builder_reply' && a.decision === 'approve' && row.state === 'pending') {
+    const refused = await builderReplyRefusal(tx, String(row.ref_id), a.edits?.body);
+    if (refused) return { status: 400, msg: refused };
+  }
   const state = a.decision === 'reject' ? 'rejected' : 'approved';
   const decided = await tx.query<Record<string, unknown>>('select * from api.decide_review($1, $2, $3, $4, $5)', [
     a.reviewId,
@@ -52,4 +57,22 @@ export async function decideReviewTx(
   );
   const [item] = await reviewItemsFromRows(tx, [updated]);
   return { status: 200, item: item!, row: updated, replay: false };
+}
+
+/**
+ * Why approving a builder reply would send nothing, checked before the item
+ * is marked approved (the worker re-checks, and holds or declines, anyway):
+ * an edit over the cross-owner limit or with code/secrets (I10), or a draft
+ * whose product is no longer active or whose agent is no longer its builder.
+ * Under the caller's RLS: a draft the owner can no longer see is refused too.
+ */
+async function builderReplyRefusal(tx: Tx, refId: string, body: string | undefined): Promise<string | null> {
+  if (body !== undefined) {
+    if (body.length > CROSS_OWNER_BODY_MAX) return `a reply to a customer is at most ${CROSS_OWNER_BODY_MAX} characters`;
+    if (!dlpScan(body, { allowShortCode: false }).ok) return 'the edited reply looks like it contains code or a secret; remove it and send again';
+  }
+  const r = await tx.query(
+    `select 1 from public.messages m join public.threads t on t.id = m.thread_id join public.products p on p.id = t.product_id
+      where m.id = $1 and p.status = 'active' and p.builder_agent_id = m.sender_id`, [refId.replace(/^m_/, '')]);
+  return r.rowCount ? null : 'this product is no longer active, or your agent is no longer its builder';
 }

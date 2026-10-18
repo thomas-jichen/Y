@@ -22537,6 +22537,80 @@ var InternalMcpRequest = external_exports.object({
   meta: InternalMcpMeta.optional()
 });
 
+// ../../packages/schema/src/builders.ts
+var ProductStatus = external_exports.enum(["pending", "active", "suspended"]);
+var ReplyPolicy = external_exports.enum(["builder_approves", "auto_send"]);
+var ClaimKind = external_exports.enum(["github_repo", "npm", "pypi", "domain"]);
+var NpmName = external_exports.string().max(214).regex(/^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/, { error: "invalid npm package name" });
+var PypiName = external_exports.string().max(214).regex(/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/, { error: "invalid PyPI project name" });
+function claimValueSchema(kind) {
+  switch (kind) {
+    case "npm":
+      return NpmName;
+    case "pypi":
+      return PypiName;
+    case "github_repo":
+      return RepoSlug;
+    case "domain":
+      return Hostname;
+  }
+}
+var ClaimRef = external_exports.object({ kind: ClaimKind, value: external_exports.string().min(1).max(253) }).superRefine((c, ctx) => {
+  const r = claimValueSchema(c.kind).safeParse(c.value);
+  if (!r.success) ctx.addIssue({ code: "custom", path: ["value"], message: `invalid ${c.kind} value` });
+});
+var ProductClaimView = external_exports.object({
+  kind: ClaimKind,
+  value: external_exports.string().max(253),
+  verifiedAt: IsoTimestamp.nullable(),
+  createdAt: IsoTimestamp,
+  /** Where core looks for the marker (fixed text, see {@link claimMarker}). */
+  marker: external_exports.string().max(400)
+});
+var Product = external_exports.object({
+  id: ProductId,
+  slug: Slug,
+  name: ProductName,
+  teamId: TeamId,
+  builderAgent: AgentRef.nullable(),
+  slaMinutes: external_exports.int().min(1).max(43200),
+  replyPolicy: ReplyPolicy,
+  status: ProductStatus,
+  claims: external_exports.array(ProductClaimView).max(50),
+  createdAt: IsoTimestamp
+});
+var ProductList = external_exports.array(Product).max(200);
+var CreateProductRequest = external_exports.object({
+  slug: Slug,
+  name: ProductName,
+  /** Handle of an agent owned by a member of the team. */
+  builderAgent: Handle,
+  slaMinutes: external_exports.int().min(1).max(43200).optional(),
+  replyPolicy: ReplyPolicy.optional(),
+  teamId: TeamId.optional()
+});
+var UpdateProductRequest = external_exports.object({
+  name: ProductName.optional(),
+  builderAgent: Handle.nullable().optional(),
+  slaMinutes: external_exports.int().min(1).max(43200).optional(),
+  replyPolicy: ReplyPolicy.optional(),
+  status: external_exports.enum(["active", "suspended"]).optional()
+}).refine((u) => Object.values(u).some((v) => v !== void 0), { error: "nothing to update" });
+var VerifyFailure = external_exports.enum(["marker_missing", "not_found", "fetch_failed", "redirect", "too_large", "invalid_response"]);
+var VerifyClaimResponse = external_exports.object({
+  verified: external_exports.boolean(),
+  reason: VerifyFailure.optional(),
+  product: Product
+});
+var PublicBuilderClaim = external_exports.object({
+  kind: external_exports.enum(["npm", "pypi"]),
+  value: PackageName,
+  product_id: ProductId
+});
+var PublicBuilderClaims = external_exports.object({
+  claims: external_exports.array(PublicBuilderClaim).max(1e4)
+});
+
 // ../../packages/schema/src/web.ts
 var MeAgent = AgentRef.extend({ presence: Presence });
 var Me = external_exports.object({
