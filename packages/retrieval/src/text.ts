@@ -2,7 +2,7 @@
  * The exact text that gets embedded (PLAN §4 "What gets embedded") and query
  * normalization for search and push matching.
  */
-import type { Highlight, SetupComponentKind, StackTag, TaskIntent } from '@paceline/schema';
+import type { Highlight, SetupComponentKind, StackTag, TaskIntent } from '@y/schema';
 
 /** What can be embedded. DMs, comments, digests and unshared setups never are. */
 export type Embeddable =

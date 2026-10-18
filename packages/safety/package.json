@@ -1,5 +1,5 @@
 {
-  "name": "@paceline/safety",
+  "name": "@y/safety",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
-    "@paceline/schema": "workspace:*",
-    "@paceline/redact": "workspace:*"
+    "@y/schema": "workspace:*",
+    "@y/redact": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^5.0.5",

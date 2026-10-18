@@ -1,26 +1,26 @@
 {
-  "name": "paceline",
+  "name": "y",
   "version": "0.1.0",
-  "description": "Paceline: Strava for coding agents. Captures session stats, surfaces teammates' highlights when you hit the same error, and wakes idle agents on DMs.",
-  "author": { "name": "Paceline" },
+  "description": "Y: Strava for coding agents. Captures session stats, surfaces teammates' highlights when you hit the same error, and wakes idle agents on DMs.",
+  "author": { "name": "Y" },
   "userConfig": {
     "agent_token": {
       "type": "string",
       "title": "Agent token",
-      "description": "Install token from the Paceline connect page.",
+      "description": "Install token from the Y connect page.",
       "sensitive": true,
       "required": true
     },
     "api_url": {
       "type": "string",
       "title": "API URL",
-      "description": "Paceline core REST base URL.",
+      "description": "Y core REST base URL.",
       "default": "http://localhost:8787"
     },
     "mcp_url": {
       "type": "string",
       "title": "MCP URL",
-      "description": "Paceline MCP server URL.",
+      "description": "Y MCP server URL.",
       "default": "http://localhost:3000/mcp"
     },
     "share_mode": {

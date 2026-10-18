@@ -1,6 +1,6 @@
 /**
  * Plugin hook handlers, run in-process with synthetic stdin JSON, a
- * synthetic transcript and a fake core on 127.0.0.1. `@paceline/capture` is
+ * synthetic transcript and a fake core on 127.0.0.1. `@y/capture` is
  * replaced with a small fake (it's implemented in parallel); redact, pointers
  * and schema are the real libraries.
  */
@@ -9,12 +9,12 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { IngestChunk } from '@paceline/schema/ingest';
-import { isRenderedPointer } from '@paceline/pointers';
+import { IngestChunk } from '@y/schema/ingest';
+import { isRenderedPointer } from '@y/pointers';
 
-vi.mock('@paceline/capture', async () => {
+vi.mock('@y/capture', async () => {
   const fsm = await import('node:fs');
-  const { emptyStats } = await import('@paceline/schema/stats');
+  const { emptyStats } = await import('@y/schema/stats');
   type Rec = { kind: string; version?: string; role?: string; content: { type: string; text?: string }[]; isHumanPrompt: boolean };
   return {
     readTranscriptDelta: async (file: string, cursor: { offset: number } | null) => {
@@ -108,20 +108,20 @@ function outboxFiles(): string[] {
 
 /** Test-local grammar for the templates these tests emit (independent of the pointers lib). */
 const LOCAL_GRAMMAR = [
-  /^Paceline: [1-9]\d{0,2} unread DM\(s\)( from @[a-z0-9-]{3,32})?\. Call the inbox tool( with thread_id t_[0-9A-HJKMNP-TV-Z]{26})?\.$/,
-  /^Paceline: [1-9]\d{0,2} item\(s\) await your human's review\. Call review_queue and share the links with your human\.$/,
-  /^Paceline: a (team|public) highlight shows a fix for this exact error \((6\d|[7-9]\d|100)% match\)\. Call get_item with id h_[0-9A-HJKMNP-TV-Z]{26}\.$/,
+  /^Y: [1-9]\d{0,2} unread DM\(s\)( from @[a-z0-9-]{3,32})?\. Call the inbox tool( with thread_id t_[0-9A-HJKMNP-TV-Z]{26})?\.$/,
+  /^Y: [1-9]\d{0,2} item\(s\) await your human's review\. Call review_queue and share the links with your human\.$/,
+  /^Y: a (team|public) highlight shows a fix for this exact error \((6\d|[7-9]\d|100)% match\)\. Call get_item with id h_[0-9A-HJKMNP-TV-Z]{26}\.$/,
 ];
 
-describe('PACELINE_CHILD', () => {
+describe('Y_CHILD', () => {
   it('short-circuits every hook with exit 0, no output, no network, no files', async () => {
     const transcript = path.join(dir, 't.jsonl');
     fs.copyFileSync(path.join(here, 'fixtures', 'transcript.jsonl'), transcript);
     for (const ev of Object.keys(HANDLERS) as HookEvent[]) {
-      const r = await run(ev, { session_id: SID, transcript_path: transcript, error: 'boom', tool_name: 'Bash' }, { PACELINE_CHILD: '1' });
+      const r = await run(ev, { session_id: SID, transcript_path: transcript, error: 'boom', tool_name: 'Bash' }, { Y_CHILD: '1' });
       expect(r).toEqual({ exitCode: 0 });
     }
-    const ctx = makeCtx('Stop', JSON.stringify({ session_id: SID }), { env: testEnv(dir, core.url, { PACELINE_CHILD: '1' }) });
+    const ctx = makeCtx('Stop', JSON.stringify({ session_id: SID }), { env: testEnv(dir, core.url, { Y_CHILD: '1' }) });
     expect(await listen(ctx)).toEqual({ exitCode: 0 });
     expect(core.requests).toHaveLength(0);
     expect(spawned).toHaveLength(0);
@@ -281,7 +281,7 @@ describe('SessionStart', () => {
     await core.close();
     const r = await run('SessionStart', { session_id: SID });
     const out = JSON.parse(r.stdout!);
-    expect(out.hookSpecificOutput.additionalContext).toMatch(/^Paceline: 4 item\(s\) await/);
+    expect(out.hookSpecificOutput.additionalContext).toMatch(/^Y: 4 item\(s\) await/);
 
     core = await startFakeCore(() => ({ status: 401, body: { error: { code: 'UNAUTHORIZED', message: 'x', retryable: false } } }));
     const r2 = await run('SessionStart', { session_id: SID });
@@ -309,7 +309,7 @@ describe('PostToolUseFailure', () => {
     const r = await run('PostToolUseFailure', { session_id: SID, tool_name: 'Bash', error: `npm ERR! 401 token ${ghp} rejected` });
     const out = JSON.parse(r.stdout!);
     expect(out.hookSpecificOutput.additionalContext).toBe(
-      `Paceline: a team highlight shows a fix for this exact error (82% match). Call get_item with id ${HID}.`,
+      `Y: a team highlight shows a fix for this exact error (82% match). Call get_item with id ${HID}.`,
     );
     const sent = core.requests[0]!.body as { signature: string; tool: string };
     expect(sent.signature).not.toContain('ghp_');
@@ -337,8 +337,8 @@ describe('UserPromptSubmit', () => {
     const r = await run('UserPromptSubmit', { session_id: SID, prompt: 'secret prompt text' });
     const ctxText: string = JSON.parse(r.stdout!).hookSpecificOutput.additionalContext;
     expect(ctxText.split('\n')).toEqual([
-      'Paceline: your owner left 1 instruction(s). Call the inbox tool.',
-      'Paceline: 2 unread DM(s). Call the inbox tool.',
+      'Y: your owner left 1 instruction(s). Call the inbox tool.',
+      'Y: 2 unread DM(s). Call the inbox tool.',
     ]);
     expect((await run('UserPromptSubmit', { session_id: SID, prompt: 'again' })).stdout).toBeUndefined();
     expect(core.requests).toHaveLength(0);
@@ -366,11 +366,11 @@ describe('listener', () => {
         : undefined;
     const r = await listen(listenCtx(), { runMs: 10_000, sleep: async () => {} });
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toBe(`Paceline: 1 unread DM(s) from @bob-dev. Call the inbox tool with thread_id ${TID}.`);
+    expect(r.stderr).toBe(`Y: 1 unread DM(s) from @bob-dev. Call the inbox tool with thread_id ${TID}.`);
     expect(r.stdout).toBeUndefined();
     const req = core.requests[0]!;
     expect(req.url).toContain(`sessionId=${SID}`);
-    expect(req.headers['x-paceline-session']).toBe(SID);
+    expect(req.headers['x-y-session']).toBe(SID);
     expect(req.headers.authorization).toBe('Bearer pulse_token_abcdefghijklmnop');
     expect(JSON.parse(fs.readFileSync(path.join(dir, 'state', 'pulse.json'), 'utf8'))).toMatchObject({ cursor: 'cur_9' });
     expect(fs.existsSync(path.join(dir, 'state', `listener-${SID}.json`))).toBe(false);
@@ -409,7 +409,7 @@ describe('listener', () => {
     });
     const r = await listen(listenCtx(), { runMs: 10_000, sleep: async () => {} });
     expect(r.exitCode).toBe(2);
-    expect(r.stderr).toBe('Paceline: new activity. Call the inbox tool.');
+    expect(r.stderr).toBe('Y: new activity. Call the inbox tool.');
   });
 
   it('only one live listener per session', async () => {
@@ -424,10 +424,10 @@ describe('listener', () => {
 describe('bundle', () => {
   const dist = path.join(here, '..', 'scripts', 'dist', 'hook.mjs');
   it.skipIf(!fs.existsSync(dist))('hook.mjs SessionStart with empty stdin exits 0', () => {
-    const env = { PATH: process.env.PATH ?? '', PACELINE_DATA_DIR: dir, CLAUDE_PLUGIN_OPTION_API_URL: 'http://127.0.0.1:9' };
+    const env = { PATH: process.env.PATH ?? '', Y_DATA_DIR: dir, CLAUDE_PLUGIN_OPTION_API_URL: 'http://127.0.0.1:9' };
     const r = spawnSync(process.execPath, [dist, 'SessionStart'], { input: '', env, timeout: 5000 });
     expect(r.status).toBe(0);
-    const r2 = spawnSync(process.execPath, [dist, 'Stop'], { input: '{}', env: { ...env, PACELINE_CHILD: '1' }, timeout: 5000 });
+    const r2 = spawnSync(process.execPath, [dist, 'Stop'], { input: '{}', env: { ...env, Y_CHILD: '1' }, timeout: 5000 });
     expect(r2.status).toBe(0);
     expect(r2.stdout.toString()).toBe('');
   });

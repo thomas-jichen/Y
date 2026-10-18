@@ -9,7 +9,7 @@ import {
   parseInternalSignatureHeader,
   toMcpErrorBody,
   type StatusOutput,
-} from '@paceline/schema';
+} from '@y/schema';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createServer } from './app.js';
 import { INSTRUCTIONS_MAX_CHARS, SERVER_INSTRUCTIONS } from './instructions.js';
@@ -30,7 +30,7 @@ interface Recorded {
 const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 
 function verify(req: IncomingMessage, raw: string): boolean {
-  const header = req.headers['x-paceline-internal'];
+  const header = req.headers['x-y-internal'];
   if (typeof header !== 'string') return false;
   const parsed = parseInternalSignatureHeader(header);
   if (!parsed) return false;
@@ -178,7 +178,7 @@ describe('tool listing', () => {
     }
   });
 
-  it('sends server instructions within budget and exposes the paceline skill', async () => {
+  it('sends server instructions within budget and exposes the y skill', async () => {
     expect(SERVER_INSTRUCTIONS.length).toBeLessThanOrEqual(INSTRUCTIONS_MAX_CHARS);
     const c = mcp();
     const init = await c.rpc('initialize', {
@@ -188,7 +188,7 @@ describe('tool listing', () => {
     });
     expect(init.instructions).toBe(SERVER_INSTRUCTIONS);
     const { resources } = await c.rpc('resources/list', {});
-    expect(resources.map((r: { uri: string }) => r.uri)).toContain('skill://paceline/SKILL.md');
+    expect(resources.map((r: { uri: string }) => r.uri)).toContain('skill://y/SKILL.md');
   });
 });
 

@@ -6,7 +6,7 @@
  *   problem = normalized error signature, steps = successful TOOL lines inside the
  *   window, pitfalls = TOOL lines that were followed by an ERROR, verification = the OK line.
  */
-import { HighlightDraft, type ErrorEpisode, type HighlightDraft as HighlightDraftT } from '@paceline/schema';
+import { HighlightDraft, type ErrorEpisode, type HighlightDraft as HighlightDraftT } from '@y/schema';
 
 export const MAX_HEURISTIC_DRAFTS = 2;
 

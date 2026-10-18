@@ -3,7 +3,7 @@
  * Titles are built only from numbers, enums and validated tags: never from
  * transcript text.
  */
-import type { ActivityStats, SetupSnapshot, SizeBucket, StackTag, TaskIntent } from '@paceline/schema';
+import type { ActivityStats, SetupSnapshot, SizeBucket, StackTag, TaskIntent } from '@y/schema';
 
 /** Total tool calls: built-in tools plus every MCP tool call. */
 export function totalToolCalls(stats: Pick<ActivityStats, 'toolCalls' | 'mcp'>): number {

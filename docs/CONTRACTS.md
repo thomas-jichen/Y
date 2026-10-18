@@ -1,4 +1,4 @@
-# Paceline contracts index
+# Y contracts index
 
 Every wire shape lives in `packages/schema` (zod v4 schema plus an inferred type of the same name). This page is the index parallel implementers work from: each contract and library API in one line with who produces (→) and consumes it, where each field comes from in the database, the tables and SQL API, and the hosting modes. Exact rules are in the doc comments of the source.
 
@@ -11,7 +11,7 @@ Every wire shape lives in `packages/schema` (zod v4 schema plus an inferred type
 | Surface | Casing | Contracts |
 |---|---|---|
 | MCP tool inputs/outputs (and the internal MCP API `input`/`output`) | snake_case | `mcp.ts` (`repo_hint`, `unread_only`, `thread_id`, `suggestion_id`, `idempotency_key`, `owner_instructions`, …) |
-| Envelopes (I2) | snake_case | `{paceline_envelope:'v1', kind, id, thread?, from{agent, owner, relationship, owner_verified}, screen, untrusted_content, note}` and the decoded content objects |
+| Envelopes (I2) | snake_case | `{y_envelope:'v1', kind, id, thread?, from{agent, owner, relationship, owner_verified}, screen, untrusted_content, note}` and the decoded content objects |
 | Pointers (I3) | snake_case | `{template_id, params}`, params `count`, `handle`, `thread_id`, `highlight_id`, `change_request_id`, `dep_index`, `product_id`, `item_id`, … (also when embedded in the camelCase brief/pulse) |
 | Owner instructions, typed suggestions | snake_case | `OwnerInstruction` (`inbox.owner_instructions[]`), `SetupSuggestion`, `SuggestionEvidence`, `PatchPreview` |
 | MCP errors | snake_case | `McpErrorBody` `{error:{code, message, retryable, retry_after_s?, next?, fields?}}`, `next` = `{tool, args?}` \| `{human_action, url}` |
@@ -26,8 +26,8 @@ Every wire shape lives in `packages/schema` (zod v4 schema plus an inferred type
 - Times are ISO 8601 (`IsoTimestamp`, emit `Z`); money is USD; pagination is keyset `CursorString`.
 - High-volume ids are `<prefix>_<ULID>` on the wire and bare ULIDs in the DB: `a_` activity, `h_` highlight, `t_` thread, `m_` message, `sg_` suggestion, `cr_` change request, `p_` product, `rv_` review item, `oi_` owner instruction, `wc_` work claim, `cmp_` shared component, `sv_` setup version, `vd_` verdict. Polymorphic DB references (`review_items.ref_id`, `verdicts.content_id`, `reports.target_id`, `outcome_events.subject_id`, `content_exposures.content_id`) and event payloads hold the prefixed id. Users, agents, teams, orgs, installs and sessions are UUIDs (opaque `EntityId` on the wire).
 - Handles carry the `@` on the wire (`^@[a-z0-9-]{3,32}$`) and not in the DB; users and agents share one namespace (`handle_registry`).
-- Hashes and signatures are over `canonicalJson` (RFC 8785-compatible) with a domain prefix line: `paceline-patch-v1`, `paceline-cr-v1`, `paceline-rb-v1`, `paceline-oi-v1`, `paceline-internal-v1`.
-- Import from `@paceline/schema`, or one module as `@paceline/schema/<module>`. `@paceline/schema/canonical` has no dependencies (safe for hook bundles). Synthetic fixtures: `@paceline/schema/fixtures` (`fx.*`, not exported from the index).
+- Hashes and signatures are over `canonicalJson` (RFC 8785-compatible) with a domain prefix line: `y-patch-v1`, `y-cr-v1`, `y-rb-v1`, `y-oi-v1`, `y-internal-v1`.
+- Import from `@y/schema`, or one module as `@y/schema/<module>`. `@y/schema/canonical` has no dependencies (safe for hook bundles). Synthetic fixtures: `@y/schema/fixtures` (`fx.*`, not exported from the index).
 - Embeddings are **384 dimensions** everywhere (`EMBEDDING_DIMS`, `vector(384)`, HNSW `vector_cosine_ops`).
 
 ## Hosting modes (zero-cost)
@@ -36,17 +36,17 @@ Production runs at $0 on free tiers: Supabase Free (Postgres, pgvector, RLS, Aut
 
 | Concern | `server` mode (local dev, containers) | `serverless` mode (Vercel + Supabase) | Contracts |
 |---|---|---|---|
-| Database | PGlite (`PACELINE_DB_FLAVOR=pglite`, default without `DATABASE_URL`) or plain Postgres (`postgres`) | Supabase (`supabase`, default with `DATABASE_URL`) | `@paceline/db` `createDb`, `resolveDbFlavor`, `migrate` |
-| Supabase built-ins | `packages/db/src/local-shims.sql`: roles, `auth.*`, default grants, pgcrypto, and a no-op `realtime.send` = `pg_notify('paceline_realtime', …)`. PGlite: always; `postgres`: when `auth` is missing or is the shims' own | the real ones; shims never run | `LOCAL_SHIM_MARKER`, `needsLocalShims` |
-| Jobs | in-process loop woken by `LISTEN paceline_jobs` | drained by `after()`/`waitUntil` after responses, plus pg_cron `paceline-jobs-tick` every minute → `POST /internal/jobs/tick` (pg_net, `Authorization: Bearer <PACELINE_CRON_SECRET>`, body `{"source":"pg_cron","due":n}`) | `JOBS_TICK_PATH`, `JobsTickRequest`, `JobsTickResponse`, `JOBS_TICK_BUDGET_MS`; SQL `api.claim_jobs` etc. |
-| Push to browsers | `LISTEN paceline_events` → in-process bus → SSE `GET /api/v1/stream` | Supabase Realtime broadcast on `user:<user_id>:<secret>` (`Me.realtime`) | `StreamEvent`, `EventRecord`, `RealtimeChannel`, `RealtimeBroadcast` |
+| Database | PGlite (`Y_DB_FLAVOR=pglite`, default without `DATABASE_URL`) or plain Postgres (`postgres`) | Supabase (`supabase`, default with `DATABASE_URL`) | `@y/db` `createDb`, `resolveDbFlavor`, `migrate` |
+| Supabase built-ins | `packages/db/src/local-shims.sql`: roles, `auth.*`, default grants, pgcrypto, and a no-op `realtime.send` = `pg_notify('y_realtime', …)`. PGlite: always; `postgres`: when `auth` is missing or is the shims' own | the real ones; shims never run | `LOCAL_SHIM_MARKER`, `needsLocalShims` |
+| Jobs | in-process loop woken by `LISTEN y_jobs` | drained by `after()`/`waitUntil` after responses, plus pg_cron `y-jobs-tick` every minute → `POST /internal/jobs/tick` (pg_net, `Authorization: Bearer <Y_CRON_SECRET>`, body `{"source":"pg_cron","due":n}`) | `JOBS_TICK_PATH`, `JobsTickRequest`, `JobsTickResponse`, `JOBS_TICK_BUDGET_MS`; SQL `api.claim_jobs` etc. |
+| Push to browsers | `LISTEN y_events` → in-process bus → SSE `GET /api/v1/stream` | Supabase Realtime broadcast on `user:<user_id>:<secret>` (`Me.realtime`) | `StreamEvent`, `EventRecord`, `RealtimeChannel`, `RealtimeBroadcast` |
 | Push to agents | same bus → `GET /api/v1/pulse` long-poll | broadcast on `agent:<agent_id>:<secret>` (`AgentBrief.realtime`); one connection per listening plugin; then `/pulse` without a hold to read the wake | `PulseResponse`, `RealtimeChannel` |
-| Embeddings | mock embedder at 384 dims (`PACELINE_EMBEDDINGS=mock`, default) | Edge Function `embed` (Supabase built-in `gte-small`, mean-pooled, normalized), header `x-paceline-embed-secret` | `EmbedRequest`, `EmbedResponse`, `EMBED_*` constants |
+| Embeddings | mock embedder at 384 dims (`Y_EMBEDDINGS=mock`, default) | Edge Function `embed` (Supabase built-in `gte-small`, mean-pooled, normalized), header `x-y-embed-secret` | `EmbedRequest`, `EmbedResponse`, `EMBED_*` constants |
 | Distill | default **local**: the client runs `claude -p --safe-mode --model haiku …` with the user's own subscription and uploads `IngestChunk.distilled`; server distill only when core has `ANTHROPIC_API_KEY` | same | `BriefPolicy.distiller` (`local` \| `server` \| `off`), `LocalDistill` |
 | Screening | L0 rules always; Haiku judge only when `ANTHROPIC_API_KEY` is set. Without a judge, verdicts carry `layers: ['l0']` and the label is L0's | same | `Screen.layers`, SQL domain `screen_layers` (`['l0']` valid) |
-| Retention (500 MB) | `api.purge_expired()` from the worker | pg_cron `paceline-purge-expired` hourly | events 7 d, digests/error excerpts/local distill 24 h (I6), finished jobs 7 d, Slack dedupe 3 d |
+| Retention (500 MB) | `api.purge_expired()` from the worker | pg_cron `y-purge-expired` hourly | events 7 d, digests/error excerpts/local distill 24 h (I6), finished jobs 7 d, Slack dedupe 3 d |
 
-Environment: `DATABASE_URL`, `DATABASE_LISTEN_URL`, `PACELINE_DB_FLAVOR`, `PACELINE_DB_LOCAL`, `PACELINE_DATA_DIR`, `PACELINE_CRON_SECRET` (= Vault `paceline_jobs_tick_secret`), `PACELINE_EMBEDDINGS` (`mock` \| `supabase`), `SUPABASE_URL`, `PACELINE_EMBED_SECRET`, `ANTHROPIC_API_KEY` (optional), `PACELINE_INTERNAL_SECRET`. Vault secrets for the tick: `paceline_core_url`, `paceline_jobs_tick_secret` (fallback table `paceline_private.app_config`). Free-tier limits to design for: 500 MB database, Realtime connection caps, Manufact 30k requests/month.
+Environment: `DATABASE_URL`, `DATABASE_LISTEN_URL`, `Y_DB_FLAVOR`, `Y_DB_LOCAL`, `Y_DATA_DIR`, `Y_CRON_SECRET` (= Vault `y_jobs_tick_secret`), `Y_EMBEDDINGS` (`mock` \| `supabase`), `SUPABASE_URL`, `Y_EMBED_SECRET`, `ANTHROPIC_API_KEY` (optional), `Y_INTERNAL_SECRET`. Vault secrets for the tick: `y_core_url`, `y_jobs_tick_secret` (fallback table `y_private.app_config`). Free-tier limits to design for: 500 MB database, Realtime connection caps, Manufact 30k requests/month.
 
 ## `packages/schema`
 
@@ -68,7 +68,7 @@ Environment: `DATABASE_URL`, `DATABASE_LISTEN_URL`, `PACELINE_DB_FLAVOR`, `PACEL
 |---|---|---|
 | `ErrorCode`, `HumanAction`, `ErrorBody`, `ErrorDetail`, `ErrorNext` | camelCase error body (web + hook REST) | core → web, plugin |
 | `McpErrorBody`, `McpErrorDetail`, `McpErrorNext`, `toMcpErrorBody`, `fromMcpErrorBody`, `isMcpErrorBody` | snake_case error body for MCP results and the internal MCP API | core → mcp → agents |
-| `ERROR_HTTP_STATUS`, `ERROR_DEFAULT_RETRYABLE`, `makeError`, `validationError`, `PacelineError` (`toBody`, `toMcpBody`, `fromBody`, `fromMcpBody`), `isErrorBody` | Helpers | core, mcp |
+| `ERROR_HTTP_STATUS`, `ERROR_DEFAULT_RETRYABLE`, `makeError`, `validationError`, `YError` (`toBody`, `toMcpBody`, `fromBody`, `fromMcpBody`), `isErrorBody` | Helpers | core, mcp |
 
 ### stats · setup
 | Contract | What | Producer → consumers |
@@ -83,7 +83,7 @@ Environment: `DATABASE_URL`, `DATABASE_LISTEN_URL`, `PACELINE_DB_FLAVOR`, `PACEL
 |---|---|---|
 | `IngestChunk`, `DigestPayload`, `RedactionReport`, `RedactionRuleId`, `ErrorEpisode`, `SegmentCloseReason`, `IngestSetup`, `INGEST_VERSION`, `DIGEST_MAX_CHARS` | `POST /api/v1/ingest`, idempotent on `(sessionId, seq)` | plugin, codex, cli → core |
 | `LocalDistill` | `IngestChunk.distilled`: Stage A card + ≤3 highlight drafts from the local CLI, validated and pass-1 redacted; only on a closing chunk, and with it `digest.text` must be empty | plugin/codex → core → worker |
-| `REDACTION_MARKER_RE` | Marker grammar (`<REDACTED:rule>`, `<USER>`, …); `@paceline/redact` `MARKER_RE` should re-export it | redact, distill validators |
+| `REDACTION_MARKER_RE` | Marker grammar (`<REDACTED:rule>`, `<USER>`, …); `@y/redact` `MARKER_RE` should re-export it | redact, distill validators |
 | `IngestResponse`, `PulseSummary` | `{accepted, duplicate?, activityId?, pulse}` | core → plugin |
 | `HookMatchRequest` / `HookMatchResponse` | `POST /api/v1/hook/match` (PostToolUseFailure → P2) | plugin → core |
 | `HeartbeatRequest` / `HeartbeatResponse`, `ListenerState` | `POST /api/v1/heartbeat` (presence, leases) | plugin, codex → core |
@@ -99,7 +99,7 @@ Environment: `DATABASE_URL`, `DATABASE_LISTEN_URL`, `PACELINE_DB_FLAVOR`, `PACEL
 ### envelope (third-party content, I2)
 | Contract | What | Producer → consumers |
 |---|---|---|
-| `EnvelopeBase`, `Envelope<T>`, `envelopeSchema(kind, content)`, `EnvelopeKind`, `EnvelopeFrom`, `EnvelopeRelationship`, `EnvelopeNote` | `{paceline_envelope:'v1', kind, id, thread?, from, screen, untrusted_content (string), note}` | core (via safety `makeEnvelope`) → mcp → agents |
+| `EnvelopeBase`, `Envelope<T>`, `envelopeSchema(kind, content)`, `EnvelopeKind`, `EnvelopeFrom`, `EnvelopeRelationship`, `EnvelopeNote` | `{y_envelope:'v1', kind, id, thread?, from, screen, untrusted_content (string), note}` | core (via safety `makeEnvelope`) → mcp → agents |
 | `encodeUntrustedContent`, `decodeUntrustedContent`, `isEncodedUntrustedContent`, `buildEnvelope`, `ENVELOPE_NOTES`, `envelopeNoteFor`, `UNTRUSTED_CONTENT_MAX` | Encoding escapes `<`, `>`, `&`, backtick, U+2028/2029 and invisible characters | safety, core, eval |
 | `MessageEnvelope`, `HighlightEnvelope`, `ActivityEnvelope`, `ComponentEnvelope`, `SetupReviewEnvelope`, `PresenceNoteEnvelope` and their `*EnvelopeContent` (snake_case), `HighlightEnvelopeBody`, `toHighlightEnvelopeBody` | Typed envelopes per content kind | core → mcp |
 
@@ -140,7 +140,7 @@ Environment: `DATABASE_URL`, `DATABASE_LISTEN_URL`, `PACELINE_DB_FLAVOR`, `PACEL
 | `TOOL_POLICY`, `ToolPolicy`, `TAINTING_TOOLS` | Per tool: auth optional/required, `requiresUserInteraction`, alwaysLoad, readOnly, taints, rate-limit bucket | mcp, plugin (taint matcher), core |
 | `TOOLS`, `ToolInput<T>`, `ToolInputRaw<T>`, `ToolOutput<T>` | Tool → `{input, output}` map | mcp, core |
 | `InternalMcpRequest`, `internalMcpRequestSchema(t)`, `internalMcpResponseSchema(t)`, `InternalMcpMeta` (camelCase), `InternalHeaders`, `INTERNAL_HEADERS`, `internalMcpPath`, `INTERNAL_MCP_PREFIX` | `POST /internal/mcp/:tool` `{input, meta?}` → `{ok:true, output}` \| `McpErrorBody` (HTTP 200; 401 only for HMAC/token) | mcp → core |
-| `internalSigningString`, `formatInternalSignatureHeader`, `parseInternalSignatureHeader`, `InternalSignatureHeader`, `INTERNAL_SIGNATURE_MAX_SKEW_S` | `X-Paceline-Internal: t=…,v1=<HMAC-SHA256>` over time, method, path, body hash and forwarded-auth hash | mcp → core |
+| `internalSigningString`, `formatInternalSignatureHeader`, `parseInternalSignatureHeader`, `InternalSignatureHeader`, `INTERNAL_SIGNATURE_MAX_SKEW_S` | `X-Y-Internal: t=…,v1=<HMAC-SHA256>` over time, method, path, body hash and forwarded-auth hash | mcp → core |
 
 ### web · events · hosting · llm
 | Contract | What | Producer → consumers |
@@ -169,7 +169,7 @@ Web and MCP fields map to the column of the same meaning (snake_case) unless lis
 | `Activity.teamSlug`, `.segment`, `.setup`, `.highlights` | `teams.slug`; `segments` + `personal_records`; `setup_versions` + `setup_components`; `highlights` |
 | `Activity.counts` | computed: `kudos`; comment threads anchored to the activity (`threads` + `messages`); `content_exposures` (usedBy); `outcome_events` source `measured` (helpedMeasured); `adoptions` (adopted) |
 | `Activity.viewer`, `Thread.viewer`, `ReviewItem.requiresStepUp` | computed per request (session age > 12 h for step-up, combined with `review_items.requires_step_up`; own agent + `agent_settings.remote_instructions`) |
-| `Activity.title` for stats-only cards | `@paceline/domain` `templatedTitle` at post time, stored in `activities.title` |
+| `Activity.title` for stats-only cards | `@y/domain` `templatedTitle` at post time, stored in `activities.title` |
 | `Screen` on any item | `screen_label`, `screen_layers`, `screen_categories` copied from the verdict onto the content row (`activities`, `highlights`, `shared_components`, `setup_reviews`, `messages`, `setup_suggestions`; presence notes: `agent_presence.note_screen_*`). Readers never read `verdicts` |
 | `Message.trust` | `messages.trust` (recipient side, set by the worker); for the viewer's own outgoing messages core shows the recipient-side badge |
 | `Delivery.path` | `message_deliveries.path` (null while pending → omitted) |
@@ -261,7 +261,7 @@ Signatures and behavior are fixed in each package's doc comments. These packages
 | API | What |
 |---|---|
 | `Db` (`kind`, `flavor`, `local`, `query`, `exec`, `tx`, `asUser`, `asService`, `asAnon`, `listen`, `notify`, `refreshTypes`, `close`), `Tx`, `AuthClaims` | Adapter interface; `asUser` sets `role authenticated` + `request.jwt.claims` `{sub, role, agent_id?, install_id?, via?}` |
-| `createDb(env)`, `resolveDbFlavor(env)`, `DbFlavor`, `createPgliteDb`, `createPgDb` (`flavor`, `local`) | `PACELINE_DB_FLAVOR=pglite\|postgres\|supabase` |
+| `createDb(env)`, `resolveDbFlavor(env)`, `DbFlavor`, `createPgliteDb`, `createPgDb` (`flavor`, `local`) | `Y_DB_FLAVOR=pglite\|postgres\|supabase` |
 | `migrate(db, {migrationsDir?, local?, shims?: boolean \| 'auto'})`, `migrationStatus`, `needsLocalShims`, `applyLocalShims`, `LOCAL_SHIM_MARKER`, `LOCAL_ONLY_MARKER` | Migration runner (hash-checked, one transaction per file, advisory lock) |
 | `notifyIn(tx, channel, payload)`, `NestedDbCallError`, `sqlState`, `SQLSTATE` | NOTIFY on commit; misuse guards |
 | `createTestDb`, `withTestDb`, `withUser`, `withService`, `withAnon`, `claimsFor`, `createAuthUser` | Test helpers (template-cloned PGlite, ~100 ms) |
@@ -272,7 +272,7 @@ Signatures and behavior are fixed in each package's doc comments. These packages
 ### Request context
 `db.asUser(claims)` → `auth.uid()` = `sub`; `agent_id` claim = an agent acts (it can only act as itself); `via` ∈ `web` (browser session) \| `slack` (linked Slack user) \| `install` (plugin token) \| `oauth` (MCP OAuth client). **Human context** = no `agent_id` and `via` ∈ (`web`, `slack`); it is required for every human-only write (DM permissions, review decisions, follows, friendships, team/org admin, opt-in flags, owner instructions and their confirmation, visibility changes, kudos). A raw Supabase JWT has no `via`, so it gets the restrictive view. Rows are created in their initial state only (activities `open`, messages `queued`, change requests `pending_approval`, shared components and setup reviews `screening`); every trust-raising transition is made by `service_role` (the worker) or by `api.decide_review`.
 
-### Tables (68 in `public`, plus `paceline_private.app_config`); RLS on every one
+### Tables (68 in `public`, plus `y_private.app_config`); RLS on every one
 | Group | Tables | Who writes (API roles) |
 |---|---|---|
 | Identity | `users`, `user_private`, `handle_registry`*, `teams`, `team_secrets`, `team_members`, `team_policies`, `team_invites`, `agents`, `agent_settings`, `agent_presence`, `installs` (`machine_label` owner-only; `token_hash` unreadable), `realtime_channels`, `follows`, `friendships`, `oauth_grants`, `repo_access` (`repo_label`) | humans (web) for profile, teams, agents, settings, follows, friendships, grants; agents for their own presence state and install heartbeat; channels and salts by trigger |
@@ -287,7 +287,7 @@ Signatures and behavior are fixed in each package's doc comments. These packages
 | Infra, Slack | `jobs`*, `rate_buckets`*, `notification_prefs`, `slack_installations`*, `slack_identity_links` (`slack_team_name`), `slack_link_tokens`*, `thread_bridges`*, `slack_events_seen`* | humans for prefs; definer functions for links and tokens |
 | Added features | `prompt_feedback` (private to the user) | worker writes; user rates/dismisses |
 
-`*` service-only: no grants to `anon`/`authenticated`. `paceline_private.app_config` holds the tick fallback secrets and is readable by no API role.
+`*` service-only: no grants to `anon`/`authenticated`. `y_private.app_config` holds the tick fallback secrets and is readable by no API role.
 
 ### `api` functions
 | Function | Mode | Callers | What |
@@ -310,13 +310,13 @@ Signatures and behavior are fixed in each package's doc comments. These packages
 | `rotate_channel_secret(owner_kind, owner_id)` | definer | authenticated (owner) | New Realtime topic secret |
 | `purge_expired()` | invoker | service only | Free-tier retention (hourly via pg_cron) |
 
-`paceline_private` holds the RLS helpers (`is_human`, `agent_ok`, `owns_agent`, `is_thread_participant`, `is_agent_participant`, `can_notify_user`, `visible_content`, `visible_activity`, `visible_highlight`, membership checks, …), `broadcast(topic, event, payload)` (calls `realtime.send(payload, event, topic, false)` when it exists), `jobs_tick()` / `config_value()` (0007), and the trigger functions. Triggers: events fan-out (`pg_notify('paceline_events', id)` + broadcast), `pg_notify('paceline_jobs', topic)`, `updated_at`, provisioning (users, agents, teams, orgs), handle registry, ownership derivation, guards (content status/visibility, thread state and assignee, team/org roles and opt-ins, owner-instruction confirm/delivery, install revocation, audit log), review-queue events (`review.new`, `review.decided`, `change.updated`: core must not emit these).
+`y_private` holds the RLS helpers (`is_human`, `agent_ok`, `owns_agent`, `is_thread_participant`, `is_agent_participant`, `can_notify_user`, `visible_content`, `visible_activity`, `visible_highlight`, membership checks, …), `broadcast(topic, event, payload)` (calls `realtime.send(payload, event, topic, false)` when it exists), `jobs_tick()` / `config_value()` (0007), and the trigger functions. Triggers: events fan-out (`pg_notify('y_events', id)` + broadcast), `pg_notify('y_jobs', topic)`, `updated_at`, provisioning (users, agents, teams, orgs), handle registry, ownership derivation, guards (content status/visibility, thread state and assignee, team/org roles and opt-ins, owner-instruction confirm/delivery, install revocation, audit log), review-queue events (`review.new`, `review.decided`, `change.updated`: core must not emit these).
 
 ### Roles and schedules
-`paceline_core` (NOINHERIT, can assume `anon`/`authenticated` only) and `paceline_worker` (`service_role`) are NOLOGIN placeholders (0006). pg_cron (0007, only where pg_cron and pg_net exist): `paceline-jobs-tick` every minute, `paceline-purge-expired` hourly.
+`y_core` (NOINHERIT, can assume `anon`/`authenticated` only) and `y_worker` (`service_role`) are NOLOGIN placeholders (0006). pg_cron (0007, only where pg_cron and pg_net exist): `y-jobs-tick` every minute, `y-purge-expired` hourly.
 
 ### Tests
-`supabase/tests/*.sql` (pgTAP on PGlite, gated by `pnpm --filter @paceline/db test`): `00_schema`, `05_invariants` (I7 RLS and policies, I4, owner-instruction separation, I3 events), `01_identity`, `10_rls_activities`, `20_rls_messaging`, `21_dm_permissions`, `22_owner_instructions`, `30_review_items`, `40_service_only`, `50_search_network`, `60_rate_limits`, `70_jobs`, `80_events`, `90_cron`, `95_social`, `96_slack_link`.
+`supabase/tests/*.sql` (pgTAP on PGlite, gated by `pnpm --filter @y/db test`): `00_schema`, `05_invariants` (I7 RLS and policies, I4, owner-instruction separation, I3 events), `01_identity`, `10_rls_activities`, `20_rls_messaging`, `21_dm_permissions`, `22_owner_instructions`, `30_review_items`, `40_service_only`, `50_search_network`, `60_rate_limits`, `70_jobs`, `80_events`, `90_cron`, `95_social`, `96_slack_link`.
 
 ## Endpoint → contract map
 
@@ -329,8 +329,8 @@ Signatures and behavior are fixed in each package's doc comments. These packages
 | `POST /api/v1/heartbeat` | `HeartbeatRequest` | `HeartbeatResponse` |
 | `GET /api/v1/changes` · `GET /changes/:id/hash` · `POST /changes/:id/report` | · · `ChangeReport` | `ChangesResponse` · `ChangeHashResponse` · `ChangeReportResponse` |
 | `POST /internal/mcp/:tool` | `internalMcpRequestSchema(tool)` + `InternalHeaders` | `internalMcpResponseSchema(tool)` |
-| `POST /internal/jobs/tick` | `JobsTickRequest` + `Authorization: Bearer <PACELINE_CRON_SECRET>` | `JobsTickResponse` \| `ErrorBody` (401) |
-| `POST <SUPABASE_URL>/functions/v1/embed` | `EmbedRequest` + `x-paceline-embed-secret` | `EmbedResponse` \| `ErrorBody` |
+| `POST /internal/jobs/tick` | `JobsTickRequest` + `Authorization: Bearer <Y_CRON_SECRET>` | `JobsTickResponse` \| `ErrorBody` (401) |
+| `POST <SUPABASE_URL>/functions/v1/embed` | `EmbedRequest` + `x-y-embed-secret` | `EmbedResponse` \| `ErrorBody` |
 | Supabase Realtime broadcast (`agent:…`, `user:…`) | subscribe with `RealtimeChannel` | `RealtimeBroadcast` |
 | `GET /api/v1/stream` (SSE, server mode) | `Last-Event-ID` | `StreamEvent` |
 | `/api/v1/*` web endpoints | see the table at the top of `packages/schema/src/web.ts` | |
@@ -338,9 +338,9 @@ Signatures and behavior are fixed in each package's doc comments. These packages
 ## Open items for implementers
 
 - **Not yet stubbed (PLAN §6–10)**: the PreToolUse guard decision (config-path matcher + taint window of 30 turns, `ask` for Claude Code / `deny` for Codex), distill validators (confidence < 0.6, empty evidence, residual markers, generic titles), deterministic patch rendering from a suggestion, managed-block read/write and rollback checks for `apply.mjs`, and the Stop-nudge budget (≤ 2 per session, ≤ 1 per 10 min). They fit `packages/safety` (guard), `packages/domain` (validators, patch rendering, managed blocks, nudge budget) or the plugin.
-- **Redaction markers**: `@paceline/redact` `MARKER_RE` should be `REDACTION_MARKER_RE` from the schema so the grammar has one source.
+- **Redaction markers**: `@y/redact` `MARKER_RE` should be `REDACTION_MARKER_RE` from the schema so the grammar has one source.
 - **Multi-team agents**: `BriefPolicy` carries one `teamId`/`repoKeySalt` (the team the agent posts to). How that team is chosen when the owner belongs to several teams is undecided; default to the most recently joined team that accepted a policy.
 - **Measured help**: `activity_chunks.error_episodes` stores the redacted signatures for 24 h, but the tool-call sequence `measuredHelp` needs (exposure index → same command exiting 0) is not in `IngestChunk` yet; add a compact `toolEvents` delta (command keys and exit codes only) or compute measured help on the client.
 - **Public-aggregate authors**: `ChangeRequest.suggestion.component.author` is an `AgentRef`, but an author from another team may not be visible under the viewer's RLS (`agents` / `users` policies); decide whether public-aggregate suggestions show an anonymized author.
 - **Serverless pulse**: in serverless mode `/api/v1/pulse` should not hold (Vercel duration); the listener waits on the broadcast and then calls `/pulse?wait=0`.
-- **`.env.example`** (not owned here) should gain `PACELINE_DB_FLAVOR`, `DATABASE_LISTEN_URL`, `PACELINE_DB_LOCAL`, `PACELINE_CRON_SECRET`, `PACELINE_EMBED_SECRET`, and `PACELINE_EMBEDDINGS=mock|supabase` (the `gateway` value and `AI_GATEWAY_API_KEY` are no longer used).
+- **`.env.example`** (not owned here) should gain `Y_DB_FLAVOR`, `DATABASE_LISTEN_URL`, `Y_DB_LOCAL`, `Y_CRON_SECRET`, `Y_EMBED_SECRET`, and `Y_EMBEDDINGS=mock|supabase` (the `gateway` value and `AI_GATEWAY_API_KEY` are no longer used).

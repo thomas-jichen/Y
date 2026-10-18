@@ -132,7 +132,7 @@ describe('listener: real news and budget', () => {
     core.route = (req) => (req.url?.startsWith('/api/v1/pulse') ? { body: wakeBody() } : undefined);
     const first = await listen(ctxFor(), { runMs: 10_000, sleep: async () => {} });
     expect(first.exitCode).toBe(2);
-    expect(first.stderr).toBe(`Paceline: 1 unread DM(s) from @bob-dev. Call the inbox tool with thread_id ${TID}.`);
+    expect(first.stderr).toBe(`Y: 1 unread DM(s) from @bob-dev. Call the inbox tool with thread_id ${TID}.`);
 
     // A second wake within 60 s: no exit 2, pointer parked.
     const second = await listen(ctxFor(), { runMs: 10_000, sleep: async () => {} });
@@ -143,7 +143,7 @@ describe('listener: real news and budget', () => {
     const ups = () => HANDLERS.UserPromptSubmit(makeCtx('UserPromptSubmit', JSON.stringify({ session_id: SID, prompt: 'x' }), { env: testEnv(dir, core.url) }));
     const out = await ups();
     const ctxText = JSON.parse(out.stdout!).hookSpecificOutput.additionalContext as string;
-    expect(ctxText).toBe(`Paceline: 1 unread DM(s) from @bob-dev. Call the inbox tool with thread_id ${TID}.`);
+    expect(ctxText).toBe(`Y: 1 unread DM(s) from @bob-dev. Call the inbox tool with thread_id ${TID}.`);
     expect(fs.existsSync(stateFile(`pending-wake-${SID}.json`))).toBe(false);
     expect(await ups()).toEqual({ exitCode: 0 });
   });
@@ -257,8 +257,8 @@ describe('hooks.json arming points (S1)', () => {
       expect(l).toHaveLength(1);
       expect(l[0]!.args.slice(-1)).toEqual(['listen']);
       expect(l[0]!.timeout).toBe(3300);
-      expect(l[0]!.rewakeSummary).toBe('Paceline: new message');
-      expect(l[0]!.rewakeMessage).toMatch(/^Paceline notification/);
+      expect(l[0]!.rewakeSummary).toBe('Y: new message');
+      expect(l[0]!.rewakeMessage).toMatch(/^Y notification/);
     }
   });
 
@@ -346,7 +346,7 @@ describe('serverless doorbell', () => {
 describe('bundle: listen.mjs mark', () => {
   const dist = path.join(here, '..', 'scripts', 'dist', 'listen.mjs');
   it.skipIf(!fs.existsSync(dist))('exits 0 fast with no output and writes the marker', async () => {
-    const env = { PATH: process.env.PATH ?? '', PACELINE_DATA_DIR: dir, CLAUDE_PLUGIN_OPTION_AGENT_TOKEN: 'tok_test_install_0000000000', CLAUDE_PLUGIN_OPTION_API_URL: 'http://127.0.0.1:9' };
+    const env = { PATH: process.env.PATH ?? '', Y_DATA_DIR: dir, CLAUDE_PLUGIN_OPTION_AGENT_TOKEN: 'tok_test_install_0000000000', CLAUDE_PLUGIN_OPTION_API_URL: 'http://127.0.0.1:9' };
     const child = spawn(process.execPath, [dist, 'mark'], { env });
     let out = '';
     child.stdout.on('data', (d) => (out += d));

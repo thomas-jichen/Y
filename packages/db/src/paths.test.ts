@@ -28,11 +28,11 @@ describe('resolveDataDir', () => {
 
   it('recognizes in-memory values and absolute paths', () => {
     for (const value of ['memory', ':memory:', 'memory://', ' MEMORY ']) expect(resolveDataDir(value)).toBe('memory');
-    expect(resolveDataDir('/var/lib/paceline')).toBe('/var/lib/paceline');
+    expect(resolveDataDir('/var/lib/y')).toBe('/var/lib/y');
   });
 
   it('falls back to cwd outside a workspace', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'paceline-paths-'));
+    const dir = await mkdtemp(join(tmpdir(), 'y-paths-'));
     try {
       await mkdir(join(dir, 'a'));
       expect(resolveDataDir('.pglite', join(dir, 'a'))).toBe(join(dir, 'a', '.pglite'));

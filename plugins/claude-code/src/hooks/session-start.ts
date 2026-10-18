@@ -5,8 +5,8 @@
  * pointers (≤6 h old).
  */
 import * as fs from 'node:fs';
-import { SESSION_START_POINTER_BUDGET_CHARS } from '@paceline/schema/pointers';
-import type { HumanNotice } from '@paceline/schema/brief';
+import { SESSION_START_POINTER_BUDGET_CHARS } from '@y/schema/pointers';
+import type { HumanNotice } from '@y/schema/brief';
 import { contextOutput, failOpen, remaining, type HookCtx, type HookResult } from '../context.js';
 import { httpJson, PLUGIN_VERSION } from '../runtime.js';
 import { readBrief, renderBlock, sanitizeBrief, writeBrief, pushPathsAllowed, type CachedBrief } from '../state.js';
@@ -49,18 +49,18 @@ const NOTICE_TEXT: Record<HumanNotice['kind'], (n?: number) => string> = {
   token_revoked: () => "this agent's token was revoked; reconnect the agent",
   token_expired: () => "this agent's token expired; reconnect the agent",
   unknown_install: () => 'this install is not recognized; reconnect the agent',
-  upgrade_required: () => 'please update the Paceline plugin',
+  upgrade_required: () => 'please update the Y plugin',
   policy_pending: () => "your team's capture policy needs your acceptance",
-  doctor_recommended: () => 'run /paceline:doctor to check your setup',
+  doctor_recommended: () => 'run /y:doctor to check your setup',
 };
 
-/** Keep only URLs on the configured Paceline host, reduced to origin + a plain path. */
+/** Keep only URLs on the configured Y host, reduced to origin + a plain path. */
 export function safeNoticeUrl(raw: string, ctx: HookCtx): string | undefined {
   try {
     const u = new URL(raw);
     if (u.protocol !== 'https:' && u.protocol !== 'http:') return undefined;
     const allowed = new Set<string>([new URL(ctx.config.apiUrl).hostname]);
-    if (ctx.env.PACELINE_WEB_URL) allowed.add(new URL(ctx.env.PACELINE_WEB_URL).hostname);
+    if (ctx.env.Y_WEB_URL) allowed.add(new URL(ctx.env.Y_WEB_URL).hostname);
     if (!allowed.has(u.hostname)) return undefined;
     return /^[A-Za-z0-9/_.-]{0,200}$/.test(u.pathname) ? `${u.origin}${u.pathname}` : u.origin;
   } catch {
@@ -70,16 +70,16 @@ export function safeNoticeUrl(raw: string, ctx: HookCtx): string | undefined {
 
 export function humanMessage(ctx: HookCtx, brief: CachedBrief | undefined): string | undefined {
   const lines: string[] = [];
-  if (!ctx.config.token) lines.push('Paceline: no agent token configured. Set agent_token in the plugin settings.');
+  if (!ctx.config.token) lines.push('Y: no agent token configured. Set agent_token in the plugin settings.');
   if (brief) {
     for (const n of brief.humanNotices) {
       const url = safeNoticeUrl(n.url, ctx);
       if (!url) continue;
-      lines.push(`Paceline: ${NOTICE_TEXT[n.kind](n.count)}: ${url}`);
+      lines.push(`Y: ${NOTICE_TEXT[n.kind](n.count)}: ${url}`);
     }
     if (brief.tokenState !== 'ok' && lines.length === 0) {
       const kind = brief.tokenState === 'expired' ? 'token_expired' : brief.tokenState === 'unknown_install' ? 'unknown_install' : 'token_revoked';
-      lines.push(`Paceline: ${NOTICE_TEXT[kind]()}.`);
+      lines.push(`Y: ${NOTICE_TEXT[kind]()}.`);
     }
   }
   return lines.length ? lines.join('\n') : undefined;

@@ -1,20 +1,20 @@
 -- 0007_cron.sql
 --
 -- Serverless job drain (zero-cost hosting): every minute, pg_cron calls
--- paceline_private.jobs_tick(), which POSTs core's /internal/jobs/tick via
+-- y_private.jobs_tick(), which POSTs core's /internal/jobs/tick via
 -- pg_net with a shared secret. Hourly, pg_cron runs api.purge_expired().
 --
 -- Schedules are created ONLY when both pg_cron and pg_net are available
 -- (Supabase). On PGlite / plain Postgres the DO block below is a no-op and
--- server-mode core drains jobs with its in-process loop (LISTEN paceline_jobs).
+-- server-mode core drains jobs with its in-process loop (LISTEN y_jobs).
 --
 -- Configuration (read at every tick, so it can change without a migration):
 --   1. Supabase Vault (preferred: encrypted at rest), secret names
---        paceline_core_url          e.g. https://core.example.vercel.app
---        paceline_jobs_tick_secret  same value as core's PACELINE_CRON_SECRET
---      select vault.create_secret('https://...', 'paceline_core_url');
---      select vault.create_secret('<random>', 'paceline_jobs_tick_secret');
---   2. Fallback when Vault is absent: paceline_private.app_config rows with
+--        y_core_url          e.g. https://core.example.vercel.app
+--        y_jobs_tick_secret  same value as core's Y_CRON_SECRET
+--      select vault.create_secret('https://...', 'y_core_url');
+--      select vault.create_secret('<random>', 'y_jobs_tick_secret');
+--   2. Fallback when Vault is absent: y_private.app_config rows with
 --      keys 'core_url' and 'jobs_tick_secret' (service-only table).
 -- The request is:
 --   POST <core_url>/internal/jobs/tick
@@ -24,18 +24,18 @@
 -- Core must compare the secret in constant time and should return quickly
 -- when due = 0.
 
-create table paceline_private.app_config (
+create table y_private.app_config (
   key text primary key check (key ~ '^[a-z][a-z0-9_]{0,63}$'),
   value text not null check (char_length(value) <= 2048),
   updated_at timestamptz not null default now()
 );
-alter table paceline_private.app_config enable row level security;
-revoke all on table paceline_private.app_config from public, anon, authenticated, service_role;
-comment on table paceline_private.app_config is
+alter table y_private.app_config enable row level security;
+revoke all on table y_private.app_config from public, anon, authenticated, service_role;
+comment on table y_private.app_config is
   'Fallback for Vault: core_url, jobs_tick_secret. No API role can read it; definer functions do.';
 
--- Vault secret 'paceline_<key>' if Vault exists, else app_config.<key>.
-create or replace function paceline_private.config_value(p_key text) returns text
+-- Vault secret 'y_<key>' if Vault exists, else app_config.<key>.
+create or replace function y_private.config_value(p_key text) returns text
 language plpgsql stable security definer
 set search_path = ''
 as $fn$
@@ -44,10 +44,10 @@ declare
 begin
   if to_regclass('vault.decrypted_secrets') is not null then
     execute 'select decrypted_secret from vault.decrypted_secrets where name = $1 order by created_at desc limit 1'
-      into v_value using 'paceline_' || p_key;
+      into v_value using 'y_' || p_key;
   end if;
   if v_value is null then
-    select c.value into v_value from paceline_private.app_config c where c.key = p_key;
+    select c.value into v_value from y_private.app_config c where c.key = p_key;
   end if;
   return v_value;
 end
@@ -55,27 +55,27 @@ $fn$;
 
 -- One tick: returns the pg_net request id, or null when not configured or
 -- pg_net is missing (with a warning, never an error, so cron keeps running).
-create or replace function paceline_private.jobs_tick() returns bigint
+create or replace function y_private.jobs_tick() returns bigint
 language plpgsql volatile security definer
 set search_path = ''
 as $fn$
 declare
-  v_url text := paceline_private.config_value('core_url');
-  v_secret text := paceline_private.config_value('jobs_tick_secret');
+  v_url text := y_private.config_value('core_url');
+  v_secret text := y_private.config_value('jobs_tick_secret');
   v_due bigint;
   v_request_id bigint;
 begin
   if v_url is null or v_secret is null then
-    raise warning 'paceline jobs_tick: core_url / jobs_tick_secret are not configured (Vault or paceline_private.app_config)';
+    raise warning 'y jobs_tick: core_url / jobs_tick_secret are not configured (Vault or y_private.app_config)';
     return null;
   end if;
   if v_url !~ '^https?://[A-Za-z0-9.:-]+(/[A-Za-z0-9._~/-]*)?$' then
-    raise warning 'paceline jobs_tick: core_url is not an http(s) URL';
+    raise warning 'y jobs_tick: core_url is not an http(s) URL';
     return null;
   end if;
   if not exists (select 1 from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace
                  where n.nspname = 'net' and p.proname = 'http_post') then
-    raise warning 'paceline jobs_tick: pg_net is not installed';
+    raise warning 'y jobs_tick: pg_net is not installed';
     return null;
   end if;
 
@@ -93,20 +93,20 @@ begin
 end
 $fn$;
 
-revoke all on function paceline_private.config_value(text), paceline_private.jobs_tick()
+revoke all on function y_private.config_value(text), y_private.jobs_tick()
   from public, anon, authenticated, service_role;
 
 do $cron$
 begin
   if not exists (select 1 from pg_catalog.pg_available_extensions where name = 'pg_cron')
      or not exists (select 1 from pg_catalog.pg_available_extensions where name = 'pg_net') then
-    raise notice 'paceline 0007: pg_cron/pg_net unavailable; no schedules created (local mode drains jobs in-process)';
+    raise notice 'y 0007: pg_cron/pg_net unavailable; no schedules created (local mode drains jobs in-process)';
     return;
   end if;
   create extension if not exists pg_net with schema extensions;
   create extension if not exists pg_cron;
   -- cron.schedule(name, ...) upserts by name, so re-running is safe.
-  perform cron.schedule('paceline-jobs-tick', '* * * * *', 'select paceline_private.jobs_tick()');
-  perform cron.schedule('paceline-purge-expired', '17 * * * *', 'select api.purge_expired()');
+  perform cron.schedule('y-jobs-tick', '* * * * *', 'select y_private.jobs_tick()');
+  perform cron.schedule('y-purge-expired', '17 * * * *', 'select api.purge_expired()');
 end
 $cron$;

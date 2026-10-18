@@ -61,7 +61,7 @@ export interface FinalScoreInput {
   rrf: number;
   /** Number of lists fused (normalizes rrf to [0, 1]). */
   listCount: number;
-  /** Highlight quality in [0, 1] (`@paceline/domain` `quality`). */
+  /** Highlight quality in [0, 1] (`@y/domain` `quality`). */
   quality: number;
   /** Best cosine similarity from the vector list, if known. */
   cosine?: number;

@@ -1,14 +1,14 @@
 /**
- * Factory for the Paceline MCP server (mcp-use v2). No DB credentials here
+ * Factory for the Y MCP server (mcp-use v2). No DB credentials here
  * (I7): every tool forwards to core's internal MCP API.
  */
-import { TOOLS } from '@paceline/schema';
+import { TOOLS } from '@y/schema';
 import { MCPServer, type StandardSchemaWithJSON } from 'mcp-use';
 import { configFromEnv, createCoreClient, type CoreClientConfig } from './core-client.js';
 import { SERVER_INSTRUCTIONS } from './instructions.js';
 import { ALWAYS_LOAD_META, SLICE_TOOLS, TOOL_SPECS, normalizeAuthorization, runTool } from './tools.js';
 
-export const SERVER_NAME = 'paceline';
+export const SERVER_NAME = 'y';
 export const SERVER_VERSION = '0.0.0';
 
 export interface CreateServerOptions {
@@ -25,7 +25,7 @@ export function createServer(opts: CreateServerOptions = {}) {
 
   const server = new MCPServer({
     name: SERVER_NAME,
-    title: 'Paceline',
+    title: 'Y',
     version: SERVER_VERSION,
     description: "Strava for coding agents: search what other agents learned, and message teammates' agents.",
     instructions: SERVER_INSTRUCTIONS,

@@ -16,7 +16,7 @@ machine at `/usr/local/bin/claude`) · Codex CLI **0.163.0** (model `gpt-6-luna`
 | **S13** Desktop app | **PARTLY DONE** — step 4 answered; steps 1–3 need the app + a human (10-min script) | [S13-desktop-app.md](S13-desktop-app.md) |
 | **S4** Supabase OAuth | **BLOCKED** on the account — but it works on the **Free** plan | [S4-supabase-oauth.md](S4-supabase-oauth.md) |
 | Accounts and keys | 1 of 7 done; two plan conflicts settled | [00-accounts-and-keys.md](00-accounts-and-keys.md) |
-| Name: "Paceline" | **NOT FREE** — live US trademark, npm scope, GitHub org, 3 domains all taken | [NAME-paceline-availability.md](NAME-paceline-availability.md) |
+| Name: "Y" | **NOT FREE** — live US trademark, npm scope, GitHub org, 3 domains all taken | [NAME-y-availability.md](NAME-y-availability.md) |
 
 ## The five findings that change the build
 
@@ -28,7 +28,7 @@ machine at `/usr/local/bin/claude`) · Codex CLI **0.163.0** (model `gpt-6-luna`
 4. **`requiresUserInteraction` makes a tool unusable headless** — denied under `claude -p`, and neither
    `bypassPermissions` nor an explicit allow rule helps. Keep it off every tool in the agent loop; use it for the
    human-approval step, where it becomes our enforcement point. (S16)
-5. **Both hosts have a silent-inert failure mode at install time**, and `paceline init` has to own both: Codex
+5. **Both hosts have a silent-inert failure mode at install time**, and `y init` has to own both: Codex
    hooks do nothing until trusted, and a project skill written into a `.claude/skills` dir created mid-session is
    invisible until restart. (S6, S13)
 

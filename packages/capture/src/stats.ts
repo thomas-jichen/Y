@@ -3,7 +3,7 @@
  * Pure functions; stats never contain paths, prompts or output.
  * @module stats
  */
-import { emptyStats, type ActivityStats, type CommandStats, type Lap } from '@paceline/schema';
+import { emptyStats, type ActivityStats, type CommandStats, type Lap } from '@y/schema';
 import { PRICING, type ClaudeRecord, type ComputeStatsOptions, type ModelPrice, type Usage } from './types.js';
 
 /* ================================================================ helpers */

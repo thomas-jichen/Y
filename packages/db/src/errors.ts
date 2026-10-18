@@ -2,7 +2,7 @@
  * Error types and SQLSTATE helpers shared by both adapters.
  */
 
-/** Base class for errors raised by @paceline/db itself (not by Postgres). */
+/** Base class for errors raised by @y/db itself (not by Postgres). */
 export class DbError extends Error {
   override readonly name: string = 'DbError';
 }

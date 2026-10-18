@@ -11,14 +11,14 @@
  *   `{"error":{"code":"RATE_LIMITED","message":"…","retryable":true,"retry_after_s":30}}`
  *
  * Convert with {@link toMcpErrorBody} / {@link fromMcpErrorBody}, or
- * {@link PacelineError.toMcpBody}.
+ * {@link YError.toMcpBody}.
  *
  * @module errors
  */
 import { z } from 'zod';
 import { ToolName } from './common.js';
 
-/** Every error code Paceline returns. */
+/** Every error code Y returns. */
 export const ErrorCode = z.enum([
   'RATE_LIMITED',
   'DM_NOT_PERMITTED',
@@ -39,7 +39,7 @@ export type ErrorCode = z.infer<typeof ErrorCode>;
 
 /**
  * A human gesture the agent should ask its owner for. Rendered by the client
- * as fixed text next to `url` (always a Paceline web URL).
+ * as fixed text next to `url` (always a Y web URL).
  */
 export const HumanAction = z.enum([
   'review_in_web',
@@ -207,7 +207,7 @@ export function validationError(err: z.ZodError, message = 'Invalid input'): Err
  * Throwable carrying an {@link ErrorBody}. Core handlers throw it; the HTTP
  * layer turns it into `status` + `toBody()`.
  */
-export class PacelineError extends Error {
+export class YError extends Error {
   readonly code: ErrorCode;
   readonly retryable: boolean;
   readonly retryAfterS: number | undefined;
@@ -216,7 +216,7 @@ export class PacelineError extends Error {
 
   constructor(code: ErrorCode, message: string, opts: ErrorOptions = {}) {
     super(message);
-    this.name = 'PacelineError';
+    this.name = 'YError';
     this.code = code;
     this.retryable = opts.retryable ?? ERROR_DEFAULT_RETRYABLE[code];
     this.retryAfterS = opts.retryAfterS;
@@ -244,14 +244,14 @@ export class PacelineError extends Error {
   }
 
   /** Rehydrate from a web/REST wire body. */
-  static fromBody(body: ErrorBody): PacelineError {
+  static fromBody(body: ErrorBody): YError {
     const { code, message, ...rest } = body.error;
-    return new PacelineError(code, message, rest);
+    return new YError(code, message, rest);
   }
 
   /** Rehydrate from an MCP-cased body (e.g. in `apps/mcp` after calling core's internal API). */
-  static fromMcpBody(body: McpErrorBody): PacelineError {
-    return PacelineError.fromBody(fromMcpErrorBody(body));
+  static fromMcpBody(body: McpErrorBody): YError {
+    return YError.fromBody(fromMcpErrorBody(body));
   }
 }
 

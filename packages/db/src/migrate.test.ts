@@ -33,7 +33,7 @@ async function tables(): Promise<string[]> {
 }
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'paceline-migrations-'));
+  dir = await mkdtemp(join(tmpdir(), 'y-migrations-'));
   db = await createPgliteDb();
 });
 
@@ -247,8 +247,8 @@ describe('migrate', () => {
   it('protects the bookkeeping table from API roles', async () => {
     await write('0001_a.sql', 'select 1;');
     await migrate(db, { migrationsDir: dir });
-    await expect(db.asService((tx) => tx.query('select * from paceline_meta.migrations'))).rejects.toThrow(/permission denied/);
-    await expect(db.asUser({ sub: '0b6f3c1e-1d2a-4c5b-8e9f-0a1b2c3d4e5f' }, (tx) => tx.query('select * from paceline_meta.migrations'))).rejects.toThrow(/permission denied/);
+    await expect(db.asService((tx) => tx.query('select * from y_meta.migrations'))).rejects.toThrow(/permission denied/);
+    await expect(db.asUser({ sub: '0b6f3c1e-1d2a-4c5b-8e9f-0a1b2c3d4e5f' }, (tx) => tx.query('select * from y_meta.migrations'))).rejects.toThrow(/permission denied/);
   });
 
   it('refreshes array types so enum arrays parse after migrating', async () => {

@@ -1,11 +1,11 @@
 /**
  * Message and delivery state machines (PLAN §9).
  */
-import type { DeliveryState, MessageState, ScreenAction, ThreadState } from '@paceline/schema';
+import type { DeliveryState, MessageState, ScreenAction, ThreadState } from '@y/schema';
 
 /**
  * Events of the message state machine (PLAN §9). `verdict` carries the
- * screen action from `@paceline/safety` `actionFor`.
+ * screen action from `@y/safety` `actionFor`.
  */
 export type MessageEvent =
   | { type: 'submit'; permitted: boolean }

@@ -2,7 +2,7 @@
 --
 -- 1. api.resolve_web_session also returns created_at, so step-up (I5) can
 --    reject dev/demo sessions older than 12 h.
--- 2. paceline_private.provision_user(id, user_metadata, app_metadata):
+-- 2. y_private.provision_user(id, user_metadata, app_metadata):
 --    ensures public.users exists for a verified Supabase access token. On
 --    Supabase the auth.users trigger normally did this already; the function
 --    covers users created before the migrations ran (and local tests, where
@@ -16,14 +16,14 @@ language sql stable security definer
 set search_path = ''
 as $fn$
   select s.user_id, u.status, s.created_at
-  from paceline_private.web_sessions s
+  from y_private.web_sessions s
   join public.users u on u.id = s.user_id
   where s.token_hash = p_token_hash and s.revoked_at is null and s.expires_at > now()
 $fn$;
 revoke all on function api.resolve_web_session(text) from public;
 grant execute on function api.resolve_web_session(text) to anon, authenticated, service_role;
 
-create or replace function paceline_private.provision_user(p_id uuid, p_meta jsonb, p_app jsonb)
+create or replace function y_private.provision_user(p_id uuid, p_meta jsonb, p_app jsonb)
 returns boolean
 language plpgsql volatile security definer
 set search_path = ''
@@ -82,8 +82,8 @@ begin
   end loop;
 end
 $fn$;
-revoke all on function paceline_private.provision_user(uuid, jsonb, jsonb) from public;
-grant execute on function paceline_private.provision_user(uuid, jsonb, jsonb) to service_role;
+revoke all on function y_private.provision_user(uuid, jsonb, jsonb) from public;
+grant execute on function y_private.provision_user(uuid, jsonb, jsonb) to service_role;
 
 create or replace function api.install_state(p_install_id uuid)
 returns table (revoked boolean, agent_status text, user_status text)
@@ -102,13 +102,13 @@ grant execute on function api.install_state(uuid) to authenticated, service_role
 -- Realtime REST fan-out cursor (serverless core without realtime.send in the DB):
 -- one row; each instance claims (last_id, max(events.id)] atomically so every
 -- event is broadcast at most once across instances.
-create table if not exists paceline_private.realtime_cursor (
+create table if not exists y_private.realtime_cursor (
   id boolean primary key default true check (id),
   last_id bigint not null default 0,
   updated_at timestamptz not null default now()
 );
-alter table paceline_private.realtime_cursor enable row level security;
-grant all on paceline_private.realtime_cursor to service_role;
-insert into paceline_private.realtime_cursor (id, last_id)
+alter table y_private.realtime_cursor enable row level security;
+grant all on y_private.realtime_cursor to service_role;
+insert into y_private.realtime_cursor (id, last_id)
   values (true, coalesce((select max(id) from public.events), 0))
   on conflict (id) do nothing;

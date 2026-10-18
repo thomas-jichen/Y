@@ -1,5 +1,5 @@
 /**
- * Core types for @paceline/db.
+ * Core types for @y/db.
  *
  * Every adapter (PGlite for tests and local dev, `pg` for Postgres/Supabase)
  * implements {@link Db}. Code written against this interface behaves the same
@@ -95,7 +95,7 @@ export interface ListenOptions {
 export type DbKind = 'pglite' | 'pg';
 
 /**
- * What kind of database this is (`PACELINE_DB_FLAVOR`), which decides
+ * What kind of database this is (`Y_DB_FLAVOR`), which decides
  * whether the built-in Supabase shims are applied by `migrate()`:
  * - `pglite`: in-process PGlite (tests, local dev). Shims always.
  * - `postgres`: a plain Postgres (local or a container). Shims when the
@@ -115,7 +115,7 @@ export interface Db extends Queryable {
   readonly flavor: DbFlavor;
   /**
    * True for local databases (PGlite, or Postgres flagged local with
-   * `PACELINE_DB_LOCAL`). Migrations whose file name contains `_local_` are
+   * `Y_DB_LOCAL`). Migrations whose file name contains `_local_` are
    * applied only when this is true, and it forces the Supabase shims on.
    */
   readonly local: boolean;
@@ -145,7 +145,7 @@ export interface Db extends Queryable {
   asAnon<T>(fn: (tx: Tx) => Promise<T>): Promise<T>;
   /**
    * Subscribes to NOTIFYs on `channel` (a lowercase SQL identifier such as
-   * `paceline_events`). Resolves once the subscription is active. The handler
+   * `y_events`). Resolves once the subscription is active. The handler
    * runs outside any transaction scope; errors it throws are reported, not
    * propagated.
    */

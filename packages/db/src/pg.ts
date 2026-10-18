@@ -120,7 +120,7 @@ export interface PgDbOptions {
   flavor?: 'postgres' | 'supabase';
   /** Extra pool settings (size, timeouts, ssl, ...). */
   poolConfig?: Omit<pg.PoolConfig, 'connectionString' | 'types'>;
-  /** `application_name` reported to Postgres. Default `paceline`. */
+  /** `application_name` reported to Postgres. Default `y`. */
   applicationName?: string;
   /** LISTEN reconnect backoff: starts at `initialDelayMs` (250), doubles, caps at `maxDelayMs` (10000). */
   reconnect?: { initialDelayMs?: number; maxDelayMs?: number };
@@ -490,7 +490,7 @@ class PgDbImpl implements PgDb {
 
   constructor(options: PgDbOptions) {
     const report = options.onError ?? defaultErrorReporter;
-    const applicationName = options.applicationName ?? 'paceline';
+    const applicationName = options.applicationName ?? 'y';
     this.local = options.local ?? false;
     this.flavor = options.flavor ?? (this.local ? 'postgres' : 'supabase');
     this.#types = new PgTypeParsers();

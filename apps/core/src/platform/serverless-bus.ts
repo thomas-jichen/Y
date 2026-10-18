@@ -10,11 +10,11 @@
  *   the database cannot broadcast itself (no realtime.send(): the events
  *   trigger already does it on Supabase), POSTs every new event to
  *   `{SUPABASE_URL}/realtime/v1/api/broadcast` on the owner topics from
- *   realtime_channels. A DB cursor (paceline_private.realtime_cursor) makes
+ *   realtime_channels. A DB cursor (y_private.realtime_cursor) makes
  *   each event go out at most once across instances. Payloads are
  *   RealtimeBroadcast {id, type, payload}: ids/counts only (I3).
  */
-import type { Db } from '@paceline/db';
+import type { Db } from '@y/db';
 import type { CoreConfig, PushEvent } from '../contracts.js';
 import { PgPushBus, toEvent, type EventRow } from './bus.js';
 
@@ -126,9 +126,9 @@ export class ServerlessPushBus extends PgPushBus {
     if (!rt) return 0;
     const rows = await this.db.asService(async (tx) => {
       const claim = await tx.query<{ prev: string | number; next: string | number }>(
-        `with cur as (select last_id from paceline_private.realtime_cursor where id for update),
+        `with cur as (select last_id from y_private.realtime_cursor where id for update),
               mx as (select coalesce(max(id), 0) as m from public.events)
-         update paceline_private.realtime_cursor r
+         update y_private.realtime_cursor r
             set last_id = greatest(cur.last_id, least(mx.m, cur.last_id + $1)), updated_at = now()
            from cur, mx
           where r.id

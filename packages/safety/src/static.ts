@@ -3,7 +3,7 @@
  *
  * @module static
  */
-import { INVISIBLE_CHARS_SOURCE, STATIC_RULES, type StaticFinding, type StaticOutcome, type StaticRuleId } from '@paceline/schema';
+import { INVISIBLE_CHARS_SOURCE, STATIC_RULES, type StaticFinding, type StaticOutcome, type StaticRuleId } from '@y/schema';
 import { isDiscussionContext, lintCommands } from './commands.js';
 import { l0Scan } from './l0.js';
 

@@ -3,7 +3,7 @@
  * pause, resolve. Human web callers only; reads and inserts through
  * db.asUser (RLS); owner instructions are signed and stored by core.
  */
-import { pickLeaseSession, type LeaseCandidate } from '@paceline/domain';
+import { pickLeaseSession, type LeaseCandidate } from '@y/domain';
 import {
   CommentRequest,
   InstructRequest,
@@ -14,8 +14,8 @@ import {
   type InstructResponse,
   type Message,
   type Thread,
-} from '@paceline/schema';
-import type { Tx } from '@paceline/db';
+} from '@y/schema';
+import type { Tx } from '@y/db';
 import type { App, Caller, CoreDeps } from '../contracts.js';
 import { routeMessage } from './route.js';
 import { signOwnerInstruction } from './signing.js';

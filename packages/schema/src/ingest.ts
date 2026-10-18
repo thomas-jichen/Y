@@ -51,7 +51,7 @@ export type RedactionRuleId = z.infer<typeof RedactionRuleId>;
  * Grammar of redaction markers left in redacted text: `<REDACTED:<rule>>`,
  * `<USER>`, `<EMAIL>`, `<HOST>`, `<ORG>`, `<PROJECT>`, `<TERM>`. Distill
  * validators drop LLM output that still contains one (PLAN §7). Non-global;
- * `@paceline/redact` re-exports it as `MARKER_RE`.
+ * `@y/redact` re-exports it as `MARKER_RE`.
  */
 export const REDACTION_MARKER_RE = /<(?:REDACTED:[a-z0-9_]{1,40}|USER|EMAIL|HOST|ORG|PROJECT|TERM)>/;
 

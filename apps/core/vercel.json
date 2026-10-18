@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "installCommand": "cd ../.. && pnpm install --frozen-lockfile --filter @paceline/core...",
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile --filter @y/core...",
   "buildCommand": "",
   "outputDirectory": ".",
   "functions": {

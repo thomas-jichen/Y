@@ -48,7 +48,7 @@ const HEX_RE = /^[0-9a-fA-F]+$/;
  * Whether one whitespace-delimited token looks like a secret: length ≥
  * `minLength` (24), entropy ≥ `minBitsPerChar` (4.0; 3.0 for pure hex of
  * length ≥ 32), at least two character classes. Never flags: 40/64-char hex
- * (git/sha hashes), UUIDs, ULIDs/prefixed Paceline ids, file paths, URLs
+ * (git/sha hashes), UUIDs, ULIDs/prefixed Y ids, file paths, URLs
  * without credentials, or letter-only runs (identifiers and words).
  */
 export function looksLikeSecret(token: string, opts?: RedactOptions['entropy']): boolean {
@@ -120,7 +120,7 @@ const SPECIFIC: Matcher[] = [
   { id: 'slack_webhook', re: /https?:\/\/hooks\.slack\.com\/(?:services|workflows|triggers)\/[A-Za-z0-9/_-]+/g },
   { id: 'google_api_key', re: /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g },
   { id: 'jwt', re: /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}/g },
-  { id: 'paceline_token', re: /\bpcl_agt_[A-Za-z0-9_-]{16,}/g },
+  { id: 'y_token', re: /\bpcl_agt_[A-Za-z0-9_-]{16,}/g },
   { id: 'npm_token', re: /\bnpm_[A-Za-z0-9]{36}\b/g },
   {
     id: 'bearer_token',
@@ -272,7 +272,7 @@ function findSecretSpans(text: string, entropy?: RedactOptions['entropy']): Span
 
 /**
  * Find secrets without replacing them (all non-identity rules). Used by
- * pass 2 on LLM output fields and by `@paceline/safety`'s DLP. Existing
+ * pass 2 on LLM output fields and by `@y/safety`'s DLP. Existing
  * `<REDACTED:…>` markers are not hits.
  */
 export function scanSecrets(text: string, opts?: Pick<RedactOptions, 'entropy'>): SecretHit[] {

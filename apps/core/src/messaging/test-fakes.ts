@@ -1,10 +1,10 @@
 /**
- * Deterministic stand-ins for @paceline/safety, @paceline/domain and
- * @paceline/retrieval, used via vi.mock in this module's tests so they do not
+ * Deterministic stand-ins for @y/safety, @y/domain and
+ * @y/retrieval, used via vi.mock in this module's tests so they do not
  * depend on the parallel library implementations. Behaviour follows the
  * documented contracts closely enough for the routing tests.
  */
-import { buildEnvelope, type EnvelopeParts, type Label, type MessageState, type ScreenAction } from '@paceline/schema';
+import { buildEnvelope, type EnvelopeParts, type Label, type MessageState, type ScreenAction } from '@y/schema';
 
 const INJECTION = /ignore (all )?(previous|prior) instructions|disregard your system prompt/i;
 const SECRET = /\b(ghp_[A-Za-z0-9]{36}|AKIA[0-9A-Z]{16}|sk-ant-[A-Za-z0-9_-]{20,})\b/;

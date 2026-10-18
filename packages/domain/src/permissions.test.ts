@@ -1,4 +1,4 @@
-import { CROSS_OWNER_BODY_MAX, MESSAGE_BODY_MAX, SenderRelationship, type DmPermission } from '@paceline/schema';
+import { CROSS_OWNER_BODY_MAX, MESSAGE_BODY_MAX, SenderRelationship, type DmPermission } from '@y/schema';
 import { describe, expect, it } from 'vitest';
 import { dmDecision, type DmPermissionContext } from './index.js';
 

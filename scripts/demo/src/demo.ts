@@ -1,5 +1,5 @@
 /**
- * The narrated Paceline demo. It drives the whole v0 loop over HTTP only (core REST + the
+ * The narrated Y demo. It drives the whole v0 loop over HTTP only (core REST + the
  * MCP server), running the BUILT Claude Code plugin bundles as child processes the same way
  * e2e/src/e2e.test.ts does, so it works against localhost or a deployed core/mcp pair.
  *
@@ -12,7 +12,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isRenderedPointer } from '@paceline/pointers';
+import { isRenderedPointer } from '@y/pointers';
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 export const PLUGIN_ROOT = path.join(REPO_ROOT, 'plugins/claude-code');
@@ -114,7 +114,7 @@ export async function runDemo(opts: DemoOptions): Promise<DemoResult> {
   const out = opts.out ?? ((l: string) => process.stdout.write(`${l}\n`));
   const dist = opts.distDir ?? path.join(PLUGIN_ROOT, 'scripts/dist');
   const nonce = randomBytes(4).toString('hex');
-  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'paceline-demo-'));
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'y-demo-'));
   const planted = fakeGhp();
   const people: Record<string, Person> = {};
   const results: StepResult[] = [];
@@ -240,7 +240,7 @@ export async function runDemo(opts: DemoOptions): Promise<DemoResult> {
         CLAUDE_PLUGIN_DATA: dataDir,
         CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
         HOME: dataDir,
-        PACELINE_WEB_URL: api,
+        Y_WEB_URL: api,
       },
     };
     people[name] = p;
@@ -311,7 +311,7 @@ export async function runDemo(opts: DemoOptions): Promise<DemoResult> {
         say('Logging in three dev users and minting Claude Code install tokens.');
         const health = await fetch(`${api}/healthz`).then((r) => r.ok, () => false);
         check(health, `core is not reachable at ${api}/healthz`);
-        check(fs.existsSync(path.join(dist, 'hook.mjs')), `plugin bundles missing in ${dist}: run pnpm --filter @paceline/plugin-claude-code build`);
+        check(fs.existsSync(path.join(dist, 'hook.mjs')), `plugin bundles missing in ${dist}: run pnpm --filter @y/plugin-claude-code build`);
         const v = await login('vivan');
         const m = await login('maya');
         // zed joins only his own team (dev login's `team`), so he is a stranger to vivan and maya.
@@ -395,7 +395,7 @@ export async function runDemo(opts: DemoOptions): Promise<DemoResult> {
       needs: [2],
       run: async () => {
         const m = P('maya');
-        say("@maya-claude runs quarry migrate and gets the same ETIMEDOUT; her PostToolUseFailure hook asks Paceline for a match.");
+        say("@maya-claude runs quarry migrate and gets the same ETIMEDOUT; her PostToolUseFailure hook asks Y for a match.");
         await hook(m, 'SessionStart', ctx.mayaSession, { source: 'startup' });
         let ctxText = '';
         await waitFor(
@@ -426,7 +426,7 @@ export async function runDemo(opts: DemoOptions): Promise<DemoResult> {
           item = await mcpOk('get_item', { id, detail: 'summary' }, m.install);
         }
         const text = JSON.stringify(item);
-        check(item?.item?.paceline_envelope === 'v1', 'get_item did not return an envelope');
+        check(item?.item?.y_envelope === 'v1', 'get_item did not return an envelope');
         check(/QUARRY_DIRECT/.test(text), 'get_item does not contain the fix');
         const c = decoded(item.item);
         const fix = ((c.body?.steps ?? []) as string[]).find((x) => x.includes('QUARRY_DIRECT')) ?? String(c.summary ?? '');
@@ -442,7 +442,7 @@ export async function runDemo(opts: DemoOptions): Promise<DemoResult> {
       run: async () => {
         const v = P('vivan');
         const m = P('maya');
-        say("vivan's session is idle with the Paceline listener armed. maya's agent sends a wake DM.");
+        say("vivan's session is idle with the Y listener armed. maya's agent sends a wake DM.");
         await hook(v, 'SessionStart', ctx.vivanSession, { source: 'resume' });
         const started = Date.now();
         const listener = runScript('listen.mjs', ['listen'], v.env, {
@@ -468,7 +468,7 @@ export async function runDemo(opts: DemoOptions): Promise<DemoResult> {
         const pointed = /\b(t_[0-9A-Za-z]+)/.exec(p1)?.[1];
         const msgs = await inboxMessages(v, pointed ? { thread_id: pointed, unread_only: false, limit: 20 } : { unread_only: true, limit: 20 });
         const q = msgs.find((x) => JSON.stringify(x).includes('QUARRY_DIRECT in CI'));
-        check(q && q.paceline_envelope === 'v1', `maya's question is not in vivan's inbox as an envelope: ${JSON.stringify(msgs).slice(0, 300)}`);
+        check(q && q.y_envelope === 'v1', `maya's question is not in vivan's inbox as an envelope: ${JSON.stringify(msgs).slice(0, 300)}`);
         const threadId: string | undefined = pointed ?? q.thread ?? sent?.thread_id;
         check(threadId, 'no thread id to reply on');
         info('@vivan-claude reads it via MCP inbox (inside an envelope) and answers');
@@ -545,7 +545,7 @@ export async function runDemo(opts: DemoOptions): Promise<DemoResult> {
           check(!opts.expectSeeds, `no public hnsw gotcha in ${hits.length} results (seeds were expected)`);
           throw Object.assign(new Error('no seeded public gotcha found (seeds not loaded)'), { skip: true });
         }
-        check(hit.item?.paceline_envelope === 'v1', 'search hit is not an envelope');
+        check(hit.item?.y_envelope === 'v1', 'search hit is not an envelope');
         const title = String(decoded(hit.item).title ?? hit.item?.id);
         info(`top public hit (${Math.round(hit.score * 100)}%): ${title}`);
         look(`seeded gotchas are agent-facing (search_network); the web feed shows activities only`);
@@ -557,7 +557,7 @@ export async function runDemo(opts: DemoOptions): Promise<DemoResult> {
   /* ----------------------------------------------------------------- run */
 
   try {
-    say(`Paceline demo · core ${api} · mcp ${mcpUrl} · pace ${pace}`);
+    say(`Y demo · core ${api} · mcp ${mcpUrl} · pace ${pace}`);
     for (const step of steps) {
       const blocked = step.needs.filter((n) => results.find((r) => r.n === n)?.status !== 'ok');
       say('');

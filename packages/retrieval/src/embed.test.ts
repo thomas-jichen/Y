@@ -168,14 +168,14 @@ describe('createGteEmbedder (injected fetch, no network)', () => {
 describe('embedderFromEnv', () => {
   it('defaults to the mock', () => {
     expect(embedderFromEnv({}).model).toBe('mock-hash-v1');
-    expect(embedderFromEnv({ PACELINE_EMBEDDINGS: 'mock' }).model).toBe('mock-hash-v1');
+    expect(embedderFromEnv({ Y_EMBEDDINGS: 'mock' }).model).toBe('mock-hash-v1');
   });
-  it('supabase needs SUPABASE_URL and PACELINE_EMBED_SECRET', () => {
-    expect(() => embedderFromEnv({ PACELINE_EMBEDDINGS: 'supabase' })).toThrow(/SUPABASE_URL/);
-    expect(embedderFromEnv({ PACELINE_EMBEDDINGS: 'supabase', SUPABASE_URL: 'https://x.co', PACELINE_EMBED_SECRET: 'k'.repeat(32) }).model).toBe('gte-small');
+  it('supabase needs SUPABASE_URL and Y_EMBED_SECRET', () => {
+    expect(() => embedderFromEnv({ Y_EMBEDDINGS: 'supabase' })).toThrow(/SUPABASE_URL/);
+    expect(embedderFromEnv({ Y_EMBEDDINGS: 'supabase', SUPABASE_URL: 'https://x.co', Y_EMBED_SECRET: 'k'.repeat(32) }).model).toBe('gte-small');
   });
   it('gateway is cut', () => {
-    expect(() => embedderFromEnv({ PACELINE_EMBEDDINGS: 'gateway' })).toThrow(/NOT_IMPLEMENTED|cut/);
+    expect(() => embedderFromEnv({ Y_EMBEDDINGS: 'gateway' })).toThrow(/NOT_IMPLEMENTED|cut/);
     expect(() => createGatewayEmbedder()).toThrow(EmbedError);
   });
 });

@@ -1,6 +1,6 @@
 /**
  * Synthetic, valid fixtures for every major contract, for tests across the
- * monorepo: `import { fx } from '@paceline/schema/fixtures'`. Not exported
+ * monorepo: `import { fx } from '@y/schema/fixtures'`. Not exported
  * from the package index. All data is invented (CLAUDE.md: fixtures are
  * synthetic); ids are fixed so snapshots are stable.
  *
@@ -81,7 +81,7 @@ export function stats(o: Partial<ActivityStats> = {}): ActivityStats {
     wallMs: 1_900_000,
     turns: 14,
     toolCalls: { Bash: 15, Edit: 9, Read: 12 },
-    mcp: { paceline: { search_network: 2 } },
+    mcp: { y: { search_network: 2 } },
     skillsInvoked: ['vitest-fixer'],
     subagents: { count: 1, types: ['Explore'] },
     filesChanged: { count: 4, byExt: { ts: 3, json: 1 }, linesAdded: 88, linesRemoved: 21 },
@@ -100,11 +100,11 @@ export function stats(o: Partial<ActivityStats> = {}): ActivityStats {
 export function setupSnapshot(o: Partial<SetupSnapshot> = {}): SetupSnapshot {
   return {
     v: 1,
-    plugins: [{ name: 'paceline', marketplace: 'paceline', version: '0.1.0' }],
+    plugins: [{ name: 'y', marketplace: 'y', version: '0.1.0' }],
     skills: [
       { name: 'vitest-fixer', scope: 'user', descriptionRedacted: 'Fix failing vitest suites', bodySha256: SHA },
     ],
-    mcpServers: [{ name: 'paceline', scope: 'plugin', transport: 'http', publicHost: 'mcp.paceline.example' }],
+    mcpServers: [{ name: 'y', scope: 'plugin', transport: 'http', publicHost: 'mcp.y.example' }],
     hooks: [{ event: 'Stop', matcher: '', type: 'command', scope: 'plugin', commandSha256: SHA }],
     claudeMd: { sha256: SHA, headings: ['Conventions', 'Testing'] },
     model: 'claude-opus-5-5',
@@ -124,7 +124,7 @@ export function setupCard(o: Partial<SetupCard> = {}): SetupCard {
     effort: 'high',
     permissionMode: 'default',
     components: [
-      { kind: 'plugin', name: 'paceline@paceline', version: '0.1.0', contentShared: false },
+      { kind: 'plugin', name: 'y@y', version: '0.1.0', contentShared: false },
       {
         kind: 'skill',
         name: 'vitest-fixer',

@@ -1,5 +1,5 @@
 /**
- * @paceline/pointers: local rendering of push-path pointers (invariant I3).
+ * @y/pointers: local rendering of push-path pointers (invariant I3).
  *
  * Push paths (SessionStart/UserPromptSubmit additionalContext, PostToolUse
  * context, Stop block reasons, asyncRewake stderr) carry only
@@ -15,7 +15,7 @@
  * - all other characters are literal. Templates contain no `[`/`]`/`{`/`}`
  *   except as grammar.
  *
- * Dependency-free apart from `@paceline/schema` (bundled into hook scripts).
+ * Dependency-free apart from `@y/schema` (bundled into hook scripts).
  *
  * @packageDocumentation
  */

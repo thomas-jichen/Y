@@ -2,7 +2,7 @@
  * Migration runner for supabase/migrations.
  *
  * - Applies `*.sql` files in lexical order, each in its own transaction, and
- *   records `{name, sha256}` in `paceline_meta.migrations`.
+ *   records `{name, sha256}` in `y_meta.migrations`.
  * - Refuses to run when an applied file's contents changed (hash mismatch):
  *   write a new migration instead of editing an applied one.
  * - Files whose name contains `_local_` are applied only on local databases
@@ -25,11 +25,11 @@ import type { Db, Queryable } from './types.js';
 export const LOCAL_ONLY_MARKER = '_local_';
 
 /** Advisory lock key shared by every migrate step. */
-export const MIGRATION_LOCK_KEY = 'paceline_meta.migrations';
+export const MIGRATION_LOCK_KEY = 'y_meta.migrations';
 
 /** A migration file on disk. */
 export interface MigrationFile {
-  /** File name, e.g. `0001_identity.sql`. This is the key in `paceline_meta.migrations`. */
+  /** File name, e.g. `0001_identity.sql`. This is the key in `y_meta.migrations`. */
   name: string;
   /** Absolute path. */
   path: string;
@@ -41,7 +41,7 @@ export interface MigrationFile {
   localOnly: boolean;
 }
 
-/** A row of `paceline_meta.migrations`. */
+/** A row of `y_meta.migrations`. */
 export interface AppliedMigration {
   name: string;
   sha256: string;
@@ -178,7 +178,7 @@ export async function readLocalShims(): Promise<string> {
 }
 
 /** Comment prefix the shims put on the schemas they create (`auth`, `realtime`). */
-export const LOCAL_SHIM_MARKER = 'paceline local shim';
+export const LOCAL_SHIM_MARKER = 'y local shim';
 
 /**
  * True when the shims belong on this database: its `auth` schema is missing,
@@ -208,22 +208,22 @@ export async function applyLocalShims(db: Db): Promise<void> {
 }
 
 const META_DDL = `
-create schema if not exists paceline_meta;
-revoke all on schema paceline_meta from public;
-create table if not exists paceline_meta.migrations (
+create schema if not exists y_meta;
+revoke all on schema y_meta from public;
+create table if not exists y_meta.migrations (
   name text primary key,
   sha256 text not null check (sha256 ~ '^[0-9a-f]{64}$'),
   applied_at timestamptz not null default now()
 );
-alter table paceline_meta.migrations enable row level security;
-revoke all on table paceline_meta.migrations from public;
+alter table y_meta.migrations enable row level security;
+revoke all on table y_meta.migrations from public;
 `;
 
 async function lock(q: Queryable): Promise<void> {
   await q.query('select pg_advisory_xact_lock(hashtext($1))', [MIGRATION_LOCK_KEY]);
 }
 
-/** Creates `paceline_meta.migrations` if needed. */
+/** Creates `y_meta.migrations` if needed. */
 export async function ensureMigrationsTable(db: Db): Promise<void> {
   await db.tx(async (tx) => {
     await lock(tx);
@@ -231,14 +231,14 @@ export async function ensureMigrationsTable(db: Db): Promise<void> {
   });
 }
 
-/** Rows of `paceline_meta.migrations`, by name. Empty when the table does not exist yet. */
+/** Rows of `y_meta.migrations`, by name. Empty when the table does not exist yet. */
 export async function listAppliedMigrations(q: Queryable): Promise<AppliedMigration[]> {
   const exists = await q.query<{ exists: boolean }>(
-    "select to_regclass('paceline_meta.migrations') is not null as exists",
+    "select to_regclass('y_meta.migrations') is not null as exists",
   );
   if (!exists.rows[0]?.exists) return [];
   const result = await q.query<{ name: string; sha256: string; applied_at: Date }>(
-    'select name, sha256, applied_at from paceline_meta.migrations order by name',
+    'select name, sha256, applied_at from y_meta.migrations order by name',
   );
   return result.rows.map((row) => ({ name: row.name, sha256: row.sha256, appliedAt: row.applied_at }));
 }
@@ -452,7 +452,7 @@ async function applyOne(db: Db, file: MigrationFile): Promise<'applied' | 'alrea
       await lock(tx);
       // Another process may have applied it while we waited for the lock.
       const existing = await tx.query<{ sha256: string }>(
-        'select sha256 from paceline_meta.migrations where name = $1',
+        'select sha256 from y_meta.migrations where name = $1',
         [file.name],
       );
       const recorded = existing.rows[0]?.sha256;
@@ -465,7 +465,7 @@ async function applyOne(db: Db, file: MigrationFile): Promise<'applied' | 'alrea
       await tx.exec(file.sql);
       // A migration must not leave the session in another role (pooled connections are reused).
       await tx.exec('reset role');
-      await tx.query('insert into paceline_meta.migrations (name, sha256) values ($1, $2)', [file.name, file.sha256]);
+      await tx.query('insert into y_meta.migrations (name, sha256) values ($1, $2)', [file.name, file.sha256]);
       return 'applied';
     });
   } catch (error) {

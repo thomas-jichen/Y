@@ -7,7 +7,7 @@
 import { createHmac, createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
-import { createTestDb, type PgliteDb } from '@paceline/db';
+import { createTestDb, type PgliteDb } from '@y/db';
 import {
   Activity,
   AgentBrief,
@@ -22,21 +22,21 @@ import {
   formatInternalSignatureHeader,
   internalSigningString,
   makePointer,
-} from '@paceline/schema';
-import { fx } from '@paceline/schema/fixtures';
+} from '@y/schema';
+import { fx } from '@y/schema/fixtures';
 import type { CoreDeps } from '../contracts.js';
 
-vi.mock('@paceline/domain', () => ({
+vi.mock('@y/domain', () => ({
   templatedTitle: (stats: { toolCalls: Record<string, number> }, setup: { model: string }) =>
     `${Object.values(stats.toolCalls).reduce((a, b) => a + b, 0)} tool calls · ${setup.model.replace(/^claude-/, '')}`,
   sizeBucketFor: () => 'M',
   isWarmup: (stats: { toolCalls: Record<string, number>; wallMs: number }) =>
     Object.values(stats.toolCalls).reduce((a, b) => a + b, 0) < 3 || stats.wallMs < 120_000,
 }));
-vi.mock('@paceline/redact', () => ({
+vi.mock('@y/redact', () => ({
   redact: (text: string) => ({ text: text.replace(/ghp_[A-Za-z0-9]{36}/g, '<REDACTED:github_pat>'), hitsByRule: {}, dropped: false }),
 }));
-vi.mock('@paceline/safety', () => ({
+vi.mock('@y/safety', () => ({
   l0Scan: (text: string) => ({
     label: /ignore (all )?previous instructions/i.test(text) ? 'suspicious' : 'clean',
     findings: [],
@@ -51,7 +51,7 @@ vi.mock('@paceline/safety', () => ({
     noPush: label !== 'clean',
   }),
 }));
-vi.mock('@paceline/capture', () => ({
+vi.mock('@y/capture', () => ({
   normalizeErrorSignature: (t: string) => t.toLowerCase().replace(/\d+/g, '<n>').replace(/\s+/g, ' ').trim().slice(0, 300),
 }));
 
@@ -96,7 +96,7 @@ async function drainAll() {
 
 beforeAll(async () => {
   db = await createTestDb();
-  const config = loadConfig({ NODE_ENV: 'test', PACELINE_INTERNAL_SECRET: 'test-internal-secret', PACELINE_HMAC_KEY: 'test-hmac' });
+  const config = loadConfig({ NODE_ENV: 'test', Y_INTERNAL_SECRET: 'test-internal-secret', Y_HMAC_KEY: 'test-hmac' });
   deps = await createDeps(config, db, platformModule.jobs, { scheduleRecurring: false, log: () => undefined });
   app = new Hono();
   platformModule.register(app, deps);
@@ -148,7 +148,7 @@ describe('verifyInternal', () => {
     method: 'POST',
     path: '/internal/mcp/inbox',
     body,
-    header: (n: string) => (n.toLowerCase() === 'x-paceline-internal' ? header : n.toLowerCase() === 'authorization' ? auth : undefined),
+    header: (n: string) => (n.toLowerCase() === 'x-y-internal' ? header : n.toLowerCase() === 'authorization' ? auth : undefined),
   });
   it('accepts a valid signature and rejects tampering, wrong secret and stale timestamps', () => {
     const now = Math.floor(Date.now() / 1000);

@@ -1,4 +1,4 @@
-/** `pnpm --filter @paceline/demo start -- --api <coreUrl> --mcp <mcpUrl> [--demo-secret S] [--pace normal|fast]` */
+/** `pnpm --filter @y/demo start -- --api <coreUrl> --mcp <mcpUrl> [--demo-secret S] [--pace normal|fast]` */
 import { parseArgs } from './args.js';
 import { runDemo } from './demo.js';
 

@@ -83,7 +83,7 @@ export function createTxHandle(driver: TxDriver): TxHandle {
 
 /** Default reporter: logs to stderr. */
 export const defaultErrorReporter: DbErrorReporter = (error, context) => {
-  console.error(`[@paceline/db] ${context}:`, error);
+  console.error(`[@y/db] ${context}:`, error);
 };
 
 /**

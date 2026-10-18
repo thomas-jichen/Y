@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
   const mocks = env.VITE_MOCKS === '1' || (!env.VITE_API_URL && env.VITE_MOCKS !== '0')
   const proxy =
     !mocks && !env.VITE_API_URL
-      ? { '/api': { target: env.PACELINE_CORE_URL || 'http://127.0.0.1:8787', changeOrigin: false } }
+      ? { '/api': { target: env.Y_CORE_URL || 'http://127.0.0.1:8787', changeOrigin: false } }
       : undefined
   return {
     plugins: [tanstackRouter({ target: 'react', autoCodeSplitting: true }), react(), tailwindcss()],

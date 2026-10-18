@@ -1,5 +1,5 @@
 {
-  "name": "@paceline/plugin-claude-code",
+  "name": "@y/plugin-claude-code",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,10 +12,10 @@
     "build": "tsx scripts/build.ts"
   },
   "dependencies": {
-    "@paceline/schema": "workspace:*",
-    "@paceline/capture": "workspace:*",
-    "@paceline/redact": "workspace:*",
-    "@paceline/pointers": "workspace:*"
+    "@y/schema": "workspace:*",
+    "@y/capture": "workspace:*",
+    "@y/redact": "workspace:*",
+    "@y/pointers": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^5.0.5",

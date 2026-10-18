@@ -19,7 +19,7 @@ interface CommandRule {
 }
 
 const CONFIG_TARGET =
-  String.raw`["']?(?:~\/|\$HOME\/|\$\{HOME\}\/|\.\/)?(?:[^\s"'|;&>]*\/)?(?:\.claude(?:\/|\b)|CLAUDE(?:\.local)?\.md\b|\.mcp\.json\b|AGENTS\.md\b|\.codex\/|\.bashrc\b|\.zshrc\b|\.bash_profile\b|\.zprofile\b|\.profile\b|\.paceline\b|\.cursorrules\b|\.git\/hooks\/)`;
+  String.raw`["']?(?:~\/|\$HOME\/|\$\{HOME\}\/|\.\/)?(?:[^\s"'|;&>]*\/)?(?:\.claude(?:\/|\b)|CLAUDE(?:\.local)?\.md\b|\.mcp\.json\b|AGENTS\.md\b|\.codex\/|\.bashrc\b|\.zshrc\b|\.bash_profile\b|\.zprofile\b|\.profile\b|\.y\b|\.cursorrules\b|\.git\/hooks\/)`;
 
 /** Rules in evaluation order. All `block` except sudo, --no-verify and push --force. */
 export const COMMAND_RULES: readonly CommandRule[] = [
@@ -108,7 +108,7 @@ export const COMMAND_RULES: readonly CommandRule[] = [
  * `~/.ssh`, `.aws/credentials`, writes (`>`, `>>`, `tee`, `cp`, `mv`, `sed -i`)
  * to agent config or rc files (`.claude/`, `CLAUDE*.md`, `.mcp.json`,
  * `AGENTS.md`, `~/.codex/`, `~/.bashrc`, `~/.zshrc`, `~/.profile`,
- * `~/.paceline`), `git config --global`, `--no-verify`, `push --force` /
+ * `~/.y`), `git config --global`, `--no-verify`, `push --force` /
  * `-f`, `NODE_TLS_REJECT_UNAUTHORIZED=0`, `sudo`,
  * `--dangerously-skip-permissions`. All `block` except `sudo`,
  * `--no-verify` and `push --force` (`warn`). Also used by the PreToolUse

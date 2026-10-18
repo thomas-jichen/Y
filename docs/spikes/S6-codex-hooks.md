@@ -36,8 +36,8 @@ Driver: `codex exec --json "<prompt>" < /dev/null`, plus the interactive TUI dri
 ### 6. Trust flow — read this first, it gates everything else
 
 **With untrusted hooks, `codex exec` runs the whole session and silently skips every hook.** No error, no warning
-on stdout, nothing in the JSONL event stream. The probe prompt ("echo the Paceline line in your context") returned
-`NO PACELINE LINE`, and the hook log was empty. A `SessionStart` hook that should have injected context simply
+on stdout, nothing in the JSONL event stream. The probe prompt ("echo the Y line in your context") returned
+`NO Y LINE`, and the hook log was empty. A `SessionStart` hook that should have injected context simply
 did not exist as far as the model was concerned.
 
 The gate is surfaced only in the TUI, at session start:
@@ -73,8 +73,8 @@ Two consequences worth designing around:
 
 ### 1. SessionStart → `additionalContext`: **works**
 
-Hook emitted `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Paceline: 0 unread. …"}}`.
-Model replied `Paceline: 0 unread.` — and the string is present in the model-visible rollout transcript.
+Hook emitted `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Y: 0 unread. …"}}`.
+Model replied `Y: 0 unread.` — and the string is present in the model-visible rollout transcript.
 
 Real payload:
 
@@ -150,17 +150,17 @@ currently supported:
   "hook_event_name": "SessionEnd", "reason": "other" }
 ```
 
-**Design consequence: a Paceline SessionEnd hook cannot do network I/O.** It must hand off — write a spool file,
+**Design consequence: a Y SessionEnd hook cannot do network I/O.** It must hand off — write a spool file,
 or fire-and-forget a detached process — and the uploader must run elsewhere.
 
 ### 5. Stop returning a block: **becomes a new instruction, and Codex guards the loop for you**
 
-Hook emitted `{"decision":"block","reason":"…state the single word PACELINE-STOP-HOOK-REASON."}`. The model
+Hook emitted `{"decision":"block","reason":"…state the single word Y-STOP-HOOK-REASON."}`. The model
 complied and emitted that token, so the `reason` is fed back as a fresh instruction. Payload:
 
 ```json
 { "…": "…", "hook_event_name": "Stop", "turn_id": "01a14ccc-e2db-…",
-  "stop_hook_active": false, "last_assistant_message": "Paceline: 0 unread." }
+  "stop_hook_active": false, "last_assistant_message": "Y: 0 unread." }
 ```
 
 `Stop` fired twice per run; the second time with **`stop_hook_active: true`**, which our hook used to decline to
@@ -183,8 +183,8 @@ only non-interactive blocker is the trust gate, which must be cleared once (inte
   0.163.0, not separately exercised here).
 - **Session upload** → **not** in `SessionEnd`; its ~1 s budget kills network calls. Spool to disk in `SessionEnd`
   and upload from a detached process or the next `SessionStart`.
-- **Install flow must own the trust gate.** `paceline init` has to tell the user that hooks need approval and that
-  until then Paceline is silently inert, and it must re-prompt after any hook-config change, because editing one
+- **Install flow must own the trust gate.** `y init` has to tell the user that hooks need approval and that
+  until then Y is silently inert, and it must re-prompt after any hook-config change, because editing one
   entry revokes trust for that entry alone, with no runtime warning.
 - **Treat the hook config as immutable after install.** Version the behaviour inside the hook *script* (whose
   bytes are not hashed), not in `hooks.json`.

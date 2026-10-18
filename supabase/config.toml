@@ -2,7 +2,7 @@
 # deploying functions. Hosted-project settings are made in the dashboard;
 # see README.md for the production checklist. Unlisted settings use the CLI
 # defaults.
-project_id = "paceline"
+project_id = "y"
 
 [db]
 major_version = 17
@@ -11,7 +11,7 @@ major_version = 17
 enabled = true
 
 [functions.embed]
-# The embed function authenticates callers with the x-paceline-embed-secret
-# header (PACELINE_EMBED_SECRET). Core holds no Supabase JWT for it, so the
+# The embed function authenticates callers with the x-y-embed-secret
+# header (Y_EMBED_SECRET). Core holds no Supabase JWT for it, so the
 # gateway's JWT check is off.
 verify_jwt = false

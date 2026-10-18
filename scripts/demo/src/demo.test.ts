@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parseArgs } from './args.js';
 import { runDemo, mcpEndpoint } from './demo.js';
-import { fit } from '@paceline/core';
+import { fit } from '@y/core';
 import { loadSeeds, readSeeds, waitForEmbeddings } from './seeds.js';
 import { startLocalStack, type LocalStack } from './servers.js';
 
@@ -13,7 +13,7 @@ let stack: LocalStack;
 let seeded = 0;
 
 beforeAll(async () => {
-  stack = await startLocalStack({ testTemplate: true, verbose: !!process.env.PACELINE_TEST_LOG });
+  stack = await startLocalStack({ testTemplate: true, verbose: !!process.env.Y_TEST_LOG });
   const r = await loadSeeds(stack.db, stack.deps);
   seeded = r.inserted + r.updated;
   // core's loader screens every seed; the ones the L0 screen flags are skipped, not loaded

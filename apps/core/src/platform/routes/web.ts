@@ -2,7 +2,7 @@
 import type { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { randomUUID } from 'node:crypto';
-import { isSqlState } from '@paceline/db';
+import { isSqlState } from '@y/db';
 import {
   DECISIONS_BY_KIND,
   DecisionRequest,
@@ -17,13 +17,13 @@ import {
   type FeedPage,
   type Me,
   type ReviewKind,
-} from '@paceline/schema';
+} from '@y/schema';
 import type { CoreDeps, PushEvent } from '../../contracts.js';
 import { authenticate } from '../http.js';
 import { loadActivities, reviewItemsFromRows } from '../mappers.js';
 import { realtimeChannelFor } from '../realtime-channel.js';
 import { requireRecentLogin } from '../web-guard.js';
-import { l0Scan, normalizeUntrusted } from '@paceline/safety';
+import { l0Scan, normalizeUntrusted } from '@y/safety';
 import { agentInfos, agentRef } from '../../messaging/util.js';
 import { bareId, fail, iso, num, parseOr, readJson, sha256Hex } from '../util.js';
 

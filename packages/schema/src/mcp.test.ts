@@ -254,7 +254,7 @@ describe('outputs', () => {
       next: [{ tool: 'search_network', reason: 'sign_in' }],
       kill_switches: toMcpKillSwitches(NO_KILL_SWITCHES),
       min_plugin_version: null,
-      sign_in_url: 'https://paceline.example/connect',
+      sign_in_url: 'https://y.example/connect',
       server_time: '2026-10-17T15:00:00Z',
     };
     expect(StatusOutput.safeParse(out).success).toBe(true);
@@ -286,7 +286,7 @@ describe('internal API', () => {
       bodySha256: fx.SHA,
       authSha256: '-',
     });
-    expect(s).toBe(`paceline-internal-v1\n1792000000\nPOST\n/internal/mcp/inbox\n${fx.SHA}\n-`);
+    expect(s).toBe(`y-internal-v1\n1792000000\nPOST\n/internal/mcp/inbox\n${fx.SHA}\n-`);
     expect(INTERNAL_SIGNATURE_MAX_SKEW_S).toBe(300);
   });
 

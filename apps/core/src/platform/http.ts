@@ -9,7 +9,7 @@ export type CallerKind = 'web' | 'agent';
 export function bearerFrom(c: Context): string | undefined {
   const h = c.req.header('authorization');
   if (h) return h;
-  const cookie = getCookie(c, 'paceline_session');
+  const cookie = getCookie(c, 'y_session');
   return cookie ? `Bearer ${cookie}` : undefined;
 }
 

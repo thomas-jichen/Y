@@ -1,13 +1,13 @@
 /**
- * Canonical JSON serialization used for every hash and signature in Paceline
+ * Canonical JSON serialization used for every hash and signature in Y
  * (setup hashes, patch hashes, signed change payloads, owner-instruction
  * signatures, internal HMAC bodies).
  *
  * This module has **no dependencies** (not even zod) so the plugin bundle can
- * import it as `@paceline/schema/canonical` without pulling in the rest of the
+ * import it as `@y/schema/canonical` without pulling in the rest of the
  * contracts.
  *
- * The output is RFC 8785 (JCS) compatible for the JSON values Paceline uses:
+ * The output is RFC 8785 (JCS) compatible for the JSON values Y uses:
  * - object keys sorted by UTF-16 code units, no whitespace;
  * - strings and numbers serialized exactly like `JSON.stringify`;
  * - `undefined`-valued object properties are omitted (like `JSON.stringify`).
@@ -93,7 +93,7 @@ export function canonicalJson(value: unknown): string {
 
 /**
  * UTF-8 bytes of {@link canonicalJson}. Hash these bytes with SHA-256 to get a
- * Paceline content hash (`sha256(canonicalJsonBytes(x))`, lowercase hex).
+ * Y content hash (`sha256(canonicalJsonBytes(x))`, lowercase hex).
  */
 export function canonicalJsonBytes(value: unknown): Uint8Array {
   return new TextEncoder().encode(canonicalJson(value));

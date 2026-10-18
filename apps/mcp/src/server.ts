@@ -13,5 +13,5 @@ const isMain = process.argv[1] !== undefined && import.meta.url === pathToFileUR
 if (isMain) {
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   const { url } = await server.listen(port);
-  console.log(`paceline mcp listening on ${url}`);
+  console.log(`y mcp listening on ${url}`);
 }

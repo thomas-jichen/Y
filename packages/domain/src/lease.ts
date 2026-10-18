@@ -1,8 +1,8 @@
 /**
  * Session leases and the wake budget (PLAN §9).
  */
-import { isUnattendedPermissionMode } from '@paceline/schema';
-import type { PermissionMode, QuietHours } from '@paceline/schema';
+import { isUnattendedPermissionMode } from '@y/schema';
+import type { PermissionMode, QuietHours } from '@y/schema';
 
 /* ================================================================ leases */
 

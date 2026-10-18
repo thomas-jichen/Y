@@ -1,5 +1,5 @@
 /**
- * `pnpm --filter @paceline/core smoke:serverless`: drives the real Vercel entry
+ * `pnpm --filter @y/core smoke:serverless`: drives the real Vercel entry
  * (api/index.ts, Web-standard handlers) in-process against a migrated, file-backed
  * PGlite, the way Vercel + pg_cron would: dev login (behind the demo secret, as in
  * production), connect token, ingest a closing chunk (finalized inside the request), ingest
@@ -9,12 +9,12 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createDb, migrate, type Db } from '@paceline/db';
-import { ConnectToken, FeedPage, JobsTickResponse } from '@paceline/schema';
-import { fx } from '@paceline/schema/fixtures';
+import { createDb, migrate, type Db } from '@y/db';
+import { ConnectToken, FeedPage, JobsTickResponse } from '@y/schema';
+import { fx } from '@y/schema/fixtures';
 import { migrateCore } from '../src/platform/index.js';
 
-const dir = mkdtempSync(join(tmpdir(), 'paceline-sls-'));
+const dir = mkdtempSync(join(tmpdir(), 'y-sls-'));
 const CRON = 'smoke-cron-secret-0123456789';
 const DEMO = 'smoke-demo-secret-0123456789';
 const steps: string[] = [];
@@ -28,7 +28,7 @@ function check(cond: unknown, msg: string): asserts cond {
 
 try {
   // 1. `pnpm migrate` equivalent (serverless never migrates on a cold start).
-  const pre = await createDb({ PACELINE_DATA_DIR: dir });
+  const pre = await createDb({ Y_DATA_DIR: dir });
   await migrate(pre);
   await migrateCore(pre);
   await pre.close();
@@ -38,15 +38,15 @@ try {
   Object.assign(process.env, {
     NODE_ENV: 'production',
     VERCEL: '1',
-    PACELINE_DATA_DIR: dir,
+    Y_DATA_DIR: dir,
     PUBLIC_URL: 'https://core.smoke.test',
-    PACELINE_INTERNAL_SECRET: 'smoke-internal-secret-0123456789',
-    PACELINE_HMAC_KEY: 'smoke-hmac-key-0123456789',
-    PACELINE_CRON_SECRET: CRON,
-    PACELINE_DEMO_SECRET: DEMO,
-    PACELINE_WEB_ORIGIN: 'https://web.smoke.test',
-    PACELINE_LLM: 'mock',
-    PACELINE_EMBEDDINGS: 'mock',
+    Y_INTERNAL_SECRET: 'smoke-internal-secret-0123456789',
+    Y_HMAC_KEY: 'smoke-hmac-key-0123456789',
+    Y_CRON_SECRET: CRON,
+    Y_DEMO_SECRET: DEMO,
+    Y_WEB_ORIGIN: 'https://web.smoke.test',
+    Y_LLM: 'mock',
+    Y_EMBEDDINGS: 'mock',
   });
   const entry = (await import('../api/index.js')) as Record<string, (r: Request) => Promise<Response>>;
   for (const m of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD']) check(typeof entry[m] === 'function', `api/index.ts does not export ${m}`);

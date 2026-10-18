@@ -85,7 +85,7 @@ export const AllowedCreatePath = z
   });
 export type AllowedCreatePath = z.infer<typeof AllowedCreatePath>;
 
-/** Files that may hold a Paceline managed block. */
+/** Files that may hold a Y managed block. */
 export const ManagedBlockFile = z.enum(['CLAUDE.local.md', 'AGENTS.md']);
 export type ManagedBlockFile = z.infer<typeof ManagedBlockFile>;
 
@@ -102,7 +102,7 @@ export const PATCH_CONTENT_MAX = 32_000;
  *   `allowed-tools`/`hooks`/`context` already stripped by the server; apply
  *   strips again and rejects `` !`cmd` `` lines);
  * - `managed_block`: replace (or insert) the block delimited by
- *   `<!-- paceline:begin <blockId> -->` / `<!-- paceline:end <blockId> -->`
+ *   `<!-- y:begin <blockId> -->` / `<!-- y:end <blockId> -->`
  *   in `CLAUDE.local.md` or `AGENTS.md`. `expect` refers to the block's
  *   current content (or `absent`).
  * `sha256` is the hash of `content` (UTF-8).
@@ -150,9 +150,9 @@ export const Patch = z
   });
 export type Patch = z.infer<typeof Patch>;
 
-/** The exact string whose SHA-256 is the patch hash: `"paceline-patch-v1\n" + canonicalJson(patch)`. */
+/** The exact string whose SHA-256 is the patch hash: `"y-patch-v1\n" + canonicalJson(patch)`. */
 export function patchHashInput(patch: Patch): string {
-  return `paceline-patch-v1\n${canonicalJson(patch)}`;
+  return `y-patch-v1\n${canonicalJson(patch)}`;
 }
 
 /** Display path of an op (`~/.claude/skills/x/SKILL.md`, `CLAUDE.local.md#block`). */
@@ -295,9 +295,9 @@ export const SignedChange = z.object({
 });
 export type SignedChange = z.infer<typeof SignedChange>;
 
-/** The exact string signed: `"paceline-cr-v1\n" + canonicalJson(payload)`. */
+/** The exact string signed: `"y-cr-v1\n" + canonicalJson(payload)`. */
 export function signedChangeMessage(payload: SignedChangePayload): string {
-  return `paceline-cr-v1\n${canonicalJson(payload)}`;
+  return `y-cr-v1\n${canonicalJson(payload)}`;
 }
 
 /**
@@ -322,9 +322,9 @@ export const SignedRollback = z.object({
 });
 export type SignedRollback = z.infer<typeof SignedRollback>;
 
-/** The exact string signed for a rollback: `"paceline-rb-v1\n" + canonicalJson(payload)`. */
+/** The exact string signed for a rollback: `"y-rb-v1\n" + canonicalJson(payload)`. */
 export function signedRollbackMessage(payload: SignedRollbackPayload): string {
-  return `paceline-rb-v1\n${canonicalJson(payload)}`;
+  return `y-rb-v1\n${canonicalJson(payload)}`;
 }
 
 /** Keyring entry shipped in `plugins/claude-code/keys/keyring.json`. */

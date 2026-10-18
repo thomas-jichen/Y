@@ -2,9 +2,9 @@
  * The internal MCP API between `apps/mcp` (no DB credentials) and core:
  *
  * ```
- * POST {PACELINE_CORE_URL}/internal/mcp/:tool
+ * POST {Y_CORE_URL}/internal/mcp/:tool
  * Authorization: <forwarded verbatim from the MCP caller, if any>
- * X-Paceline-Internal: t=<unix seconds>,v1=<hex HMAC-SHA256>
+ * X-Y-Internal: t=<unix seconds>,v1=<hex HMAC-SHA256>
  * Content-Type: application/json
  *
  * {"input": <tool input>, "meta": {...}}
@@ -17,7 +17,7 @@
  * as `structuredContent` with `isError: true`. Tool inputs and outputs are
  * the snake_case MCP shapes from `mcp.ts`; `meta` is internal (camelCase).
  *
- * The HMAC key is `PACELINE_INTERNAL_SECRET`; the signed string is
+ * The HMAC key is `Y_INTERNAL_SECRET`; the signed string is
  * {@link internalSigningString}. Core rejects signatures older than
  * {@link INTERNAL_SIGNATURE_MAX_SKEW_S}.
  *
@@ -98,14 +98,14 @@ export function internalMcpPath(tool: ToolName): string {
 /** Lowercase header names used on the internal API. */
 export const INTERNAL_HEADERS = {
   authorization: 'authorization',
-  signature: 'x-paceline-internal',
+  signature: 'x-y-internal',
   requestId: 'x-request-id',
 } as const;
 
 /** Max clock skew / replay window for internal signatures, seconds. */
 export const INTERNAL_SIGNATURE_MAX_SKEW_S = 300;
 
-/** `X-Paceline-Internal` header value. */
+/** `X-Y-Internal` header value. */
 export const InternalSignatureHeader = z.string().regex(/^t=\d{9,11},v1=[a-f0-9]{64}$/, {
   error: 'expected t=<unix seconds>,v1=<hex hmac>',
 });
@@ -114,7 +114,7 @@ export type InternalSignatureHeader = z.infer<typeof InternalSignatureHeader>;
 /** Headers core requires (lowercased). `authorization` is absent for signed-out callers. */
 export const InternalHeaders = z.object({
   authorization: z.string().regex(/^Bearer \S{1,4096}$/).optional(),
-  'x-paceline-internal': InternalSignatureHeader,
+  'x-y-internal': InternalSignatureHeader,
   'x-request-id': z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/).optional(),
 });
 export type InternalHeaders = z.infer<typeof InternalHeaders>;
@@ -134,13 +134,13 @@ export interface InternalSigningFields {
 }
 
 /**
- * The exact string to HMAC-SHA256 with `PACELINE_INTERNAL_SECRET`:
- * `"paceline-internal-v1\n<t>\n<METHOD>\n<path>\n<bodySha256>\n<authSha256>"`.
+ * The exact string to HMAC-SHA256 with `Y_INTERNAL_SECRET`:
+ * `"y-internal-v1\n<t>\n<METHOD>\n<path>\n<bodySha256>\n<authSha256>"`.
  * Binding the forwarded token's hash stops a captured signature being reused
  * with a different caller token.
  */
 export function internalSigningString(f: InternalSigningFields): string {
-  return ['paceline-internal-v1', String(f.timestamp), f.method.toUpperCase(), f.path, f.bodySha256, f.authSha256].join('\n');
+  return ['y-internal-v1', String(f.timestamp), f.method.toUpperCase(), f.path, f.bodySha256, f.authSha256].join('\n');
 }
 
 /** Format the header value from a timestamp and hex HMAC. */

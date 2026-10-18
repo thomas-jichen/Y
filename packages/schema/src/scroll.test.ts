@@ -59,7 +59,7 @@ describe('Patch', () => {
     const reordered = JSON.parse(JSON.stringify({ ops: p.ops, target: p.target, v: p.v })) as Patch;
     expect(patchHashInput(reordered)).toBe(patchHashInput(p));
     expect(patchHashInput({ ...p, target: 'local' })).not.toBe(patchHashInput(p));
-    expect(patchHashInput(p).startsWith('paceline-patch-v1\n')).toBe(true);
+    expect(patchHashInput(p).startsWith('y-patch-v1\n')).toBe(true);
     const op = p.ops[0];
     expect(op && patchOpPath(op)).toBe('~/.claude/skills/vitest-fixer/SKILL.md');
   });
@@ -79,8 +79,8 @@ describe('signing payloads', () => {
   it('rollback messages can never collide with approval messages', () => {
     const p = fx.signedChangePayload();
     const rb = { crId: p.crId, patchHash: p.patchHash, agentId: p.agentId, reason: 'takedown' as const, exp: p.exp, kid: p.kid };
-    expect(signedRollbackMessage(rb).startsWith('paceline-rb-v1\n')).toBe(true);
-    expect(signedChangeMessage(p).startsWith('paceline-cr-v1\n')).toBe(true);
+    expect(signedRollbackMessage(rb).startsWith('y-rb-v1\n')).toBe(true);
+    expect(signedChangeMessage(p).startsWith('y-cr-v1\n')).toBe(true);
   });
 
   it('keyring', () => {

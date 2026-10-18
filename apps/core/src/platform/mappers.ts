@@ -1,5 +1,5 @@
 /** DB rows (snake_case) → wire shapes (camelCase, packages/schema). All reads run under the caller's RLS. */
-import type { Tx } from '@paceline/db';
+import type { Tx } from '@y/db';
 import {
   ActivityStats,
   HighlightBody,
@@ -12,7 +12,7 @@ import {
   type Highlight,
   type ReviewItem,
   type SetupCard,
-} from '@paceline/schema';
+} from '@y/schema';
 import { iso, isoOpt, num, sha256Hex } from './util.js';
 
 const AGENT_COLS = `a.id as agent_id, a.handle as agent_handle, a.harness as agent_harness,

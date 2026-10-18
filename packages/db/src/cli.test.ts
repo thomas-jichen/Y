@@ -13,7 +13,7 @@ function io(env: CliIo['env'] = {}): CliIo & { out: string[]; err: string[] } {
 }
 
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), 'paceline-cli-'));
+  root = await mkdtemp(join(tmpdir(), 'y-cli-'));
   await mkdir(join(root, 'migrations'));
   await mkdir(join(root, 'tests'));
   await writeFile(join(root, 'migrations', '0001_a.sql'), 'create table public.a (id int);');
@@ -49,7 +49,7 @@ describe('runCli', () => {
   it('prints usage', async () => {
     const help = io();
     expect(await runCli(['--help'], help)).toBe(0);
-    expect(help.out.join('\n')).toMatch(/usage: paceline-db/);
+    expect(help.out.join('\n')).toMatch(/usage: y-db/);
     const none = io();
     expect(await runCli([], none)).toBe(2);
     const unknown = io();
@@ -58,7 +58,7 @@ describe('runCli', () => {
   });
 
   it('migrate applies migrations to a PGlite data dir; status reports them', async () => {
-    const env = { PACELINE_DATA_DIR: join(root, 'pgdata') };
+    const env = { Y_DATA_DIR: join(root, 'pgdata') };
     const first = io(env);
     expect(await runCli(['migrate', '--migrations-dir', 'migrations'], first)).toBe(0);
     expect(first.out).toEqual([
@@ -80,7 +80,7 @@ describe('runCli', () => {
   });
 
   it('migrate exits 1 with a message when something is wrong', async () => {
-    const bad = io({ PACELINE_DATA_DIR: 'memory' });
+    const bad = io({ Y_DATA_DIR: 'memory' });
     expect(await runCli(['migrate', '--migrations-dir', 'does-not-exist'], bad)).toBe(1);
     expect(bad.err.join('\n')).toMatch(/^error: .*ENOENT/);
   });

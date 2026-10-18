@@ -10,7 +10,7 @@ import {
   Pointer,
   SESSION_START_POINTER_BUDGET_CHARS,
   type PointerTemplateId,
-} from '@paceline/schema';
+} from '@y/schema';
 import { FALLBACK_POINTER_TEXT, POINTER_PRIORITY, TEMPLATES, TEMPLATE_LOCALS, parseTemplate, templateGrammar } from './templates.js';
 
 /**

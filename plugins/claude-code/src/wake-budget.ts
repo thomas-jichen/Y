@@ -17,7 +17,7 @@
  */
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { Pointer } from '@paceline/schema/pointers';
+import { Pointer } from '@y/schema/pointers';
 import { readJson, safeSid, writeJsonAtomic, type Paths } from './runtime.js';
 
 export const WAKE_MIN_INTERVAL_MS = 60_000;

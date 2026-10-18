@@ -39,7 +39,7 @@ export function findWorkspaceRoot(from: string = process.cwd()): string | undefi
 const MEMORY_VALUES = new Set(['memory', ':memory:', 'memory://']);
 
 /**
- * Resolves `PACELINE_DATA_DIR` to an absolute directory, or `'memory'`.
+ * Resolves `Y_DATA_DIR` to an absolute directory, or `'memory'`.
  *
  * - Unset or empty: `.pglite`.
  * - `memory`, `:memory:` or `memory://`: an in-memory database.

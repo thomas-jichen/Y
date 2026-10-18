@@ -1,15 +1,15 @@
 /**
  * AuthService: install tokens (`pcl_agt_…`), dev web sessions (`pcl_web_…`),
  * pulse tokens (`pcl_pls_…`, short-lived, HMAC-signed), Supabase JWTs (JWKS),
- * and the apps/mcp → core internal HMAC (`X-Paceline-Internal`).
+ * and the apps/mcp → core internal HMAC (`X-Y-Internal`).
  */
 import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
-import type { Db } from '@paceline/db';
+import type { Db } from '@y/db';
 import {
   INTERNAL_SIGNATURE_MAX_SKEW_S,
   internalSigningString,
   parseInternalSignatureHeader,
-} from '@paceline/schema';
+} from '@y/schema';
 import type { AuthService, Caller, CoreConfig } from '../contracts.js';
 import {
   INSTALL_TOKEN_PREFIX,
@@ -95,8 +95,8 @@ export class PlatformAuth implements AuthService {
   ) {
     this.jwks = opts.jwks ?? (config.supabase.jwksUrl ? createRemoteJWKSet(new URL(config.supabase.jwksUrl)) : null);
     this.hsKey = config.supabase.jwtSecret ? new TextEncoder().encode(config.supabase.jwtSecret) : null;
-    this.pulseKey = `paceline-pulse-v1\n${config.internalSecret}`;
-    this.streamKey = `paceline-stream-v1\n${config.internalSecret}`;
+    this.pulseKey = `y-pulse-v1\n${config.internalSecret}`;
+    this.streamKey = `y-stream-v1\n${config.internalSecret}`;
   }
 
   /** Is this install still usable (not revoked; agent and owner active)? For stateless pulse tokens. */
@@ -239,7 +239,7 @@ export class PlatformAuth implements AuthService {
     const app = (payload as { app_metadata?: unknown }).app_metadata;
     const obj = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
     await this.db.asService((tx) =>
-      tx.query('select paceline_private.provision_user($1, $2::jsonb, $3::jsonb)', [sub, JSON.stringify(obj(meta)), JSON.stringify(obj(app))]),
+      tx.query('select y_private.provision_user($1, $2::jsonb, $3::jsonb)', [sub, JSON.stringify(obj(meta)), JSON.stringify(obj(app))]),
     );
     if (this.provisioned.size > 10_000) this.provisioned.clear();
     this.provisioned.add(sub);
@@ -265,7 +265,7 @@ export class PlatformAuth implements AuthService {
    * Timing-safe compare, ±300 s window.
    */
   verifyInternal(req: { method: string; path: string; body: string; header: (name: string) => string | undefined }): boolean {
-    const raw = req.header('x-paceline-internal');
+    const raw = req.header('x-y-internal');
     if (!raw) return false;
     const parsed = parseInternalSignatureHeader(raw);
     if (!parsed) return false;

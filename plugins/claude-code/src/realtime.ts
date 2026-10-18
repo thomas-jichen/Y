@@ -12,7 +12,7 @@
  * `broadcast` frames. Node built-ins only: uses the global `WebSocket`
  * (Node ≥ 22); without it the listener falls back to slow polling.
  */
-import type { RealtimeChannel } from '@paceline/schema/hosting';
+import type { RealtimeChannel } from '@y/schema/hosting';
 
 /** The part of the WHATWG WebSocket we use (injectable for tests). */
 export interface WsLike {

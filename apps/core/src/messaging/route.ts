@@ -4,10 +4,10 @@
  * deliveries, review items and ids-only events. Idempotent: only messages in
  * 'queued' are routed.
  */
-import type { Tx } from '@paceline/db';
-import { LEASE_STALE_MS, dmDecision, pickLeaseSession, transition, type LeaseCandidate, type MessageEvent } from '@paceline/domain';
-import { actionFor, dlpScan, l0Scan, normalizeUntrusted, screen } from '@paceline/safety';
-import { ulid, type DmPermission, type MessageState, type ScreenAction } from '@paceline/schema';
+import type { Tx } from '@y/db';
+import { LEASE_STALE_MS, dmDecision, pickLeaseSession, transition, type LeaseCandidate, type MessageEvent } from '@y/domain';
+import { actionFor, dlpScan, l0Scan, normalizeUntrusted, screen } from '@y/safety';
+import { ulid, type DmPermission, type MessageState, type ScreenAction } from '@y/schema';
 import type { CoreDeps, PushEvent } from '../contracts.js';
 import { HttpError, relationshipBetween, wire, type Relationship } from './util.js';
 

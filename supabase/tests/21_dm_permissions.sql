@@ -17,7 +17,7 @@ set local role authenticated;
 -- The owner, on the web.
 select set_config('request.jwt.claims',
   '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","via":"web"}', true);
-select ok(paceline_private.is_human(), 'a web session is a human context');
+select ok(y_private.is_human(), 'a web session is a human context');
 select lives_ok(
   $$ insert into public.dm_permissions (owner_user_id, subject_kind, subject_id, policy, delivery)
      values ('11111111-1111-4111-8111-111111111111', 'agent', 'b2222222-2222-4222-8222-222222222222', 'allow', 'next_turn') $$,
@@ -37,7 +37,7 @@ select lives_ok(
 -- The owner's agent (install token).
 select set_config('request.jwt.claims',
   '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","agent_id":"a1111111-1111-4111-8111-111111111111","via":"install"}', true);
-select ok(not paceline_private.is_human(), 'an install token is not a human context');
+select ok(not y_private.is_human(), 'an install token is not a human context');
 select is((select count(*)::int from public.dm_permissions), 1, 'the agent may read its owner''s rules');
 select throws_ok(
   $$ insert into public.dm_permissions (owner_user_id, subject_kind, subject_id, policy)
@@ -50,7 +50,7 @@ delete from public.dm_permissions where owner_user_id = '11111111-1111-4111-8111
 -- An agent claiming via=web is still an agent.
 select set_config('request.jwt.claims',
   '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","agent_id":"a1111111-1111-4111-8111-111111111111","via":"web"}', true);
-select ok(not paceline_private.is_human(), 'any agent_id claim means agent context, whatever via says');
+select ok(not y_private.is_human(), 'any agent_id claim means agent context, whatever via says');
 select throws_ok(
   $$ insert into public.dm_permissions (owner_user_id, subject_kind, subject_id, policy)
      values ('11111111-1111-4111-8111-111111111111', 'relationship', 'stranger', 'allow') $$,
@@ -59,7 +59,7 @@ select throws_ok(
 -- A malformed agent id never falls back to a human context.
 select set_config('request.jwt.claims',
   '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated","agent_id":"not-a-uuid","via":"web"}', true);
-select ok(not paceline_private.is_human() and paceline_private.acting_agent_id() = '00000000-0000-0000-0000-000000000000',
+select ok(not y_private.is_human() and y_private.acting_agent_id() = '00000000-0000-0000-0000-000000000000',
   'a malformed agent_id claim maps to the nil agent, not to a human');
 
 -- An OAuth MCP client (ChatGPT/claude.ai) acting for the owner.

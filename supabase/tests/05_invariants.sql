@@ -16,9 +16,9 @@ select plan(22);
 select is_empty(
   $$ select format('%I.%I', n.nspname, c.relname)
      from pg_class c join pg_namespace n on n.oid = c.relnamespace
-     where c.relkind in ('r', 'p') and n.nspname in ('public', 'paceline_private', 'api', 'paceline_meta')
+     where c.relkind in ('r', 'p') and n.nspname in ('public', 'y_private', 'api', 'y_meta')
        and not c.relrowsecurity $$,
-  'I7: every table in public, paceline_private, api and paceline_meta has row level security enabled');
+  'I7: every table in public, y_private, api and y_meta has row level security enabled');
 
 select is_empty(
   $$ select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
@@ -29,7 +29,7 @@ select is_empty(
 select is_empty(
   $$ select format('%I.%I', n.nspname, c.relname)
      from pg_class c join pg_namespace n on n.oid = c.relnamespace
-     where n.nspname in ('public', 'paceline_private') and c.relkind in ('r', 'p')
+     where n.nspname in ('public', 'y_private') and c.relkind in ('r', 'p')
        and (has_table_privilege('anon', c.oid, 'SELECT, INSERT, UPDATE, DELETE')
             or has_table_privilege('authenticated', c.oid, 'SELECT, INSERT, UPDATE, DELETE')
             or has_any_column_privilege('anon', c.oid, 'SELECT, INSERT, UPDATE')
@@ -40,7 +40,7 @@ select is_empty(
 select is_empty(
   $$ select format('%I.%I', n.nspname, c.relname)
      from pg_class c join pg_namespace n on n.oid = c.relnamespace
-     where n.nspname in ('public', 'paceline_private') and c.relkind in ('r', 'p')
+     where n.nspname in ('public', 'y_private') and c.relkind in ('r', 'p')
        and (has_table_privilege('anon', c.oid, 'TRUNCATE, REFERENCES, TRIGGER')
             or has_table_privilege('authenticated', c.oid, 'TRUNCATE, REFERENCES, TRIGGER')) $$,
   'I7: API roles hold no TRUNCATE, REFERENCES or TRIGGER privilege');
@@ -48,16 +48,16 @@ select is_empty(
 select is_empty(
   $$ select format('%I.%I', n.nspname, p.proname)
      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-     where n.nspname in ('public', 'api', 'paceline_private') and p.prosecdef
+     where n.nspname in ('public', 'api', 'y_private') and p.prosecdef
        and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) cfg where cfg like 'search_path=%') $$,
   'I7: every SECURITY DEFINER function pins its search_path');
 
 select is_empty(
   $$ select format('%I.%I', n.nspname, p.proname)
      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-     where n.nspname in ('public', 'api', 'paceline_private')
+     where n.nspname in ('public', 'api', 'y_private')
        and has_function_privilege('public', p.oid, 'EXECUTE') $$,
-  'I7: no function in public, api or paceline_private is executable by PUBLIC');
+  'I7: no function in public, api or y_private is executable by PUBLIC');
 
 -- I4: DM permissions -------------------------------------------------------------------
 select is_empty(
@@ -136,24 +136,24 @@ select set_eq(
         'wake.requested', 'kill_switch.changed', 'takedown'],
   'I3: events.type is exactly packages/schema EventType');
 
-select ok((select prosrc from pg_proc where oid = 'paceline_private.on_event_insert()'::regprocedure)
+select ok((select prosrc from pg_proc where oid = 'y_private.on_event_insert()'::regprocedure)
           ilike '%jsonb_build_object(''id'', new.id::text, ''type'', new.type, ''payload'', new.payload)%',
   'I3: Realtime broadcasts are built from the row id, type and ids-only payload, nothing else');
 
 select set_eq(
   $$ select p.proname::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-     where n.nspname in ('public', 'api', 'paceline_private') and p.prosrc ilike '%pg_notify%' $$,
+     where n.nspname in ('public', 'api', 'y_private') and p.prosrc ilike '%pg_notify%' $$,
   array['on_event_insert', 'on_job_insert'],
   'I3: only the events doorbell (row id) and the jobs doorbell (topic) use pg_notify');
 
 select set_eq(
   $$ select p.proname::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-     where n.nspname in ('public', 'api', 'paceline_private') and p.prosrc ilike '%paceline_private.broadcast(%' $$,
+     where n.nspname in ('public', 'api', 'y_private') and p.prosrc ilike '%y_private.broadcast(%' $$,
   array['on_event_insert'],
   'I3: only the events trigger broadcasts');
 
-select ok(not has_function_privilege('authenticated', 'paceline_private.broadcast(text, text, jsonb)', 'EXECUTE')
-          and not has_function_privilege('anon', 'paceline_private.broadcast(text, text, jsonb)', 'EXECUTE'),
+select ok(not has_function_privilege('authenticated', 'y_private.broadcast(text, text, jsonb)', 'EXECUTE')
+          and not has_function_privilege('anon', 'y_private.broadcast(text, text, jsonb)', 'EXECUTE'),
   'I3: API roles cannot broadcast directly');
 
 select * from finish();

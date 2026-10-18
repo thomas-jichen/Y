@@ -54,7 +54,7 @@ const canaries: { rule: string; secret: string; context: (s: string) => string }
   },
   { rule: 'google_api_key', secret: P('AI', 'za', mixed(B64URL, 35)), context: (s) => `maps ${s}` },
   { rule: 'jwt', secret: P('ey', 'JhbGciOiJIUzI1NiJ9.', 'ey', mixed(B64URL, 40), '.', mixed(B64URL, 43)), context: (s) => `cookie ${s}` },
-  { rule: 'paceline_token', secret: P('pcl', '_agt_', mixed(B64URL, 32)), context: (s) => `install ${s}` },
+  { rule: 'y_token', secret: P('pcl', '_agt_', mixed(B64URL, 32)), context: (s) => `install ${s}` },
   { rule: 'npm_token', secret: P('np', 'm_', mixed(ALNUM, 36)), context: (s) => `//registry:_authToken=${s}` },
   { rule: 'bearer_token', secret: mixed(B64URL, 40), context: (s) => `Authorization: Bearer ${s}` },
   { rule: 'url_credentials', secret: `deploy:${mixed(ALNUM, 16)}`, context: (s) => `postgres://${s}@db.example.com:5432/app` },

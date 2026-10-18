@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import { Activity, ActivityCard, DailyRollup, Highlight, HighlightDraft, HighlightDrafts } from './activity.js';
 import { AgentBrief } from './brief.js';
-import { ErrorBody, McpErrorBody, PacelineError, fromMcpErrorBody, makeError, toMcpErrorBody, validationError } from './errors.js';
+import { ErrorBody, McpErrorBody, YError, fromMcpErrorBody, makeError, toMcpErrorBody, validationError } from './errors.js';
 import { EventRecord, StreamEvent, toStreamEvent } from './events.js';
 import {
   EMBEDDING_DIMS,
@@ -84,7 +84,7 @@ describe('round-trips of valid fixtures', () => {
       rows: [
         {
           clusterKey: 'c1',
-          label: 'vitest-fixer + paceline',
+          label: 'vitest-fixer + y',
           successWilson: 0.71,
           successCi: [0.52, 0.85],
           medianTokensOnSuccess: 140_000,
@@ -122,7 +122,7 @@ describe('stats', () => {
     expect(m.harnessVersion).toBe('2.1.300');
     expect(m.costSource).toBe('estimate');
     expect(m.tokens.total).toBe(m.tokens.input + m.tokens.output + m.tokens.cacheRead + m.tokens.cacheWrite + m.tokens.subagents);
-    expect(m.mcp).toEqual({ paceline: { search_network: 4 } });
+    expect(m.mcp).toEqual({ y: { search_network: 4 } });
     expect(ActivityStats.safeParse(m).success).toBe(true);
   });
 
@@ -138,9 +138,9 @@ describe('setup', () => {
   it('lists components deterministically', () => {
     const names = componentsFromSnapshot(fx.setupSnapshot()).map((c) => `${c.kind}:${c.name}`);
     expect(names).toEqual([
-      'plugin:paceline@paceline',
+      'plugin:y@y',
       'skill:vitest-fixer',
-      'mcp_server:paceline',
+      'mcp_server:y',
       'hook:Stop',
       'claude_md_block:Conventions',
       'claude_md_block:Testing',
@@ -201,7 +201,7 @@ describe('brief and pulse', () => {
       agent: undefined,
       pulseToken: undefined,
       realtime: undefined,
-      humanNotices: [{ kind: 'token_revoked', url: 'https://paceline.example/connect' }],
+      humanNotices: [{ kind: 'token_revoked', url: 'https://y.example/connect' }],
     };
     expect(AgentBrief.safeParse(revoked).success).toBe(true);
     expect(AgentBrief.safeParse({ ...revoked, pointers: fx.agentBrief().pointers }).success).toBe(false);
@@ -234,7 +234,7 @@ describe('messaging', () => {
   it('owner instruction signing message is canonical', () => {
     const oi = fx.ownerInstruction();
     const msg = ownerInstructionSigningMessage(oi);
-    expect(msg.startsWith('paceline-oi-v1\n')).toBe(true);
+    expect(msg.startsWith('y-oi-v1\n')).toBe(true);
     const delivered: typeof oi = { ...oi, delivered_at: '2026-10-17T16:00:00Z' };
     expect(msg).toBe(ownerInstructionSigningMessage(delivered));
     expect(msg).not.toBe(ownerInstructionSigningMessage({ ...oi, body: 'something else' }));
@@ -259,7 +259,7 @@ describe('errors', () => {
 
   it('next is either a tool or a human action', () => {
     const tool = makeError('DM_NOT_PERMITTED', 'x', { next: { tool: 'review_queue' } });
-    const human = makeError('STEP_UP_REQUIRED', 'x', { next: { humanAction: 'step_up', url: 'https://paceline.example/s' } });
+    const human = makeError('STEP_UP_REQUIRED', 'x', { next: { humanAction: 'step_up', url: 'https://y.example/s' } });
     expect(ErrorBody.safeParse(tool).success).toBe(true);
     expect(ErrorBody.safeParse(human).success).toBe(true);
     expect(
@@ -277,10 +277,10 @@ describe('errors', () => {
     }
   });
 
-  it('PacelineError round-trips', () => {
-    const e = new PacelineError('CONFLICT', 'already decided');
+  it('YError round-trips', () => {
+    const e = new YError('CONFLICT', 'already decided');
     expect(e.status).toBe(409);
-    const back = PacelineError.fromBody(e.toBody());
+    const back = YError.fromBody(e.toBody());
     expect(back.code).toBe('CONFLICT');
     expect(back.toBody()).toEqual(e.toBody());
   });
@@ -288,7 +288,7 @@ describe('errors', () => {
   it('converts between the web and MCP casings', () => {
     const web = makeError('STEP_UP_REQUIRED', 'sign in again', {
       retryAfterS: 5,
-      next: { humanAction: 'step_up', url: 'https://paceline.example/s' },
+      next: { humanAction: 'step_up', url: 'https://y.example/s' },
     });
     const mcp = toMcpErrorBody(web);
     expect(mcp).toEqual({
@@ -297,14 +297,14 @@ describe('errors', () => {
         message: 'sign in again',
         retryable: false,
         retry_after_s: 5,
-        next: { human_action: 'step_up', url: 'https://paceline.example/s' },
+        next: { human_action: 'step_up', url: 'https://y.example/s' },
       },
     });
     expect(McpErrorBody.safeParse(mcp).success).toBe(true);
     expect(fromMcpErrorBody(mcp)).toEqual(web);
-    const e = new PacelineError('RATE_LIMITED', 'slow down', { retryAfterS: 30, next: { tool: 'status' } });
+    const e = new YError('RATE_LIMITED', 'slow down', { retryAfterS: 30, next: { tool: 'status' } });
     expect(e.toMcpBody().error.retry_after_s).toBe(30);
-    expect(PacelineError.fromMcpBody(e.toMcpBody()).toBody()).toEqual(e.toBody());
+    expect(YError.fromMcpBody(e.toMcpBody()).toBody()).toEqual(e.toBody());
   });
 });
 

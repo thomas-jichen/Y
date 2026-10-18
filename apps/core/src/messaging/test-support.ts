@@ -5,7 +5,7 @@
  */
 import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
-import { createAuthUser, createTestDb, type Db } from '@paceline/db';
+import { createAuthUser, createTestDb, type Db } from '@y/db';
 import type { Caller, CoreConfig, CoreDeps, CoreModule, JobHandler, PushEvent } from '../contracts.js';
 
 export const GOOD_HMAC = 't=1700000000,v1=' + 'a'.repeat(64);
@@ -71,7 +71,7 @@ export async function makeEnv(modules: CoreModule[]): Promise<TestEnv> {
     config, db,
     auth: {
       async verifyBearer(h) { return h?.startsWith('Bearer ') ? callers.get(h.slice(7)) ?? null : null; },
-      verifyInternal(req) { return req.header('x-paceline-internal') === GOOD_HMAC; },
+      verifyInternal(req) { return req.header('x-y-internal') === GOOD_HMAC; },
     },
     bus,
     jobs: {
@@ -80,7 +80,7 @@ export async function makeEnv(modules: CoreModule[]): Promise<TestEnv> {
     },
     embedder: { dims: 384, async embed(texts) { return texts.map(mockEmbed); } },
     now: () => new Date(),
-    log: (level, msg, data) => { if (process.env.PACELINE_TEST_LOG) console.error(level, msg, JSON.stringify(data)); },
+    log: (level, msg, data) => { if (process.env.Y_TEST_LOG) console.error(level, msg, JSON.stringify(data)); },
   };
   const app = new Hono();
   for (const m of modules) m.register(app, deps);
@@ -116,7 +116,7 @@ export function webCaller(p: Person): Caller {
 
 /** Call POST /internal/mcp/:tool. */
 export async function callTool(env: TestEnv, tool: string, auth: string | undefined, input: unknown, hmac = GOOD_HMAC) {
-  const headers: Record<string, string> = { 'content-type': 'application/json', 'x-paceline-internal': hmac };
+  const headers: Record<string, string> = { 'content-type': 'application/json', 'x-y-internal': hmac };
   if (auth) headers.authorization = auth;
   const res = await env.app.request(`/internal/mcp/${tool}`, { method: 'POST', headers, body: JSON.stringify({ input }) });
   return { status: res.status, body: (await res.json()) as any };

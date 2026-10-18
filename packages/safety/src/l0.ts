@@ -3,14 +3,14 @@
  *
  * @module l0
  */
-import { scanSecrets } from '@paceline/redact';
-import { INVISIBLE_CHARS_SOURCE, TOOL_NAMES, type ContentClass, type L0Finding, type L0Result, type Label } from '@paceline/schema';
+import { scanSecrets } from '@y/redact';
+import { INVISIBLE_CHARS_SOURCE, TOOL_NAMES, type ContentClass, type L0Finding, type L0Result, type Label } from '@y/schema';
 import { isDiscussionContext, lintCommands } from './commands.js';
 import { normalizeUntrusted } from './normalize.js';
 
 /** Options for {@link l0Scan}. */
 export interface L0Options {
-  /** Extra allowlisted hosts (e.g. the Paceline host, docs domains of claimed products). */
+  /** Extra allowlisted hosts (e.g. the Y host, docs domains of claimed products). */
   allowedHosts?: readonly string[];
 }
 
@@ -25,7 +25,7 @@ export const DEFAULT_ALLOWED_HOSTS: readonly string[] = [
   'developer.mozilla.org',
   'typescriptlang.org',
   'stackoverflow.com',
-  'paceline.dev',
+  'y.dev',
   'localhost',
   '127.0.0.1',
 ];
@@ -84,19 +84,19 @@ const PHRASE_RULES: readonly PhraseRule[] = [
     rule: 'inj.delimiter_spoof',
     category: 'injection_phrase',
     severity: 'block',
-    re: /[<‹]\/?\s*(?:untrusted|paceline)[\w-]*/gi,
+    re: /[<‹]\/?\s*(?:untrusted|y)[\w-]*/gi,
   },
   {
     rule: 'inj.envelope_spoof',
     category: 'injection_phrase',
     severity: 'block',
-    re: /["']?(?:paceline_?envelope|untrusted_?content)["']?\s*:/gi,
+    re: /["']?(?:y_?envelope|untrusted_?content)["']?\s*:/gi,
   },
   {
     rule: 'inj.fake_pointer',
     category: 'injection_phrase',
     severity: 'block',
-    re: /(?:^|\n)[ \t>*-]*paceline\s*:|\bpaceline\s*:\s*[^\n]{0,160}\b(?:call|run|tell\s+your\s+human|stop\s+using)\b/gi,
+    re: /(?:^|\n)[ \t>*-]*y\s*:|\by\s*:\s*[^\n]{0,160}\b(?:call|run|tell\s+your\s+human|stop\s+using)\b/gi,
   },
   {
     rule: 'agent.addressed',
@@ -172,7 +172,7 @@ function foldConfusables(text: string): { text: string; folded: number } {
 /** Squashed (letters only) phrases that survive spacing/punctuation splitting tricks. */
 const SQUASHED_RE = /(?:ignore|disregard|forget)(?:all|any|the|your)*(?:previous|prior|above|earlier)+(?:instructions?|prompts?|rules)|youarenow(?:dan|jailbroken|unrestricted)|revealyoursystemprompt/;
 
-/** Local fallback secret patterns, used only if `@paceline/redact` is unavailable (throws). */
+/** Local fallback secret patterns, used only if `@y/redact` is unavailable (throws). */
 const FALLBACK_SECRET_RES: readonly { ruleId: string; re: RegExp }[] = [
   { ruleId: 'github_pat', re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})\b/g },
   { ruleId: 'anthropic_key', re: /\bsk-ant-[A-Za-z0-9_-]{20,}/g },
@@ -192,7 +192,7 @@ export interface SecretSpan {
 }
 
 /**
- * Secrets via `@paceline/redact`'s `scanSecrets`; if that throws (not
+ * Secrets via `@y/redact`'s `scanSecrets`; if that throws (not
  * available), a small local pattern set so detection never silently drops
  * to zero (I8: a failed check never raises trust).
  */
@@ -328,7 +328,7 @@ export function labelFromFindings(findings: readonly L0Finding[]): Label {
 /**
  * L0 scan (< 10 ms for 4,000 chars) on **normalized** text. Rule families
  * (`L0Category`): injection phrases, agent-addressed imperatives, blobs,
- * non-allowlisted URLs (warn), secrets (`@paceline/redact`, local fallback),
+ * non-allowlisted URLs (warn), secrets (`@y/redact`, local fallback),
  * the {@link lintCommands} command linter, leftover invisible characters
  * and HTML comments (callers that skipped normalization), code shape (info).
  * Confusable Cyrillic/Greek letters are folded before matching.

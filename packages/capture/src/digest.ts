@@ -1,6 +1,6 @@
 /**
  * Deterministic digest builder and error-signature normalization (PLAN §7).
- * The digest is NOT redacted here; run `@paceline/redact` on `text`.
+ * The digest is NOT redacted here; run `@y/redact` on `text`.
  * @module digest
  */
 import { lineCount, lineDelta, splitMcpName } from './stats.js';

@@ -1,6 +1,6 @@
 /**
  * Seed loader: seeds/highlights/*.json → public, active, screened highlights
- * authored by the system agent @paceline (owner user @paceline-team), embedded
+ * authored by the system agent @y (owner user @y-team), embedded
  * with the configured embedder. Idempotent: each file maps to a fixed ULID,
  * so re-running updates the rows in place.
  *
@@ -11,14 +11,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { paths, type Db } from '@paceline/db';
-import { HighlightBody, HighlightKind, StackTag } from '@paceline/schema';
-import { l0Scan, actionFor } from '@paceline/safety';
+import { paths, type Db } from '@y/db';
+import { HighlightBody, HighlightKind, StackTag } from '@y/schema';
+import { l0Scan, actionFor } from '@y/safety';
 import type { Embedder } from '../contracts.js';
 import { toVectorLiteral } from './util.js';
 
-export const SEED_USER_LOGIN = 'paceline-team';
-export const SEED_AGENT_HANDLE = 'paceline';
+export const SEED_USER_LOGIN = 'y-team';
+export const SEED_AGENT_HANDLE = 'yhq';
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 /** 2026-10-01T00:00:00Z: the time part of every seed id. */
 const SEED_EPOCH_MS = Date.UTC(2026, 9, 1);
@@ -38,7 +38,7 @@ export function seedUlid(name: string): string {
     time = CROCKFORD[t % 32] + time;
     t = Math.floor(t / 32);
   }
-  const h = createHash('sha256').update(`paceline-seed-v1:${name}`).digest();
+  const h = createHash('sha256').update(`y-seed-v1:${name}`).digest();
   let rand = '';
   for (let i = 0; i < 16; i++) rand += CROCKFORD[(h[i] ?? 0) & 31];
   return time + rand;
@@ -108,7 +108,7 @@ export interface ShapedSeed {
   tags: string[];
 }
 
-/** Ensure the system user (@paceline-team, public profile) and agent (@paceline). */
+/** Ensure the system user (@y-team, public profile) and agent (@y). */
 async function ensureSystemAgent(db: Db): Promise<{ userId: string; agentId: string }> {
   const found = await db.asService((tx) =>
     tx.query<{ user_id: string; agent_id: string }>(
@@ -122,16 +122,16 @@ async function ensureSystemAgent(db: Db): Promise<{ userId: string; agentId: str
   ).rows[0]?.id;
   if (!userId) {
     userId = randomUUID();
-    // auth.users is owner-only (as on Supabase); the trigger creates public.users with handle paceline-team.
+    // auth.users is owner-only (as on Supabase); the trigger creates public.users with handle y-team.
     await db.query(
       `insert into auth.users (id, email, raw_user_meta_data, raw_app_meta_data, email_confirmed_at)
        values ($1, $2, $3::jsonb, $4::jsonb, now())`,
-      [userId, 'seed@paceline.invalid', JSON.stringify({ user_name: SEED_USER_LOGIN, full_name: 'Paceline' }), JSON.stringify({ provider: 'system', providers: ['system'] })],
+      [userId, 'seed@y.invalid', JSON.stringify({ user_name: SEED_USER_LOGIN, full_name: 'Y' }), JSON.stringify({ provider: 'system', providers: ['system'] })],
     );
   }
   const agentId = randomUUID();
   await db.asService(async (tx) => {
-    await tx.query(`update public.users set public_profile = true, display_name = 'Paceline' where id = $1`, [userId]);
+    await tx.query(`update public.users set public_profile = true, display_name = 'Y' where id = $1`, [userId]);
     await tx.query(`insert into public.agents (id, owner_user_id, handle, harness, variant) values ($1, $2, $3, 'other_mcp', 1)`, [
       agentId,
       userId,

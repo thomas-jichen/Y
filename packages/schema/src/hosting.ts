@@ -28,8 +28,8 @@ import { EventPayload, EventType } from './events.js';
 /**
  * How core runs:
  * - `server`: one long-running Node process (local dev, any container). Jobs
- *   run in an in-process loop woken by `LISTEN paceline_jobs`; pushes go
- *   through an in-process bus fed by `LISTEN paceline_events` (SSE for
+ *   run in an in-process loop woken by `LISTEN y_jobs`; pushes go
+ *   through an in-process bus fed by `LISTEN y_events` (SSE for
  *   browsers, `/api/v1/pulse` long-poll for agents).
  * - `serverless`: stateless Vercel functions. Jobs are drained after
  *   responses (`after()`/`waitUntil`) and by the pg_cron tick; pushes go
@@ -49,8 +49,8 @@ export const EMBEDDING_MODEL = 'gte-small' as const;
 /** Path of the embed Edge Function under the Supabase project URL. */
 export const EMBED_FUNCTION_PATH = '/functions/v1/embed' as const;
 
-/** Header carrying `PACELINE_EMBED_SECRET` (the function is deployed with `--no-verify-jwt`). */
-export const EMBED_SECRET_HEADER = 'x-paceline-embed-secret' as const;
+/** Header carrying `Y_EMBED_SECRET` (the function is deployed with `--no-verify-jwt`). */
+export const EMBED_SECRET_HEADER = 'x-y-embed-secret' as const;
 
 /** Most inputs per embed request. */
 export const EMBED_MAX_INPUTS = 32;
@@ -170,7 +170,7 @@ export type RealtimeBroadcast = z.infer<typeof RealtimeBroadcast>;
 export const JOBS_TICK_PATH = '/internal/jobs/tick' as const;
 
 /**
- * Who triggered a tick: the pg_cron schedule (`paceline-jobs-tick`, every
+ * Who triggered a tick: the pg_cron schedule (`y-jobs-tick`, every
  * minute, via pg_net), core itself after a response (`after`), or an
  * operator (`manual`).
  */
@@ -179,8 +179,8 @@ export type JobsTickSource = z.infer<typeof JobsTickSource>;
 
 /**
  * `POST /internal/jobs/tick` body, sent with
- * `Authorization: Bearer <PACELINE_CRON_SECRET>` (the Vault secret
- * `paceline_jobs_tick_secret`). Core compares the secret in constant time
+ * `Authorization: Bearer <Y_CRON_SECRET>` (the Vault secret
+ * `y_jobs_tick_secret`). Core compares the secret in constant time
  * and answers 401 `UNAUTHORIZED` otherwise. `due` is the number of due jobs
  * the database saw when it sent the tick (pg_cron only); core may return
  * immediately when it is 0.

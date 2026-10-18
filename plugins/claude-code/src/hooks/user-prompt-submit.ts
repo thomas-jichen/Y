@@ -7,7 +7,7 @@
  * machine. (The asyncRewake listener is armed by a separate hook entry.)
  */
 import * as path from 'node:path';
-import type { Pointer } from '@paceline/schema/pointers';
+import type { Pointer } from '@y/schema/pointers';
 import { contextOutput, failOpen, OK, type HookCtx, type HookResult } from '../context.js';
 import { readJson, safeSid, writeJsonAtomic } from '../runtime.js';
 import { pushPathsAllowed, readBrief, readPulse, renderBlock } from '../state.js';

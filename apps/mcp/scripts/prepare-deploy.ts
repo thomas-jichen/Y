@@ -2,21 +2,21 @@
  * Prebundle apps/mcp into a standalone project for Manufact Cloud.
  *
  * Why: Manufact installs dependencies from the uploaded project's own
- * package.json with a plain package manager, so `@paceline/schema:
+ * package.json with a plain package manager, so `@y/schema:
  * workspace:*` cannot resolve there (the managed archive also drops symlinks
- * and node_modules). This script inlines every `@paceline/*` workspace
+ * and node_modules). This script inlines every `@y/*` workspace
  * package with esbuild and writes `apps/mcp/deploy/`:
  *
  *   deploy/package.json          registry deps only, pinned to the installed versions
- *   deploy/src/server.js         src/server.ts with @paceline/* inlined (mcp-use, zod external)
- *   deploy/skills/paceline/...   the skill served over MCP
+ *   deploy/src/server.js         src/server.ts with @y/* inlined (mcp-use, zod external)
+ *   deploy/skills/y/...   the skill served over MCP
  *   deploy/.gitignore            keeps .mcp-use/ and node_modules/ out of the upload
  *
  * Then `cd apps/mcp/deploy && npx mcp-use deploy --no-github ...` (see
  * docs/DEPLOY.md). No secrets are written: env vars are passed to
  * `mcp-use deploy --env` at deploy time.
  *
- *   pnpm --filter @paceline/mcp deploy:prepare        # writes apps/mcp/deploy
+ *   pnpm --filter @y/mcp deploy:prepare        # writes apps/mcp/deploy
  */
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -84,9 +84,9 @@ export async function prepareDeploy(outDir = path.join(MCP_ROOT, 'deploy')): Pro
       {
         name: 'externalize-registry-deps',
         setup(b: EsbuildPluginBuild) {
-          // Bundle relative imports and @paceline/* workspace packages; everything else bare stays external.
+          // Bundle relative imports and @y/* workspace packages; everything else bare stays external.
           b.onResolve({ filter: /^[^./]/ }, (args) => {
-            if (args.path.startsWith('node:') || args.path.startsWith('@paceline/')) return undefined;
+            if (args.path.startsWith('node:') || args.path.startsWith('@y/')) return undefined;
             const name = args.path.startsWith('@') ? args.path.split('/').slice(0, 2).join('/') : args.path.split('/')[0]!;
             externals.add(name);
             return { path: args.path, external: true };
@@ -101,7 +101,7 @@ export async function prepareDeploy(outDir = path.join(MCP_ROOT, 'deploy')): Pro
 
   const src = JSON.parse(fs.readFileSync(path.join(MCP_ROOT, 'package.json'), 'utf8')) as { engines?: unknown };
   const pkg = {
-    name: 'paceline-mcp',
+    name: 'y-mcp',
     version: '0.0.0',
     private: true,
     type: 'module',

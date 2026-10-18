@@ -1,12 +1,12 @@
 /**
  * POST /internal/jobs/tick (packages/schema hosting.ts): the serverless job
  * drain, called every minute by pg_cron via pg_net with
- * `Authorization: Bearer <PACELINE_CRON_SECRET>`. Drains due jobs until
+ * `Authorization: Bearer <Y_CRON_SECRET>`. Drains due jobs until
  * JOBS_TICK_BUDGET_MS is spent or nothing is due, re-arms the recurring
  * close_idle job, and flushes Realtime REST broadcasts.
  */
 import type { Hono } from 'hono';
-import { JOBS_TICK_BUDGET_MS, JOBS_TICK_PATH, JobsTickRequest, type JobsTickResponse } from '@paceline/schema';
+import { JOBS_TICK_BUDGET_MS, JOBS_TICK_PATH, JobsTickRequest, type JobsTickResponse } from '@y/schema';
 import type { CoreDeps } from '../../contracts.js';
 import { PgJobQueue } from '../jobs.js';
 import { scheduleCloseIdle } from '../pipeline.js';

@@ -1,5 +1,5 @@
 /**
- * @paceline/domain: pure business rules shared by core, the worker and the
+ * @y/domain: pure business rules shared by core, the worker and the
  * eval: the message and delivery state machines, DM permission decisions,
  * session leases, wake budgets, quality and credit, measured help, stats-only
  * titles, segment keys, posting plans and rate limits (PLAN §7–10).

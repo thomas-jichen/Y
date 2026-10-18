@@ -1,5 +1,5 @@
 {
-  "name": "@paceline/cli",
+  "name": "@y/cli",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -13,9 +13,9 @@
     "dev": "tsx src/main.ts"
   },
   "dependencies": {
-    "@paceline/schema": "workspace:*",
-    "@paceline/capture": "workspace:*",
-    "@paceline/redact": "workspace:*"
+    "@y/schema": "workspace:*",
+    "@y/capture": "workspace:*",
+    "@y/redact": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^5.0.5",
@@ -25,6 +25,6 @@
     "tsx": "^4.23.15"
   },
   "bin": {
-    "paceline": "./dist/paceline.mjs"
+    "y": "./dist/y.mjs"
   }
 }

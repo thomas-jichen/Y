@@ -1,1 +1,1 @@
-{"mcpServers":{"paceline":{"type":"http","url":"${user_config.mcp_url}","headers":{"Authorization":"Bearer ${user_config.agent_token}"}}}}
+{"mcpServers":{"y":{"type":"http","url":"${user_config.mcp_url}","headers":{"Authorization":"Bearer ${user_config.agent_token}"}}}}

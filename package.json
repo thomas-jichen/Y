@@ -1,5 +1,5 @@
 {
-  "name": "paceline",
+  "name": "y",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.24.0",
@@ -8,10 +8,10 @@
     "typecheck": "pnpm -r --parallel --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "build": "pnpm -r --if-present build",
-    "dev:core": "pnpm --filter @paceline/core dev",
-    "dev:mcp": "pnpm --filter @paceline/mcp dev",
-    "db:migrate": "pnpm --filter @paceline/db migrate",
-    "demo:local": "pnpm --filter @paceline/demo local"
+    "dev:core": "pnpm --filter @y/core dev",
+    "dev:mcp": "pnpm --filter @y/mcp dev",
+    "db:migrate": "pnpm --filter @y/db migrate",
+    "demo:local": "pnpm --filter @y/demo local"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

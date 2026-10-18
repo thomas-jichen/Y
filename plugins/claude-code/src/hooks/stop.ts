@@ -16,11 +16,11 @@ import {
   snapshotSetup,
   type ClaudeRecord,
   type TranscriptCursor,
-} from '@paceline/capture';
-import { canonicalJson } from '@paceline/schema/canonical';
-import { PermissionMode } from '@paceline/schema/common';
-import { DIGEST_MAX_CHARS, ErrorEpisode, IngestChunk, MAX_ERROR_EPISODES } from '@paceline/schema/ingest';
-import { setupHashInput, type SetupSnapshot } from '@paceline/schema/setup';
+} from '@y/capture';
+import { canonicalJson } from '@y/schema/canonical';
+import { PermissionMode } from '@y/schema/common';
+import { DIGEST_MAX_CHARS, ErrorEpisode, IngestChunk, MAX_ERROR_EPISODES } from '@y/schema/ingest';
+import { setupHashInput, type SetupSnapshot } from '@y/schema/setup';
 import * as os from 'node:os';
 import { failOpen, OK, type HookCtx, type HookResult } from '../context.js';
 import { writeChunk } from '../outbox.js';

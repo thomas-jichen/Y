@@ -1,5 +1,5 @@
 {
-  "name": "@paceline/redact",
+  "name": "@y/redact",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@paceline/schema": "workspace:*"
+    "@y/schema": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^5.0.5",

@@ -1,7 +1,7 @@
 /**
  * Safety contracts: L0 findings, static-check findings (SC001–SC018), the L2
  * judge verdict, stored verdicts, the `Screen` chip and content classes
- * (PLAN §10). The cascade itself lives in `@paceline/safety`.
+ * (PLAN §10). The cascade itself lives in `@y/safety`.
  *
  * @module safety
  */

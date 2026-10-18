@@ -1,4 +1,4 @@
-import { POINTER_PARAMS, POINTER_TEMPLATE_IDS, TOOL_NAMES } from '@paceline/schema';
+import { POINTER_PARAMS, POINTER_TEMPLATE_IDS, TOOL_NAMES } from '@y/schema';
 import { describe, expect, it } from 'vitest';
 import { FALLBACK_POINTER_TEXT, POINTER_PRIORITY, TEMPLATES } from './index.js';
 
@@ -20,9 +20,9 @@ describe('TEMPLATES (contract)', () => {
     expect(template.replace(/\[[^[\]{}]*(?:\{[a-zA-Z_]+\}[^[\]{}]*)*\]/g, '').replace(/\{[a-zA-Z_]+\}/g, '')).not.toMatch(/[[\]{}]/);
   });
 
-  it.each(POINTER_TEMPLATE_IDS.map((id) => [id]))('%s starts with "Paceline:" and names a next step', (id) => {
+  it.each(POINTER_TEMPLATE_IDS.map((id) => [id]))('%s starts with "Y:" and names a next step', (id) => {
     const t = TEMPLATES[id];
-    expect(t.startsWith('Paceline: ')).toBe(true);
+    expect(t.startsWith('Y: ')).toBe(true);
     const namesTool = TOOL_NAMES.some((tool) => t.includes(tool)) || t.includes('/reload-skills');
     expect(namesTool).toBe(true);
     expect(t.length).toBeLessThan(200);

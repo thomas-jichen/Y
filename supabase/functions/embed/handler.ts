@@ -6,7 +6,7 @@
  * Contract (called by apps/core only, server to server):
  *
  *   POST /functions/v1/embed
- *   x-paceline-embed-secret: <PACELINE_EMBED_SECRET>
+ *   x-y-embed-secret: <Y_EMBED_SECRET>
  *   Content-Type: application/json
  *   {"input": "text" | ["text", ...]}            (1..32 inputs, 1..8000 chars each)
  *
@@ -22,7 +22,7 @@ export const EMBEDDING_MODEL = 'gte-small';
 /** gte-small output size; must match vector(384) columns and EMBEDDING_DIMS in packages/retrieval. */
 export const EMBEDDING_DIMS = 384;
 /** Header carrying the shared secret. A custom header, so the gateway's Authorization (if verify_jwt is on) stays free. */
-export const SECRET_HEADER = 'x-paceline-embed-secret';
+export const SECRET_HEADER = 'x-y-embed-secret';
 
 /** Embeds one text; returns the raw vector (normalization is requested from the model). */
 export type EmbedFn = (text: string) => Promise<ArrayLike<number>>;
@@ -109,7 +109,7 @@ export function createEmbedHandler(options: EmbedHandlerOptions): (req: Request)
       return json(405, { error: { code: 'VALIDATION', message: 'use POST', retryable: false } }, { allow: 'POST' });
     }
     if (!secret || secret.length < MIN_SECRET_LENGTH) {
-      return fail(500, 'INTERNAL', 'embed function is not configured (PACELINE_EMBED_SECRET)');
+      return fail(500, 'INTERNAL', 'embed function is not configured (Y_EMBED_SECRET)');
     }
     const given = req.headers.get(SECRET_HEADER);
     if (given === null || !(await secretsEqual(given, secret))) {

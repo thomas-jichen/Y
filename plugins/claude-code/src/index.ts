@@ -1,4 +1,4 @@
-/** @paceline/plugin-claude-code: hook handlers, uploader and listener (bundled into scripts/dist). */
+/** @y/plugin-claude-code: hook handlers, uploader and listener (bundled into scripts/dist). */
 export * from './context.js';
 export { HANDLERS, isHookEvent } from './hooks/index.js';
 export { buildStopChunk } from './hooks/stop.js';

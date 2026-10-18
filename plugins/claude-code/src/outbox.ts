@@ -4,7 +4,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { IngestChunk } from '@paceline/schema/ingest';
+import type { IngestChunk } from '@y/schema/ingest';
 import { safeSid, writeJsonAtomic, type Paths } from './runtime.js';
 
 export function chunkFileName(ts: number, sid: string, seq: number): string {

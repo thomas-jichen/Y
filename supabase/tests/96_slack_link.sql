@@ -1,4 +1,4 @@
--- `/paceline connect` (PLAN §11 Linking): a single-use link token is
+-- `/y connect` (PLAN §11 Linking): a single-use link token is
 -- completed only from a signed-in web session; it links the Slack user,
 -- copies the workspace name for the settings page (SlackLink.workspaceName)
 -- and cannot be reused, used after expiry, or completed by an agent.

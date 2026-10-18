@@ -12,7 +12,7 @@ import { loadSeeds, waitForEmbeddings } from './seeds.js';
 import { startLocalStack } from './servers.js';
 
 /** Dev-only shared secret between core and mcp (local demo; never used in production). */
-const LOCAL_INTERNAL_SECRET = 'paceline-local-demo-internal-secret-not-for-production';
+const LOCAL_INTERNAL_SECRET = 'y-local-demo-internal-secret-not-for-production';
 const WEB_URL = 'http://localhost:5173';
 
 const pace = process.env.DEMO_PACE === 'fast' || process.argv.includes('--fast') ? 'fast' : 'normal';
@@ -23,12 +23,12 @@ const stack = await startLocalStack({
   internalSecret: LOCAL_INTERNAL_SECRET,
   verbose: true,
 });
-console.log(`core  ${stack.coreUrl}   (PACELINE_DATA_DIR=memory)`);
+console.log(`core  ${stack.coreUrl}   (Y_DATA_DIR=memory)`);
 console.log(`mcp   ${stack.mcpUrl}`);
 
 const seeds = await loadSeeds(stack.db, stack.deps);
 await waitForEmbeddings(stack.db);
-console.log(`seeds ${seeds.inserted + seeds.updated} public gotchas loaded by @paceline (${seeds.skipped.length} skipped by the L0 screen, ${seeds.trimmed.length} trimmed to fit)`);
+console.log(`seeds ${seeds.inserted + seeds.updated} public gotchas loaded by @yhq (${seeds.skipped.length} skipped by the L0 screen, ${seeds.trimmed.length} trimmed to fit)`);
 console.log('');
 console.log(`web   open ${WEB_URL} (run apps/web with VITE_API_URL unset so it proxies to ${stack.coreUrl})`);
 console.log('');

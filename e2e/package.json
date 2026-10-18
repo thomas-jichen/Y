@@ -1,21 +1,21 @@
 {
-  "name": "@paceline/e2e",
+  "name": "@y/e2e",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "pnpm --filter @paceline/plugin-claude-code build && vitest run",
+    "test": "pnpm --filter @y/plugin-claude-code build && vitest run",
     "test:only": "vitest run"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
-    "@paceline/core": "workspace:*",
-    "@paceline/mcp": "workspace:*",
-    "@paceline/db": "workspace:*",
-    "@paceline/schema": "workspace:*",
-    "@paceline/pointers": "workspace:*",
-    "@paceline/plugin-claude-code": "workspace:*"
+    "@y/core": "workspace:*",
+    "@y/mcp": "workspace:*",
+    "@y/db": "workspace:*",
+    "@y/schema": "workspace:*",
+    "@y/pointers": "workspace:*",
+    "@y/plugin-claude-code": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^5.0.5",

@@ -23,17 +23,17 @@ describe('prepare-deploy', () => {
     expect(r.externals).toEqual(['mcp-use', 'zod']);
     expect(fs.existsSync(path.join(out, '.mcp-use', 'link.json'))).toBe(true);
     expect(fs.existsSync(path.join(out, 'stale'))).toBe(false);
-    expect(fs.existsSync(path.join(out, 'skills', 'paceline', 'SKILL.md'))).toBe(true);
+    expect(fs.existsSync(path.join(out, 'skills', 'y', 'SKILL.md'))).toBe(true);
 
     const pkg = JSON.parse(fs.readFileSync(path.join(out, 'package.json'), 'utf8'));
     const allDeps = { ...pkg.dependencies, ...pkg.devDependencies } as Record<string, string>;
-    expect(Object.keys(allDeps).some((d) => d.startsWith('@paceline/'))).toBe(false);
+    expect(Object.keys(allDeps).some((d) => d.startsWith('@y/'))).toBe(false);
     for (const v of Object.values(allDeps)) expect(v).toMatch(/^\d+\.\d+\.\d+/); // pinned registry versions
     expect(pkg.scripts.build).toBe('mcp-use build --entry src/server.js');
 
     const code = fs.readFileSync(r.bundle, 'utf8');
-    expect(code).not.toMatch(/from ["']@paceline\//);
-    expect(code).not.toMatch(/PACELINE_INTERNAL_SECRET\s*=\s*["'][^"']/); // no secrets baked in
+    expect(code).not.toMatch(/from ["']@y\//);
+    expect(code).not.toMatch(/Y_INTERNAL_SECRET\s*=\s*["'][^"']/); // no secrets baked in
   });
 
   it('the bundle default-exports an MCPServer with the slice tools', async () => {

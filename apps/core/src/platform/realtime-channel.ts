@@ -4,8 +4,8 @@
  * the project URL and publishable key (the events trigger, or core's REST fallback,
  * broadcasts there); otherwise `local` (browsers use SSE, agents long-poll /pulse).
  */
-import type { Queryable } from '@paceline/db';
-import { RealtimeChannel, realtimeTopic, type RealtimeOwnerKind } from '@paceline/schema';
+import type { Queryable } from '@y/db';
+import { RealtimeChannel, realtimeTopic, type RealtimeOwnerKind } from '@y/schema';
 import type { CoreConfig } from '../contracts.js';
 
 export async function realtimeChannelFor(

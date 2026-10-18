@@ -1,5 +1,5 @@
 /**
- * @paceline/capture: client-side transcript parsing, stats, laps, digests,
+ * @y/capture: client-side transcript parsing, stats, laps, digests,
  * setup snapshots and segment boundaries (PLAN §6–7).
  *
  * Runs inside the plugin's hook scripts (Node ≥ 20, node built-ins only; it
@@ -16,7 +16,7 @@
  * @packageDocumentation
  */
 import type { CodexRolloutResult, SnapshotCodexSetupOptions } from './types.js';
-import type { SetupSnapshot } from '@paceline/schema';
+import type { SetupSnapshot } from '@y/schema';
 
 export * from './types.js';
 export { parseClaudeRecords, readTranscriptDelta } from './transcript.js';

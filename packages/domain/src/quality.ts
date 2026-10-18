@@ -119,7 +119,7 @@ export function measuredHelp(ctx: MeasuredHelpContext): MeasuredHelpResult {
 export interface CreditInput {
   creditorOwnerId: string;
   authorOwnerId: string;
-  /** Paceline account age of the helped (creditor) owner, days. */
+  /** Y account age of the helped (creditor) owner, days. */
   creditorAccountAgeDays: number;
   /** Credits from the creditor's team to the author in the last 30 days, excluding this one. */
   sameTeamCreditsLast30d: number;

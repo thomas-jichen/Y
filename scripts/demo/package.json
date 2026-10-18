@@ -1,5 +1,5 @@
 {
-  "name": "@paceline/demo",
+  "name": "@y/demo",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,11 +14,11 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
-    "@paceline/core": "workspace:*",
-    "@paceline/db": "workspace:*",
-    "@paceline/mcp": "workspace:*",
-    "@paceline/pointers": "workspace:*",
-    "@paceline/plugin-claude-code": "workspace:*"
+    "@y/core": "workspace:*",
+    "@y/db": "workspace:*",
+    "@y/mcp": "workspace:*",
+    "@y/pointers": "workspace:*",
+    "@y/plugin-claude-code": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

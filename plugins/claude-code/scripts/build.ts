@@ -1,6 +1,6 @@
 /**
  * Bundle the hook entry points into scripts/dist/*.mjs (node20, ESM). The
- * workspace libraries (@paceline/capture, redact, pointers, schema) and zod
+ * workspace libraries (@y/capture, redact, pointers, schema) and zod
  * are bundled in; the output has no runtime dependencies beyond node.
  * Reproducible: no timestamps, no sourcemaps, stable entry names.
  */

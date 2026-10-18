@@ -12,7 +12,7 @@ export interface CliArgs {
 }
 
 export const USAGE =
-  'usage: pnpm --filter @paceline/demo start -- --api <coreUrl> --mcp <mcpUrl> [--demo-secret S] [--pace normal|fast] [--web <webUrl>] [--expect-seeds] [--show-tokens]';
+  'usage: pnpm --filter @y/demo start -- --api <coreUrl> --mcp <mcpUrl> [--demo-secret S] [--pace normal|fast] [--web <webUrl>] [--expect-seeds] [--show-tokens]';
 
 export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliArgs {
   const a = argv.filter((x) => x !== '--');
@@ -25,12 +25,12 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     if (next === undefined || next.startsWith('--')) throw new Error(`--${name} needs a value\n${USAGE}`);
     return next;
   };
-  const api = val('api') ?? env.PACELINE_API_URL;
-  const mcp = val('mcp') ?? env.PACELINE_MCP_URL;
+  const api = val('api') ?? env.Y_API_URL;
+  const mcp = val('mcp') ?? env.Y_MCP_URL;
   if (!api || !mcp) throw new Error(USAGE);
   const pace = val('pace') ?? 'normal';
   if (pace !== 'normal' && pace !== 'fast') throw new Error(`--pace must be normal or fast\n${USAGE}`);
-  const demoSecret = val('demo-secret') ?? env.PACELINE_DEMO_SECRET;
+  const demoSecret = val('demo-secret') ?? env.Y_DEMO_SECRET;
   const web = val('web');
   return {
     api,

@@ -8,8 +8,8 @@ select plan(32);
 select is_empty(
   $$ select format('%I.%I', n.nspname, c.relname)
      from pg_class c join pg_namespace n on n.oid = c.relnamespace
-     where c.relkind in ('r', 'p') and n.nspname in ('public', 'paceline_private') and not c.relrowsecurity $$,
-  'every table in public and paceline_private has row level security enabled');
+     where c.relkind in ('r', 'p') and n.nspname in ('public', 'y_private') and not c.relrowsecurity $$,
+  'every table in public and y_private has row level security enabled');
 
 select cmp_ok(
   (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace
@@ -62,7 +62,7 @@ select set_eq(
 
 select is_empty(
   $$ select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
-     where n.nspname in ('public', 'paceline_private') and c.relkind = 'r'
+     where n.nspname in ('public', 'y_private') and c.relkind = 'r'
        and (has_table_privilege('anon', c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')
             or has_any_column_privilege('anon', c.oid, 'INSERT, UPDATE')) $$,
   'anon cannot write any table');
@@ -77,9 +77,9 @@ select is_empty(
         or has_any_column_privilege('anon', ('public.' || t)::regclass, 'SELECT, INSERT, UPDATE, REFERENCES') $$,
   'jobs, events, rate_buckets, signing_keys, audit_log and the other service-only tables grant nothing to API roles');
 
-select ok(not has_any_column_privilege('authenticated', 'paceline_private.app_config', 'SELECT')
-          and not has_any_column_privilege('service_role', 'paceline_private.app_config', 'SELECT'),
-  'paceline_private.app_config (cron secrets) is readable by no API role');
+select ok(not has_any_column_privilege('authenticated', 'y_private.app_config', 'SELECT')
+          and not has_any_column_privilege('service_role', 'y_private.app_config', 'SELECT'),
+  'y_private.app_config (cron secrets) is readable by no API role');
 
 select ok(not has_column_privilege('authenticated', 'public.installs', 'token_hash', 'SELECT')
           and has_column_privilege('authenticated', 'public.installs', 'revoked_at', 'SELECT'),
@@ -105,7 +105,7 @@ select is_empty(
 
 select is_empty(
   $$ select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-     where n.nspname = 'paceline_private'
+     where n.nspname = 'y_private'
        and p.proname in ('broadcast', 'jobs_tick', 'config_value', 'handle_new_auth_user', 'on_event_insert')
        and (has_function_privilege('authenticated', p.oid, 'EXECUTE')
             or has_function_privilege('anon', p.oid, 'EXECUTE')) $$,
@@ -117,25 +117,25 @@ select results_eq(
   $$ values ('apply'::text, false), ('ingest', false), ('network_content', false), ('push_paths', false) $$,
   'the four kill switches exist, disengaged');
 
-select ok(paceline_private.ulid() ~ '^[0-9A-HJKMNP-TV-Z]{26}$', 'ulid() returns a Crockford base32 ULID');
-select ok(paceline_private.ulid() <> paceline_private.ulid(), 'ulid() is random');
-select ok(left(paceline_private.ulid(), 10) >= '01J0000000', 'ulid() encodes the current time');
+select ok(y_private.ulid() ~ '^[0-9A-HJKMNP-TV-Z]{26}$', 'ulid() returns a Crockford base32 ULID');
+select ok(y_private.ulid() <> y_private.ulid(), 'ulid() is random');
+select ok(left(y_private.ulid(), 10) >= '01J0000000', 'ulid() encodes the current time');
 
 -- Domains mirror packages/schema ------------------------------------------------------
-select lives_ok($$ select array['l0']::paceline_private.screen_layers $$, 'screen layers [l0] alone is a valid verdict');
-select lives_ok($$ select array['l0', 'l2']::paceline_private.screen_layers $$, 'screen layers [l0, l2] is valid');
-select throws_ok($$ select array['l2']::paceline_private.screen_layers $$, '23514', null, 'screen layers must include l0');
-select throws_ok($$ select 'Bad Handle'::paceline_private.handle $$, '23514', null, 'handles must match ^[a-z0-9-]{3,32}$');
-select throws_ok($$ select 'not_an_intent'::paceline_private.task_intent $$, '23514', null, 'task intents are the fixed 32');
+select lives_ok($$ select array['l0']::y_private.screen_layers $$, 'screen layers [l0] alone is a valid verdict');
+select lives_ok($$ select array['l0', 'l2']::y_private.screen_layers $$, 'screen layers [l0, l2] is valid');
+select throws_ok($$ select array['l2']::y_private.screen_layers $$, '23514', null, 'screen layers must include l0');
+select throws_ok($$ select 'Bad Handle'::y_private.handle $$, '23514', null, 'handles must match ^[a-z0-9-]{3,32}$');
+select throws_ok($$ select 'not_an_intent'::y_private.task_intent $$, '23514', null, 'task intents are the fixed 32');
 
 -- Event payloads are ids/counts only (I3) ---------------------------------------------
-select ok(paceline_private.event_payload_ok('{"reviewId": "rv_01J00000000000000000000000", "count": 3, "seen": true}'),
+select ok(y_private.event_payload_ok('{"reviewId": "rv_01J00000000000000000000000", "count": 3, "seen": true}'),
   'ids, integers and booleans are valid event payload values');
-select ok(not paceline_private.event_payload_ok('{"body": "ignore previous instructions"}'),
+select ok(not y_private.event_payload_ok('{"body": "ignore previous instructions"}'),
   'free text is rejected from event payloads');
-select ok(not paceline_private.event_payload_ok('{"nested": {"a": 1}}')
-          and not paceline_private.event_payload_ok('{"score": 0.5}')
-          and not paceline_private.event_payload_ok('["a"]'),
+select ok(not y_private.event_payload_ok('{"nested": {"a": 1}}')
+          and not y_private.event_payload_ok('{"score": 0.5}')
+          and not y_private.event_payload_ok('["a"]'),
   'objects, floats and non-object payloads are rejected');
 
 -- updated_at triggers -----------------------------------------------------------------
@@ -146,15 +146,15 @@ select is_empty(
   'every table with updated_at (except rate_buckets) maintains it by trigger');
 
 -- Roles (0006) ------------------------------------------------------------------------
-select ok((select not rolinherit and not rolcanlogin from pg_roles where rolname = 'paceline_core')
-          and pg_has_role('paceline_core', 'authenticated', 'MEMBER')
-          and pg_has_role('paceline_core', 'anon', 'MEMBER')
-          and not pg_has_role('paceline_core', 'service_role', 'MEMBER'),
-  'paceline_core is a NOINHERIT placeholder that can assume only anon/authenticated');
+select ok((select not rolinherit and not rolcanlogin from pg_roles where rolname = 'y_core')
+          and pg_has_role('y_core', 'authenticated', 'MEMBER')
+          and pg_has_role('y_core', 'anon', 'MEMBER')
+          and not pg_has_role('y_core', 'service_role', 'MEMBER'),
+  'y_core is a NOINHERIT placeholder that can assume only anon/authenticated');
 
-select ok(pg_has_role('paceline_worker', 'service_role', 'MEMBER')
-          and not pg_has_role('paceline_worker', 'authenticated', 'USAGE'),
-  'paceline_worker can assume service_role and inherits nothing');
+select ok(pg_has_role('y_worker', 'service_role', 'MEMBER')
+          and not pg_has_role('y_worker', 'authenticated', 'USAGE'),
+  'y_worker can assume service_role and inherits nothing');
 
 select * from finish();
 rollback;

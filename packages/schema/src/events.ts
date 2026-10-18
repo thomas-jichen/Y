@@ -5,7 +5,7 @@
  * (invariant I3): clients refetch.
  *
  * Fan-out (SQL trigger on `events` insert):
- * 1. `pg_notify('paceline_events', '<id>')`: the payload is only the row id.
+ * 1. `pg_notify('y_events', '<id>')`: the payload is only the row id.
  *    Server-mode core LISTENs and reads the rows with `api.events_since`,
  *    whose `notify` column is an {@link EventRecord}.
  * 2. Where Supabase Realtime exists, one broadcast per audience member on
@@ -93,7 +93,7 @@ export type EventPayloadValue = z.infer<typeof EventPayloadValue>;
 
 /**
  * An event payload: at most 16 camelCase keys of {@link EventPayloadValue}s
- * (mirrors `paceline_private.event_payload_ok`). Ids are prefixed wire ids
+ * (mirrors `y_private.event_payload_ok`). Ids are prefixed wire ids
  * (`{"reviewId": "rv_…"}`).
  */
 export const EventPayload = z
@@ -117,17 +117,17 @@ export const EventRecord = z.object({
 export type EventRecord = z.infer<typeof EventRecord>;
 
 /** Postgres channel rung on every `events` insert (payload: the row id). */
-export const NOTIFY_CHANNEL = 'paceline_events' as const;
+export const NOTIFY_CHANNEL = 'y_events' as const;
 
 /** Postgres channel rung on every `jobs` insert (payload: the job topic); wakes server-mode workers. */
-export const JOBS_NOTIFY_CHANNEL = 'paceline_jobs' as const;
+export const JOBS_NOTIFY_CHANNEL = 'y_jobs' as const;
 
 /**
- * Channel used by the local `realtime.send` shim (`@paceline/db` shims on
+ * Channel used by the local `realtime.send` shim (`@y/db` shims on
  * PGlite / plain Postgres): payload `{"topic", "event", "payload",
  * "private"}`. Only local processes listen; the topic contains the secret.
  */
-export const LOCAL_REALTIME_NOTIFY_CHANNEL = 'paceline_realtime' as const;
+export const LOCAL_REALTIME_NOTIFY_CHANNEL = 'y_realtime' as const;
 
 /**
  * Convert an event row to the browser event, if it is a browser-visible type

@@ -61,7 +61,7 @@ harness enqueue a notification and the model open a brand-new turn — with no h
 {"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-18T02:04:06.388Z",
  "content":"<task-notification>\n<summary>Stop hook feedback</summary>\n</task-notification>\n
             <system-reminder>\nStop hook blocking error from command \"SessionStart:startup\":
-            Paceline: 1 unread DM from @spike-bot. Call the inbox tool.\n\n</system-reminder>"}
+            Y: 1 unread DM from @spike-bot. Call the inbox tool.\n\n</system-reminder>"}
 ```
 
 It becomes a **user-role turn** tagged `"origin":{"kind":"task-notification","producer":"session-task"}` at

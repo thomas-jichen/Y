@@ -156,8 +156,8 @@ describe('query building', () => {
 
   it('notify uses pg_notify with bound channel and payload', async () => {
     const { db, pool } = setup();
-    await db.notify('paceline_events', '{"id":1}');
-    expect(pool.sent).toEqual([ext('select pg_notify($1, $2)', ['paceline_events', '{"id":1}'])]);
+    await db.notify('y_events', '{"id":1}');
+    expect(pool.sent).toEqual([ext('select pg_notify($1, $2)', ['y_events', '{"id":1}'])]);
     await expect(db.notify('Bad', 'x')).rejects.toThrow(/invalid channel/);
   });
 });
@@ -440,38 +440,38 @@ describe('lifecycle', () => {
     const remote = await createDb({ DATABASE_URL: 'postgres://user:pass@127.0.0.1:1/none' });
     expect([remote.kind, remote.local]).toEqual(['pg', false]);
     await remote.close();
-    const local = await createDb({ DATABASE_URL: ' postgres://127.0.0.1:1/none ', PACELINE_DB_LOCAL: 'true' });
+    const local = await createDb({ DATABASE_URL: ' postgres://127.0.0.1:1/none ', Y_DB_LOCAL: 'true' });
     expect([local.kind, local.local]).toEqual(['pg', true]);
     await local.close();
   });
 
   it('createDb falls back to PGlite', async () => {
-    const db = await createDb({ DATABASE_URL: '  ', PACELINE_DATA_DIR: 'memory' });
+    const db = await createDb({ DATABASE_URL: '  ', Y_DATA_DIR: 'memory' });
     expect([db.kind, db.local, db.flavor]).toEqual(['pglite', true, 'pglite']);
     expect((await db.query('select 1 as one')).rows).toEqual([{ one: 1 }]);
     await db.close();
   });
 
-  it('resolves PACELINE_DB_FLAVOR', () => {
+  it('resolves Y_DB_FLAVOR', () => {
     const url = 'postgres://127.0.0.1:1/none';
     expect(resolveDbFlavor({})).toBe('pglite');
     expect(resolveDbFlavor({ DATABASE_URL: url })).toBe('supabase');
-    expect(resolveDbFlavor({ DATABASE_URL: url, PACELINE_DB_LOCAL: '1' })).toBe('postgres');
-    expect(resolveDbFlavor({ DATABASE_URL: url, PACELINE_DB_FLAVOR: ' Postgres ' })).toBe('postgres');
-    expect(resolveDbFlavor({ DATABASE_URL: url, PACELINE_DB_FLAVOR: 'pglite' })).toBe('pglite');
-    expect(() => resolveDbFlavor({ PACELINE_DB_FLAVOR: 'supabase' })).toThrow(/needs DATABASE_URL/);
-    expect(() => resolveDbFlavor({ DATABASE_URL: url, PACELINE_DB_FLAVOR: 'mysql' })).toThrow(/must be one of/);
+    expect(resolveDbFlavor({ DATABASE_URL: url, Y_DB_LOCAL: '1' })).toBe('postgres');
+    expect(resolveDbFlavor({ DATABASE_URL: url, Y_DB_FLAVOR: ' Postgres ' })).toBe('postgres');
+    expect(resolveDbFlavor({ DATABASE_URL: url, Y_DB_FLAVOR: 'pglite' })).toBe('pglite');
+    expect(() => resolveDbFlavor({ Y_DB_FLAVOR: 'supabase' })).toThrow(/needs DATABASE_URL/);
+    expect(() => resolveDbFlavor({ DATABASE_URL: url, Y_DB_FLAVOR: 'mysql' })).toThrow(/must be one of/);
   });
 
   it('createDb honors the flavor', async () => {
     const url = 'postgres://user:pass@127.0.0.1:1/none';
-    const plain = await createDb({ DATABASE_URL: url, PACELINE_DB_FLAVOR: 'postgres' });
+    const plain = await createDb({ DATABASE_URL: url, Y_DB_FLAVOR: 'postgres' });
     expect([plain.kind, plain.flavor, plain.local]).toEqual(['pg', 'postgres', false]);
     await plain.close();
     const supa = await createDb({ DATABASE_URL: url });
     expect([supa.kind, supa.flavor]).toEqual(['pg', 'supabase']);
     await supa.close();
-    const forced = await createDb({ DATABASE_URL: url, PACELINE_DB_FLAVOR: 'pglite', PACELINE_DATA_DIR: 'memory' });
+    const forced = await createDb({ DATABASE_URL: url, Y_DB_FLAVOR: 'pglite', Y_DATA_DIR: 'memory' });
     expect(forced.kind).toBe('pglite');
     await forced.close();
   });

@@ -7,9 +7,9 @@
 import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { serve, type ServerType } from '@hono/node-server';
-import { createDb, createTestDb, migrate, type Db } from '@paceline/db';
-import { allJobHandlers, createApp, createDeps, loadConfig, type CoreDeps } from '@paceline/core';
-import { createServer as createMcpServer } from '@paceline/mcp';
+import { createDb, createTestDb, migrate, type Db } from '@y/db';
+import { allJobHandlers, createApp, createDeps, loadConfig, type CoreDeps } from '@y/core';
+import { createServer as createMcpServer } from '@y/mcp';
 
 export interface LocalStack {
   coreUrl: string;
@@ -34,7 +34,7 @@ export interface LocalStackOptions {
   internalSecret?: string;
   /** Use the cached test template (fast) instead of migrating a fresh in-memory DB. */
   testTemplate?: boolean;
-  /** Print core errors (and everything with PACELINE_DEBUG). */
+  /** Print core errors (and everything with Y_DEBUG). */
   verbose?: boolean;
 }
 
@@ -66,20 +66,20 @@ export async function startLocalStack(opts: LocalStackOptions = {}): Promise<Loc
   if (opts.testTemplate) {
     db = await createTestDb();
   } else {
-    db = await createDb({ PACELINE_DATA_DIR: 'memory' });
+    db = await createDb({ Y_DATA_DIR: 'memory' });
     await migrate(db);
   }
   const config = loadConfig({
     PORT: String(corePort),
     PUBLIC_URL: coreUrl,
-    PACELINE_INTERNAL_SECRET: secret,
-    PACELINE_HMAC_KEY: randomBytes(16).toString('hex'),
-    PACELINE_DEV_AUTH: '1',
-    PACELINE_LLM: 'mock',
-    PACELINE_EMBEDDINGS: 'mock',
+    Y_INTERNAL_SECRET: secret,
+    Y_HMAC_KEY: randomBytes(16).toString('hex'),
+    Y_DEV_AUTH: '1',
+    Y_LLM: 'mock',
+    Y_EMBEDDINGS: 'mock',
   });
   const log: CoreDeps['log'] = (level, msg, data) => {
-    if ((level === 'error' && opts.verbose) || process.env.PACELINE_DEBUG) console.error(`[core] ${level} ${msg}`, data ?? '');
+    if ((level === 'error' && opts.verbose) || process.env.Y_DEBUG) console.error(`[core] ${level} ${msg}`, data ?? '');
   };
   const deps = await createDeps(config, db, allJobHandlers(), { scheduleRecurring: false, log });
   const app = createApp(deps);

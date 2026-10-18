@@ -3,8 +3,8 @@
  * Supabase's built-in inference (no paid API, no external call).
  *
  * Deploy:   supabase functions deploy embed --no-verify-jwt
- * Secret:   supabase secrets set PACELINE_EMBED_SECRET=<random, >= 32 chars>
- * Core env: PACELINE_EMBEDDINGS=supabase, SUPABASE_URL, PACELINE_EMBED_SECRET
+ * Secret:   supabase secrets set Y_EMBED_SECRET=<random, >= 32 chars>
+ * Core env: Y_EMBEDDINGS=supabase, SUPABASE_URL, Y_EMBED_SECRET
  *
  * JWT verification is off because the shared secret header is the only
  * credential core holds for this function (see ../../config.toml). The
@@ -18,7 +18,7 @@ const session = new Supabase.ai.Session(EMBEDDING_MODEL);
 
 Deno.serve(
   createEmbedHandler({
-    secret: Deno.env.get('PACELINE_EMBED_SECRET'),
+    secret: Deno.env.get('Y_EMBED_SECRET'),
     embed: async (text) => (await session.run(text, { mean_pool: true, normalize: true })) as number[],
   }),
 );

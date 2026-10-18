@@ -22,7 +22,7 @@ export type AuthState = {
   notice?: string
 }
 
-const KEY = 'paceline-auth'
+const KEY = 'y-auth'
 let state: AuthState = MOCKS ? { status: 'signed_in', token: 'mock', stepUp: false } : { status: 'loading', stepUp: false }
 const subs = new Set<() => void>()
 

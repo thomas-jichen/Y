@@ -1,12 +1,12 @@
 /**
- * paceline-db CLI.
+ * y-db CLI.
  *
  *   tsx src/cli.ts migrate  [--migrations-dir <dir>] [--local] [--flavor <f>]
  *   tsx src/cli.ts status   [--migrations-dir <dir>] [--local] [--flavor <f>]
  *   tsx src/cli.ts test-sql [--tests-dir <dir>] [--migrations-dir <dir>] [--filter <substring>]
  *
- * `migrate` and `status` use createDb(env): PGlite at PACELINE_DATA_DIR
- * unless DATABASE_URL is set, then Postgres with PACELINE_DB_FLAVOR
+ * `migrate` and `status` use createDb(env): PGlite at Y_DATA_DIR
+ * unless DATABASE_URL is set, then Postgres with Y_DB_FLAVOR
  * (`supabase` by default: no shims; `postgres`: shims when auth is missing).
  * `test-sql` always uses fresh in-memory PGlite databases and exits 1 when
  * any file fails.
@@ -32,7 +32,7 @@ export interface CliIo {
   cwd?: string;
 }
 
-const USAGE = `usage: paceline-db <command> [options]
+const USAGE = `usage: y-db <command> [options]
 
 commands:
   migrate    apply pending supabase/migrations (Postgres if DATABASE_URL is set, else PGlite)
@@ -44,7 +44,7 @@ options:
   --tests-dir <dir>        pgTAP tests directory (default: supabase/tests)
   --filter <text>          test-sql: only files whose name contains <text>
   --local                  treat a Postgres DATABASE_URL as local (shims + _local_ files)
-  --flavor <f>             pglite | postgres | supabase (overrides PACELINE_DB_FLAVOR)
+  --flavor <f>             pglite | postgres | supabase (overrides Y_DB_FLAVOR)
   -h, --help               show this help`;
 
 interface ParsedArgs {
@@ -113,7 +113,7 @@ function describeTarget(env: DbEnv, cwd: string, flavor: DbFlavor): string {
       return `${flavor} (DATABASE_URL)`;
     }
   }
-  return `pglite ${resolveDataDir(env.PACELINE_DATA_DIR, cwd)}`;
+  return `pglite ${resolveDataDir(env.Y_DATA_DIR, cwd)}`;
 }
 
 /**
@@ -139,8 +139,8 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
     case 'status': {
       const env: DbEnv = {
         ...io.env,
-        ...(args.local ? { PACELINE_DB_LOCAL: '1' } : {}),
-        ...(args.flavor ? { PACELINE_DB_FLAVOR: args.flavor } : {}),
+        ...(args.local ? { Y_DB_LOCAL: '1' } : {}),
+        ...(args.flavor ? { Y_DB_FLAVOR: args.flavor } : {}),
       };
       let db: Db;
       try {

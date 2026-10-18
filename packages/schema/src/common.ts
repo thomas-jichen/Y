@@ -1,5 +1,5 @@
 /**
- * Shared primitives for every Paceline contract: enums, ids, handles, text
+ * Shared primitives for every Y contract: enums, ids, handles, text
  * guards, timestamps and identity references.
  *
  * Wire format is camelCase JSON everywhere. The database is snake_case and
@@ -19,7 +19,7 @@ const CONTROL_MULTI_LINE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
  * Source of a character class matching invisible and bidirectional-control
  * characters (soft hyphen, zero-width chars, LRM/RLM, bidi embeddings and
  * isolates, word joiners, BOM). UI.md §5 rule 2 strips these before display;
- * `@paceline/safety` strips them during normalization.
+ * `@y/safety` strips them during normalization.
  */
 export const INVISIBLE_CHARS_SOURCE =
   '[\\u00AD\\u180E\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF]';
@@ -429,7 +429,7 @@ export type Label = z.infer<typeof Label>;
 
 /**
  * Normalized action from the actions table (PLAN §10). `actionFor()` in
- * `@paceline/safety` maps (content class, label) to one of these plus
+ * `@y/safety` maps (content class, label) to one of these plus
  * side-effect flags.
  * - `allow`: publish / deliver / suggestable.
  * - `label`: proceed with a visible label; never pushed (no pointers).
@@ -499,7 +499,7 @@ export const TASK_INTENTS = [
 export const TaskIntent = z.enum(TASK_INTENTS);
 export type TaskIntent = z.infer<typeof TaskIntent>;
 
-/** Activity size bucket (by tool calls and tokens; see `@paceline/domain`). */
+/** Activity size bucket (by tool calls and tokens; see `@y/domain`). */
 export const SizeBucket = z.enum(['S', 'M', 'L']);
 export type SizeBucket = z.infer<typeof SizeBucket>;
 

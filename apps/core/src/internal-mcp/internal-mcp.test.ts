@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { EMBEDDING_DIMS, HighlightEnvelopeContent, McpErrorBody, decodeUntrustedContent } from '@paceline/schema';
+import { EMBEDDING_DIMS, HighlightEnvelopeContent, McpErrorBody, decodeUntrustedContent } from '@y/schema';
 
-vi.mock('@paceline/safety', () => import('../messaging/test-fakes.js').then((m) => m.safety));
-vi.mock('@paceline/domain', () => import('../messaging/test-fakes.js').then((m) => m.domain));
-vi.mock('@paceline/retrieval', () => import('../messaging/test-fakes.js').then((m) => m.retrieval));
+vi.mock('@y/safety', () => import('../messaging/test-fakes.js').then((m) => m.safety));
+vi.mock('@y/domain', () => import('../messaging/test-fakes.js').then((m) => m.domain));
+vi.mock('@y/retrieval', () => import('../messaging/test-fakes.js').then((m) => m.retrieval));
 
 import { internalMcpModule } from './index.js';
 import { messagingModule } from '../messaging/index.js';

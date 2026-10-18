@@ -2,7 +2,7 @@
  * Token buckets in Postgres (api.take_token): shared by every instance, so
  * they hold in serverless mode too.
  */
-import type { Tx } from '@paceline/db';
+import type { Tx } from '@y/db';
 import { sha256Hex } from './util.js';
 
 export interface BucketSpec {

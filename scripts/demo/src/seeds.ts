@@ -1,14 +1,14 @@
 /**
  * Loads seeds/highlights/*.json for the local demo through core's own seed loader
  * (`loadSeedHighlights`): the same trimming, L0 screening and system author
- * (@paceline) as `pnpm --filter @paceline/core seed`. Seeds that fail the screen are
+ * (@yhq) as `pnpm --filter @y/core seed`. Seeds that fail the screen are
  * skipped, never loaded with a raised trust label (I8).
  * Local only: it writes through the database, as the worker would (service role).
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { Db } from '@paceline/db';
-import { loadSeedHighlights, type CoreDeps, type SeedResult } from '@paceline/core';
+import type { Db } from '@y/db';
+import { loadSeedHighlights, type CoreDeps, type SeedResult } from '@y/core';
 import { REPO_ROOT } from './demo.js';
 
 export const SEEDS_DIR = path.join(REPO_ROOT, 'seeds/highlights');

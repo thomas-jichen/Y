@@ -1,8 +1,8 @@
 /**
- * Shared types and constants of @paceline/capture.
+ * Shared types and constants of @y/capture.
  * @module types
  */
-import type { ActivityStats, Harness, SegmentCloseReason } from '@paceline/schema';
+import type { ActivityStats, Harness, SegmentCloseReason } from '@y/schema';
 
 /* ============================================================ transcripts */
 
@@ -54,7 +54,7 @@ export type ContentBlock =
   | { type: 'other'; rawType: string };
 
 /**
- * One transcript record, reduced to the fields Paceline reads (PLAN §7):
+ * One transcript record, reduced to the fields Y reads (PLAN §7):
  * `type`, `message.role`, `message.id`, `message.model`, `message.usage`,
  * `content[].type/name/input/is_error`, `isMeta`, `origin`, `isSidechain`,
  * `version`, `timestamp`, plus cost state when present.
@@ -174,7 +174,7 @@ export interface SnapshotSetupOptions {
   /** Claude config dir (default `$CLAUDE_CONFIG_DIR` or `<homeDir>/.claude`). */
   configDir?: string;
   /**
-   * Redactor for descriptions and headings (pass `@paceline/redact`'s
+   * Redactor for descriptions and headings (pass `@y/redact`'s
    * `redact(...).text`). Capture has no redact dependency, so it's injected.
    */
   redactText: (text: string) => string;

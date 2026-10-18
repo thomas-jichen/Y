@@ -10,7 +10,7 @@
  *
  * Rules every output follows:
  * - third-party text appears **only** inside envelopes (I2); everything else
- *   is ids, handles, enums, numbers and Paceline URLs;
+ *   is ids, handles, enums, numbers and Y URLs;
  * - owner instructions travel in `inbox.owner_instructions[]`, never in an
  *   envelope;
  * - outputs stay well under ~1,500 tokens at the documented limits.
@@ -105,7 +105,7 @@ export type HighlightMetrics = z.infer<typeof HighlightMetrics>;
 /** One search/scroll hit: an enveloped highlight plus trusted ranking data. */
 export const SearchHit = z.object({
   item: HighlightEnvelope,
-  /** Final score from `@paceline/retrieval` `finalScore` (never below 0.25). */
+  /** Final score from `@y/retrieval` `finalScore` (never below 0.25). */
   score: z.number().min(0).max(1),
   scope: z.enum(['team', 'public']),
   metrics: HighlightMetrics,
@@ -703,7 +703,7 @@ export const ReviewQueueInput = z.object({
 });
 export type ReviewQueueInput = z.infer<typeof ReviewQueueInput>;
 
-/** A review item as an agent sees it: ids, enums and a Paceline URL; no summaries or bodies. */
+/** A review item as an agent sees it: ids, enums and a Y URL; no summaries or bodies. */
 export const ReviewQueueItem = z.object({
   id: ReviewItemId,
   kind: ReviewKind,
@@ -799,7 +799,7 @@ export interface ToolPolicy {
   readOnly: boolean;
   /** Returns third-party content: the PostToolUse hook writes the taint marker. */
   taints: boolean;
-  /** Rate limit bucket (see `@paceline/domain` rate limit table). */
+  /** Rate limit bucket (see `@y/domain` rate limit table). */
   rateLimit: 'mcp' | 'send_message' | 'search_network' | 'scroll_feed' | 'propose_setup_change';
 }
 

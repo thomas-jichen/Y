@@ -23,7 +23,7 @@ async function eventually(predicate: () => boolean, timeoutMs = 2000): Promise<v
 const settle = () => new Promise((r) => setTimeout(r, 30));
 
 let db: PgliteDb;
-const emptyMigrations = await mkdtemp(join(tmpdir(), 'paceline-db-empty-'));
+const emptyMigrations = await mkdtemp(join(tmpdir(), 'y-db-empty-'));
 
 beforeAll(async () => {
   db = await createPgliteDb();
@@ -353,7 +353,7 @@ describe('listen / notify', () => {
 
 describe('lifecycle', () => {
   it('persists to a data directory and reopens it', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'paceline-db-data-'));
+    const dir = await mkdtemp(join(tmpdir(), 'y-db-data-'));
     try {
       const first = await createPgliteDb({ dataDir: join(dir, 'nested', 'pgdata') });
       await first.exec("create table kept (v text); insert into kept values ('hello');");

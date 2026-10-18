@@ -3,7 +3,7 @@
  * web API) and messaging/ + internal-mcp/ (DMs, pulse, MCP tool handlers) both code against these.
  * Change only with both owners in the loop.
  */
-import type { Db, Tx, AuthClaims } from '@paceline/db';
+import type { Db, Tx, AuthClaims } from '@y/db';
 import type { Hono } from 'hono';
 
 /** Runtime configuration (see .env.example). */
@@ -32,19 +32,19 @@ export interface CoreConfig {
   };
   /** NODE_ENV=production. */
   production?: boolean;
-  /** PACELINE_CRON_SECRET: Bearer for POST /internal/jobs/tick (pg_cron via pg_net). Null = tick disabled. */
+  /** Y_CRON_SECRET: Bearer for POST /internal/jobs/tick (pg_cron via pg_net). Null = tick disabled. */
   cronSecret?: string | null;
-  /** PACELINE_DEMO_SECRET: when set, /api/v1/dev/* needs a matching X-Demo-Secret header (hosted demo). */
+  /** Y_DEMO_SECRET: when set, /api/v1/dev/* needs a matching X-Demo-Secret header (hosted demo). */
   demoSecret?: string | null;
-  /** PACELINE_WEB_ORIGIN (comma list): CORS + Origin check for browser callers. */
+  /** Y_WEB_ORIGIN (comma list): CORS + Origin check for browser callers. */
   webOrigins?: string[];
-  /** gte embedder (PACELINE_EMBEDDINGS=gte): PACELINE_EMBED_URL (or SUPABASE_URL) + PACELINE_EMBED_SECRET. */
+  /** gte embedder (Y_EMBEDDINGS=gte): Y_EMBED_URL (or SUPABASE_URL) + Y_EMBED_SECRET. */
   embed?: { url: string | null; secret: string | null };
   /** Fan events out through Supabase Realtime REST from core: 'auto' = only when the DB has no realtime.send(). */
   realtimeRest?: 'auto' | 'on' | 'off';
-  /** PACELINE_MCP_URL: the public MCP endpoint written into install commands (dev default http://localhost:3000/mcp). */
+  /** Y_MCP_URL: the public MCP endpoint written into install commands (dev default http://localhost:3000/mcp). */
   mcpUrl?: string | null;
-  /** PACELINE_PLUGIN_MARKETPLACE: the Claude Code marketplace (GitHub owner/repo) the plugin installs from. */
+  /** Y_PLUGIN_MARKETPLACE: the Claude Code marketplace (GitHub owner/repo) the plugin installs from. */
   pluginMarketplace?: string;
 }
 
@@ -67,7 +67,7 @@ export interface Caller {
 export interface AuthService {
   /** Verify `Authorization: Bearer <token>` (install token `pcl_agt_…`, web session, or Supabase JWT). Null if absent/invalid. */
   verifyBearer(authorizationHeader: string | undefined): Promise<Caller | null>;
-  /** Verify the apps/mcp → core HMAC header (X-Paceline-Internal) over method+path+body. */
+  /** Verify the apps/mcp → core HMAC header (X-Y-Internal) over method+path+body. */
   verifyInternal(req: { method: string; path: string; body: string; header: (name: string) => string | undefined }): boolean;
 }
 

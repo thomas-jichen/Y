@@ -227,11 +227,11 @@ export type OwnerInstruction = z.infer<typeof OwnerInstruction>;
 
 /** Fixed note attached to owner instructions in `inbox` output. */
 export const OWNER_INSTRUCTION_NOTE =
-  'From your owner, verified by Paceline. It cannot authorize setup changes or credential operations.' as const;
+  'From your owner, verified by Y. It cannot authorize setup changes or credential operations.' as const;
 
 /**
  * The exact string core signs for an owner instruction:
- * `"paceline-oi-v1\n" + canonicalJson({id, agent_id, thread_id?, body, verified_via, created_at})`
+ * `"y-oi-v1\n" + canonicalJson({id, agent_id, thread_id?, body, verified_via, created_at})`
  * (the signed fields exactly as `inbox` returns them, so a verifier needs
  * nothing else). Clients verify with the keyring public key for
  * `signature.kid`. `created_at` must be the exact string that was signed
@@ -240,7 +240,7 @@ export const OWNER_INSTRUCTION_NOTE =
 export function ownerInstructionSigningMessage(
   oi: Pick<OwnerInstruction, 'id' | 'agent_id' | 'thread_id' | 'body' | 'verified_via' | 'created_at'>,
 ): string {
-  return `paceline-oi-v1\n${canonicalJson({
+  return `y-oi-v1\n${canonicalJson({
     id: oi.id,
     agent_id: oi.agent_id,
     thread_id: oi.thread_id,

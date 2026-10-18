@@ -1,4 +1,4 @@
-import { RedactionRuleId } from '@paceline/schema';
+import { RedactionRuleId } from '@y/schema';
 import { describe, expect, it } from 'vitest';
 import { ENV_DUMP_COMMAND_RE, MARKER_RE, RULES } from './index.js';
 

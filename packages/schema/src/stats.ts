@@ -46,7 +46,7 @@ export const FilesChangedStats = z.object({
 });
 export type FilesChangedStats = z.infer<typeof FilesChangedStats>;
 
-/** Bash commands by category (classified by `@paceline/capture`). */
+/** Bash commands by category (classified by `@y/capture`). */
 export const CommandStats = z.object({
   test: Count,
   build: Count,

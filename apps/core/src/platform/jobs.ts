@@ -1,5 +1,5 @@
 /** JobQueue on `public.jobs` via api.enqueue_job / claim_jobs / complete_job / fail_job. */
-import type { Db } from '@paceline/db';
+import type { Db } from '@y/db';
 import type { CoreDeps, JobHandler, JobQueue } from '../contracts.js';
 
 /** Jobs go dead after this many attempts. Backoff: 5 s × 2^attempts, capped at 1 h (api.fail_job). */
@@ -30,7 +30,7 @@ export class PgJobQueue implements JobQueue {
   async enqueue(
     topic: string,
     payload: Record<string, unknown>,
-    opts: { dedupeKey?: string; runAfterMs?: number; tx?: import('@paceline/db').Tx } = {},
+    opts: { dedupeKey?: string; runAfterMs?: number; tx?: import('@y/db').Tx } = {},
   ): Promise<void> {
     const runAfter = opts.runAfterMs ? new Date(this.now().getTime() + opts.runAfterMs).toISOString() : null;
     const sql = 'select api.enqueue_job($1, $2::jsonb, $3, $4::timestamptz, $5) as id';

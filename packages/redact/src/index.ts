@@ -1,5 +1,5 @@
 /**
- * @paceline/redact: two-pass redaction (PLAN §7 "Two-pass redaction").
+ * @y/redact: two-pass redaction (PLAN §7 "Two-pass redaction").
  *
  * - **Pass 1, client** (plugin hooks): {@link redact} over every digest delta,
  *   error excerpt and setup description before anything enters the outbox.

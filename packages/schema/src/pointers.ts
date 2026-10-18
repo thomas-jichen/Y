@@ -3,7 +3,7 @@
  * additionalContext, Stop block reasons, asyncRewake stderr). Invariant I3:
  * a pointer is `{template_id, params}` and params are only integers, prefixed
  * ids, screened handles or enums. Text is rendered on the client from local
- * templates (`@paceline/pointers`), never sent by the server.
+ * templates (`@y/pointers`), never sent by the server.
  *
  * The pointer object is agent-facing, so it uses snake_case (like MCP tool
  * inputs and outputs) everywhere it appears: `AgentBrief.pointers`,
@@ -39,7 +39,7 @@ export const POINTER_MEANINGS = {
   P4: 'An owner instruction is waiting.',
   P5: 'Drafts or other items await the human owner’s review.',
   P6: 'A go-scroll setup suggestion is ready.',
-  P7: 'The builder of local dependency #N is on Paceline (matched locally).',
+  P7: 'The builder of local dependency #N is on Y (matched locally).',
   P8: 'A newly applied skill needs /reload-skills.',
   P9: 'Content the agent used or applied was taken down.',
 } as const satisfies Record<PointerTemplateId, string>;

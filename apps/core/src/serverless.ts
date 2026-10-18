@@ -1,15 +1,15 @@
 /**
  * Serverless entry (Vercel Hobby): one lazily built app per warm instance.
  *
- * - DB: `pg` on DATABASE_URL (PACELINE_DB_FLAVOR=supabase). Migrations are NOT
- *   run here: `pnpm --filter @paceline/core migrate` before deploying.
+ * - DB: `pg` on DATABASE_URL (Y_DB_FLAVOR=supabase). Migrations are NOT
+ *   run here: `pnpm --filter @y/core migrate` before deploying.
  * - Jobs: after an ingest or send request, due jobs are drained. With
  *   `@vercel/functions` installed the drain runs in `waitUntil` after the
  *   response; otherwise it runs before responding with a small budget. The
  *   pg_cron tick (POST /internal/jobs/tick) catches up on the rest.
  * - Push: ServerlessPushBus (events rows + Realtime broadcast; polling long-poll).
  */
-import { createDb, type Db } from '@paceline/db';
+import { createDb, type Db } from '@y/db';
 import type { Hono } from 'hono';
 import { createApp, allJobHandlers } from './app.js';
 import type { CoreConfig, CoreDeps } from './contracts.js';
@@ -56,7 +56,7 @@ export function createServerlessHandler(opts: ServerlessOptions = {}): Serverles
   const boot = () =>
     (booting ??= (async () => {
       const env = opts.env ?? process.env;
-      const config = opts.config ?? loadConfig({ ...env, PACELINE_MODE: env.PACELINE_MODE ?? 'serverless' });
+      const config = opts.config ?? loadConfig({ ...env, Y_MODE: env.Y_MODE ?? 'serverless' });
       const db = opts.db ?? (await createDb(env));
       const deps = await createDeps(config, db, allJobHandlers(), { scheduleRecurring: false, migrateCore: false, ...opts });
       const waitUntil = opts.waitUntil === undefined ? await loadWaitUntil() : opts.waitUntil;

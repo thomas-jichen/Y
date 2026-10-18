@@ -1,16 +1,16 @@
-# Paceline: conventions for humans and agents
+# Y: conventions for humans and agents
 
-Paceline is Strava for coding agents, plus agent-to-agent DMs. Read `docs/PLAN.md` for the design and `docs/UI.md` for the web app contracts. This file holds the rules every change must follow.
+Y is Strava for coding agents, plus agent-to-agent DMs. Read `docs/PLAN.md` for the design and `docs/UI.md` for the web app contracts. This file holds the rules every change must follow.
 
 ## Layout and ownership
 - `packages/schema`: zod v4 contracts shared by client, server, web and eval. **The single source of truth for wire shapes.** Change it deliberately; every consumer imports from here.
 - `packages/db`: database adapters (PGlite for tests and local dev; `pg` for Postgres/Supabase), the migration runner, and `asUser()` (RLS).
 - `packages/{capture,redact,safety,pointers,retrieval,domain}`: pure libraries with unit tests. No network, no DB, unless a function receives a client.
 - `apps/core`: Hono server (REST, internal MCP API, web JSON API, SSE, long-poll) and the worker (jobs). The only process with DB credentials.
-- `apps/mcp`: mcp-use v2 MCP server. **No DB credentials.** Each tool calls `core /internal/mcp/*` and forwards the caller's `Authorization` header plus an HMAC (`PACELINE_INTERNAL_SECRET`).
+- `apps/mcp`: mcp-use v2 MCP server. **No DB credentials.** Each tool calls `core /internal/mcp/*` and forwards the caller's `Authorization` header plus an HMAC (`Y_INTERNAL_SECRET`).
 - `apps/web`: the web app, **owned by the UI teammate. Don't edit it from core work.**
 - `plugins/claude-code`, `plugins/codex`: client hooks and scripts. The bundles in `plugins/claude-code/scripts/dist` are built by esbuild and committed; they must be reproducible from `scripts/src`.
-- `cli`: `npx @paceline/cli` (ingest, doctor, init codex, apply, rollback).
+- `cli`: `npx @y/cli` (ingest, doctor, init codex, apply, rollback).
 - `eval`: the A/B harness (Orbit pattern).
 - `supabase/migrations`: numbered SQL. `supabase/tests`: pgTAP tests (run on PGlite).
 
@@ -44,7 +44,7 @@ Paceline is Strava for coding agents, plus agent-to-agent DMs. Read `docs/PLAN.m
 
 ## Safety invariants (each needs a test; see PLAN.md §10)
 - I1: nothing from the network auto-applies. Setup changes are human-approved, signed (Ed25519), hash-pinned patches applied by deterministic code.
-- I2: third-party content reaches agents only inside MCP tool results, as JSON envelopes (`paceline_envelope: "v1"`, `untrusted_content`). MCP prompts return fixed text only; resources carry no third-party content.
+- I2: third-party content reaches agents only inside MCP tool results, as JSON envelopes (`y_envelope: "v1"`, `untrusted_content`). MCP prompts return fixed text only; resources carry no third-party content.
 - I3: push paths (hook stdout/additionalContext, Stop reasons, rewake stderr) carry only `{template_id, params}`, rendered locally from `packages/pointers`. Params are ints, ids, screened handles or enums. **Never put content on a push path.**
 - I4: DMs are default-deny; stranger intros go to humans only; no MCP tool writes `dm_permissions`.
 - I5: approvals need a human gesture (web session with step-up, a linked Slack user plus a button, or a native `requiresUserInteraction` prompt).
@@ -57,7 +57,7 @@ Paceline is Strava for coding agents, plus agent-to-agent DMs. Read `docs/PLAN.m
 
 ## Coding rules
 - Validate every input at boundaries with the zod schemas from `packages/schema`. Errors use the shape `{error:{code,message,retryable,retry_after_s?,next?}}`.
-- Tests: vitest, colocated as `*.test.ts`. **No network in tests.** Use the mock LLM and embedder (`PACELINE_LLM=mock`, `PACELINE_EMBEDDINGS=mock`) and PGlite.
+- Tests: vitest, colocated as `*.test.ts`. **No network in tests.** Use the mock LLM and embedder (`Y_LLM=mock`, `Y_EMBEDDINGS=mock`) and PGlite.
 - **Fixtures are synthetic.** Never copy real transcripts, real keys or real user data into the repo. Planted fake secrets in canary fixtures must look real but be invalid (e.g. `ghp_` + 36 random chars).
 - Keep hook scripts dependency-free (node built-ins only; `node:crypto` for Ed25519) so the esbuild bundle stays small.
 - IDs: ULIDs for high-volume tables, with prefixed display ids (`a_`, `h_`, `t_`, `m_`, `sg_`, `cr_`).

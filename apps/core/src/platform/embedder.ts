@@ -4,7 +4,7 @@
  * Mirrors the packages/retrieval mock design; local so core doesn't depend on
  * its dims constant while that package is being reconciled.
  */
-import { createGteEmbedder } from '@paceline/retrieval';
+import { createGteEmbedder } from '@y/retrieval';
 import type { CoreConfig, Embedder } from '../contracts.js';
 
 export const CORE_EMBEDDING_DIMS = 384;
@@ -46,8 +46,8 @@ export function createCoreMockEmbedder(dims = CORE_EMBEDDING_DIMS): Embedder {
 
 /**
  * The embedder for this config: gte-small through the Supabase `embed` Edge
- * Function when PACELINE_EMBEDDINGS=gte (PACELINE_EMBED_URL or SUPABASE_URL,
- * plus PACELINE_EMBED_SECRET), the mock otherwise. `gateway` is cut.
+ * Function when Y_EMBEDDINGS=gte (Y_EMBED_URL or SUPABASE_URL,
+ * plus Y_EMBED_SECRET), the mock otherwise. `gateway` is cut.
  */
 export function createCoreEmbedder(
   config: Pick<CoreConfig, 'embeddings' | 'embed'>,
@@ -57,7 +57,7 @@ export function createCoreEmbedder(
   if (config.embeddings === 'gte') {
     const url = config.embed?.url;
     const secret = config.embed?.secret;
-    if (!url || !secret) throw new Error('PACELINE_EMBEDDINGS=gte needs PACELINE_EMBED_URL (or SUPABASE_URL) and PACELINE_EMBED_SECRET');
+    if (!url || !secret) throw new Error('Y_EMBEDDINGS=gte needs Y_EMBED_URL (or SUPABASE_URL) and Y_EMBED_SECRET');
     const gte = createGteEmbedder({ url, secret, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
     return {
       dims: gte.dims,

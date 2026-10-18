@@ -1,4 +1,4 @@
-# Running Paceline v0 locally
+# Running Y v0 locally
 
 This covers core (REST, internal MCP API, worker), the MCP server, the web app, and the Claude Code plugin against a real `claude` session. Everything runs on your machine; the database is PGlite in `.pglite/` at the repo root. Deploying to Supabase, Vercel and Manufact is [docs/DEPLOY.md](DEPLOY.md).
 
@@ -18,65 +18,65 @@ cd apps/web && npm install && VITE_MOCKS=0 npm run dev
 # 3. sign in at http://localhost:5173 with the dev login as "vivan" (or "maya")
 ```
 
-To run the demo against servers you started yourself: `pnpm --filter @paceline/demo start -- --api http://localhost:8787 --mcp http://localhost:3000/mcp [--pace fast] [--demo-secret S]`. `pnpm --filter @paceline/core smoke:serverless` drives the Vercel entry (`apps/core/api/index.ts`) against a file-backed PGlite: ingest, the cron tick, the feed.
+To run the demo against servers you started yourself: `pnpm --filter @y/demo start -- --api http://localhost:8787 --mcp http://localhost:3000/mcp [--pace fast] [--demo-secret S]`. `pnpm --filter @y/core smoke:serverless` drives the Vercel entry (`apps/core/api/index.ts`) against a file-backed PGlite: ingest, the cron tick, the feed.
 
 ## 0. Install and check
 
 ```sh
 pnpm install
-pnpm -r typecheck && pnpm -r test          # includes the e2e suite (@paceline/e2e)
-pnpm --filter @paceline/plugin-claude-code build   # rebuild scripts/dist after plugin or library changes
+pnpm -r typecheck && pnpm -r test          # includes the e2e suite (@y/e2e)
+pnpm --filter @y/plugin-claude-code build   # rebuild scripts/dist after plugin or library changes
 ```
 
 The end-to-end suite boots core, MCP and the built hook bundles in one process tree:
 
 ```sh
-pnpm --filter @paceline/e2e test           # builds the plugin first, then runs e2e/src/e2e.test.ts
+pnpm --filter @y/e2e test           # builds the plugin first, then runs e2e/src/e2e.test.ts
 ```
 
 ## 1. Core (port 8787)
 
 ```sh
-export PACELINE_INTERNAL_SECRET=$(openssl rand -hex 32)   # same value for core and mcp
-export PACELINE_HMAC_KEY=$(openssl rand -hex 32)
-pnpm --filter @paceline/core start          # or `dev` for tsx watch
+export Y_INTERNAL_SECRET=$(openssl rand -hex 32)   # same value for core and mcp
+export Y_HMAC_KEY=$(openssl rand -hex 32)
+pnpm --filter @y/core start          # or `dev` for tsx watch
 curl -s localhost:8787/healthz               # {"ok":true}
 ```
 
-Core applies `supabase/migrations` and `apps/core/migrations` on boot and runs the job loop in-process (every 500 ms). `pnpm --filter @paceline/core seed` loads `seeds/highlights` as public highlights by `@paceline` (screened, trimmed to the schema limits; two seeds are skipped by the L0 screen). Every variable is in `apps/core/README.md`; the common ones:
+Core applies `supabase/migrations` and `apps/core/migrations` on boot and runs the job loop in-process (every 500 ms). `pnpm --filter @y/core seed` loads `seeds/highlights` as public highlights by `@y` (screened, trimmed to the schema limits; two seeds are skipped by the L0 screen). Every variable is in `apps/core/README.md`; the common ones:
 
 | Variable | Default | Notes |
 |---|---|---|
 | `PORT` | `8787` | |
 | `PUBLIC_URL` | `http://localhost:$PORT` | Used for notice links. The plugin drops notice URLs on any other host. |
-| `PACELINE_DATA_DIR` | `.pglite` | PGlite directory, relative to the repo root. Use `memory` for a throwaway DB. Delete the directory to reset. |
+| `Y_DATA_DIR` | `.pglite` | PGlite directory, relative to the repo root. Use `memory` for a throwaway DB. Delete the directory to reset. |
 | `DATABASE_URL` | unset | Set it to use real Postgres/Supabase instead of PGlite. |
-| `PACELINE_INTERNAL_SECRET` | random per process (dev) | Must match apps/mcp. Required in production. |
-| `PACELINE_HMAC_KEY` | random per process (dev) | Set it so repo/machine HMACs survive restarts. |
-| `PACELINE_SIGNING_KEY` | generated per process | Ed25519 PKCS8 (base64) for owner instructions. |
-| `PACELINE_DEV_AUTH` | on when not production and no Supabase JWKS | Enables `/api/v1/dev/*`. In production only with `PACELINE_DEMO_SECRET`. |
-| `PACELINE_WEB_ORIGIN` | `http://localhost:5173,http://127.0.0.1:5173` | CORS and the Origin check on mutating web routes. |
-| `PACELINE_MCP_URL` | `http://localhost:3000/mcp` | Written into the connect page's install command. |
-| `PACELINE_LLM` | `mock` | `anthropic` is not wired in v0; distill uses the heuristic. |
-| `PACELINE_EMBEDDINGS` | `mock` | `gte` = gte-small through the Supabase `embed` Edge Function (needs `PACELINE_EMBED_SECRET`). |
-| `PACELINE_DEBUG` | unset | Prints debug logs. |
+| `Y_INTERNAL_SECRET` | random per process (dev) | Must match apps/mcp. Required in production. |
+| `Y_HMAC_KEY` | random per process (dev) | Set it so repo/machine HMACs survive restarts. |
+| `Y_SIGNING_KEY` | generated per process | Ed25519 PKCS8 (base64) for owner instructions. |
+| `Y_DEV_AUTH` | on when not production and no Supabase JWKS | Enables `/api/v1/dev/*`. In production only with `Y_DEMO_SECRET`. |
+| `Y_WEB_ORIGIN` | `http://localhost:5173,http://127.0.0.1:5173` | CORS and the Origin check on mutating web routes. |
+| `Y_MCP_URL` | `http://localhost:3000/mcp` | Written into the connect page's install command. |
+| `Y_LLM` | `mock` | `anthropic` is not wired in v0; distill uses the heuristic. |
+| `Y_EMBEDDINGS` | `mock` | `gte` = gte-small through the Supabase `embed` Edge Function (needs `Y_EMBED_SECRET`). |
+| `Y_DEBUG` | unset | Prints debug logs. |
 
 ## 2. MCP server (port 3000)
 
 ```sh
-PACELINE_CORE_URL=http://127.0.0.1:8787 PACELINE_INTERNAL_SECRET=$PACELINE_INTERNAL_SECRET \
-  pnpm --filter @paceline/mcp serve        # http://localhost:3000/mcp
+Y_CORE_URL=http://127.0.0.1:8787 Y_INTERNAL_SECRET=$Y_INTERNAL_SECRET \
+  pnpm --filter @y/mcp serve        # http://localhost:3000/mcp
 ```
 
 | Variable | Default |
 |---|---|
-| `PACELINE_CORE_URL` | `http://127.0.0.1:8787` |
-| `PACELINE_INTERNAL_SECRET` | empty (core rejects it; set it) |
-| `PACELINE_WEB_URL` | `http://localhost:5173` (reconnect links) |
-| `PACELINE_CORE_TIMEOUT_MS` | `20000` |
+| `Y_CORE_URL` | `http://127.0.0.1:8787` |
+| `Y_INTERNAL_SECRET` | empty (core rejects it; set it) |
+| `Y_WEB_URL` | `http://localhost:5173` (reconnect links) |
+| `Y_CORE_TIMEOUT_MS` | `20000` |
 | `PORT` | `3000` |
 
-Start it from `apps/mcp` (the `pnpm --filter` form does this) so `skills/paceline/SKILL.md` is found.
+Start it from `apps/mcp` (the `pnpm --filter` form does this) so `skills/y/SKILL.md` is found.
 
 ## 3. Dev login and a connect token
 
@@ -95,7 +95,7 @@ Log in a second user (for example `maya`) the same way to get a teammate. `POST 
 ## 4. The plugin in a real Claude Code session
 
 ```sh
-pnpm --filter @paceline/plugin-claude-code build
+pnpm --filter @y/plugin-claude-code build
 claude --plugin-dir plugins/claude-code
 ```
 
@@ -107,7 +107,7 @@ When Claude Code asks for the plugin's user config, set:
 - `share_mode`: `stats` (default), `auto-team` or `off`
 - `wake_on_dm`: `teammates` (default), `owner-only` or `off`
 
-To run the hooks outside Claude Code, use the variables Claude Code would set: `CLAUDE_PLUGIN_OPTION_AGENT_TOKEN`, `CLAUDE_PLUGIN_OPTION_API_URL`, `CLAUDE_PLUGIN_DATA` (state dir; default `~/.paceline`) and `CLAUDE_PLUGIN_ROOT`. Then pipe hook JSON into `node plugins/claude-code/scripts/dist/hook.mjs <Event>`. `e2e/src/e2e.test.ts` shows each event's stdin.
+To run the hooks outside Claude Code, use the variables Claude Code would set: `CLAUDE_PLUGIN_OPTION_AGENT_TOKEN`, `CLAUDE_PLUGIN_OPTION_API_URL`, `CLAUDE_PLUGIN_DATA` (state dir; default `~/.y`) and `CLAUDE_PLUGIN_ROOT`. Then pipe hook JSON into `node plugins/claude-code/scripts/dist/hook.mjs <Event>`. `e2e/src/e2e.test.ts` shows each event's stdin.
 
 What happens in a session:
 

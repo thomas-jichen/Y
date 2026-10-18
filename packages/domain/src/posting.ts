@@ -1,7 +1,7 @@
 /**
  * The posting table (PLAN §7 Posting) and the rate-limit table (PLAN §10).
  */
-import type { ActivitySource, ShareMode, Visibility } from '@paceline/schema';
+import type { ActivitySource, ShareMode, Visibility } from '@y/schema';
 
 /* ================================================================ posting */
 
@@ -9,7 +9,7 @@ import type { ActivitySource, ShareMode, Visibility } from '@paceline/schema';
 export interface PostingInput {
   shareMode: ShareMode;
   hasTeam: boolean;
-  /** The member accepted the team's `.paceline/policy.json` (required for `auto-team`). */
+  /** The member accepted the team's `.y/policy.json` (required for `auto-team`). */
   policyAccepted: boolean;
   holdMinutes: number;
   privateRepo: boolean;

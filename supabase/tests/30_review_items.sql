@@ -132,7 +132,7 @@ select is((select count(*)::int from public.events where type = 'review.decided'
   'each decision emits review.decided');
 select is((select array_agg(payload ->> 'state' order by id) from public.events where type = 'change.updated'),
   array['approved', 'applied'], 'change request state changes emit change.updated with ids and state only');
-select ok((select bool_and(paceline_private.event_payload_ok(payload)) from public.events),
+select ok((select bool_and(y_private.event_payload_ok(payload)) from public.events),
   'every emitted payload is ids/counts only');
 
 select * from finish();

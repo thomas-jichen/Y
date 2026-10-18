@@ -1,5 +1,5 @@
 /**
- * @paceline/retrieval: embeddings and ranking math for search, push and the
+ * @y/retrieval: embeddings and ranking math for search, push and the
  * feed (PLAN §4 "What gets embedded", §8 Search/Feed).
  *
  * Search itself runs in SQL (`api.search_network`, `security invoker`):
@@ -10,8 +10,8 @@
  * normalization.
  *
  * Embeddings are 384 dimensions (`gte-small` via the Supabase `embed` Edge
- * Function, see `@paceline/schema` hosting contracts). Tests and dev use
- * {@link createMockEmbedder} (`PACELINE_EMBEDDINGS=mock`, the default).
+ * Function, see `@y/schema` hosting contracts). Tests and dev use
+ * {@link createMockEmbedder} (`Y_EMBEDDINGS=mock`, the default).
  *
  * @packageDocumentation
  */

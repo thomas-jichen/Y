@@ -3,9 +3,9 @@
  * leaves inside envelopes (makeEnvelope, I2). User-scoped reads run through
  * db.asUser / db.asAnon (RLS, I7).
  */
-import type { Queryable, Tx } from '@paceline/db';
-import { finalScore, THRESHOLDS, toPgVector } from '@paceline/retrieval';
-import { dlpScan, makeEnvelope } from '@paceline/safety';
+import type { Queryable, Tx } from '@y/db';
+import { finalScore, THRESHOLDS, toPgVector } from '@y/retrieval';
+import { dlpScan, makeEnvelope } from '@y/safety';
 import {
   EMBEDDING_DIMS as SCHEMA_DIMS,
   HighlightBody,
@@ -21,7 +21,7 @@ import {
   type ToolInput,
   type ToolName,
   type ToolOutput,
-} from '@paceline/schema';
+} from '@y/schema';
 import type { Caller, CoreDeps } from '../contracts.js';
 import { inbox, sendMessage, updateThread } from '../messaging/agent-tools.js';
 import {
@@ -37,7 +37,7 @@ import {
   wire,
 } from '../messaging/util.js';
 
-/** EMBEDDING_DIMS from @paceline/schema when exported; the DB columns are vector(384). */
+/** EMBEDDING_DIMS from @y/schema when exported; the DB columns are vector(384). */
 export const EMBEDDING_DIMS: number = SCHEMA_DIMS;
 
 type Handler<T extends ToolName> = (deps: CoreDeps, caller: Caller | null, input: ToolInput<T>) => Promise<ToolOutput<T>>;

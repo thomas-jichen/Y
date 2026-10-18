@@ -145,7 +145,7 @@ do $iterative$
 begin
   alter function api.search_network(text, vector, text, integer, text) set hnsw.iterative_scan = 'relaxed_order';
 exception when others then
-  raise notice 'paceline 0004: hnsw.iterative_scan unavailable (%); search_network uses plain HNSW scans', sqlerrm;
+  raise notice 'y 0004: hnsw.iterative_scan unavailable (%); search_network uses plain HNSW scans', sqlerrm;
 end
 $iterative$;
 
@@ -223,7 +223,7 @@ language plpgsql volatile security invoker
 set search_path = pg_catalog, public
 as $fn$
 declare
-  v_service boolean := paceline_private.is_service();
+  v_service boolean := y_private.is_service();
 begin
   if p_state is null or p_state not in ('approved', 'rejected') then
     raise exception using errcode = '22023', message = 'decide_review: state must be approved or rejected';
@@ -238,11 +238,11 @@ begin
     raise exception using errcode = '22023', message = 'decide_review: decision_id must match ^[A-Za-z0-9_.:-]{8,128}$';
   end if;
   if not v_service then
-    if not paceline_private.is_human() then
+    if not y_private.is_human() then
       raise exception using errcode = '42501',
         message = 'decide_review: decisions need a human context (web session or linked Slack user)';
     end if;
-    if p_via is distinct from paceline_private.jwt_claim('via') then
+    if p_via is distinct from y_private.jwt_claim('via') then
       raise exception using errcode = '42501', message = 'decide_review: via must match the request context';
     end if;
   end if;
@@ -444,7 +444,7 @@ $fn$;
 -- * Trigger-owned types (review.new, review.decided, change.updated) are
 --   emitted by the 0005 triggers only.
 -- * Every audience member must be someone the caller may notify
---   (paceline_private.can_notify_user: self, teammates, org co-members,
+--   (y_private.can_notify_user: self, teammates, org co-members,
 --   accepted friends, thread co-participants), and audience agents must
 --   belong to such users, so a user context can never ping arbitrary people.
 -- The worker (service_role) uses api.emit_system_event, which has no checks.
@@ -467,12 +467,12 @@ begin
     raise exception using errcode = '42501', message = format('emit_event: %s is emitted by triggers only', p_type);
   end if;
   if exists (select 1 from unnest(coalesce(p_audience_user_ids, '{}')) as u(id)
-             where not paceline_private.can_notify_user(u.id)) then
+             where not y_private.can_notify_user(u.id)) then
     raise exception using errcode = '42501', message = 'emit_event: audience includes a user the caller may not notify';
   end if;
   if exists (select 1 from unnest(coalesce(p_audience_agent_ids, '{}')) as x(id)
              where not exists (select 1 from public.agents a
-                               where a.id = x.id and paceline_private.can_notify_user(a.owner_user_id))) then
+                               where a.id = x.id and y_private.can_notify_user(a.owner_user_id))) then
     raise exception using errcode = '42501', message = 'emit_event: audience includes an agent the caller may not notify';
   end if;
   insert into public.events (type, audience_agent_ids, audience_user_ids, payload)
@@ -497,7 +497,7 @@ as $fn$
 $fn$;
 
 -- Events after a cursor, for core's in-process bus (it LISTENs on
--- paceline_events, whose payload is just the id, then reads from here).
+-- y_events, whose payload is just the id, then reads from here).
 -- `notify` is the packages/schema EventRecord JSON (camelCase).
 create or replace function api.events_since(p_after bigint, p_limit integer default 500)
 returns table (
@@ -535,11 +535,11 @@ as $fn$
   where e.id > coalesce(p_after, 0)
     and auth.uid() is not null
     and (
-      (not paceline_private.is_agent_context() and e.audience_user_ids @> array[auth.uid()])
+      (not y_private.is_agent_context() and e.audience_user_ids @> array[auth.uid()])
       or e.audience_agent_ids && array(
            select a.id from public.agents a
            where a.owner_user_id = auth.uid()
-             and (paceline_private.acting_agent_id() is null or a.id = paceline_private.acting_agent_id()))
+             and (y_private.acting_agent_id() is null or a.id = y_private.acting_agent_id()))
     )
   order by e.id
   limit greatest(1, least(coalesce(p_limit, 100), 1000))
@@ -595,7 +595,7 @@ as $fn$
 declare
   v_invite public.team_invites%rowtype;
 begin
-  if not paceline_private.is_human() then
+  if not y_private.is_human() then
     raise exception using errcode = '42501', message = 'accept_team_invite: requires a human (web) context';
   end if;
   select * into v_invite from public.team_invites i where i.token_hash = p_token_hash for update;
@@ -611,7 +611,7 @@ begin
 end
 $fn$;
 
--- Complete `/paceline connect`: link the Slack user behind a single-use
+-- Complete `/y connect`: link the Slack user behind a single-use
 -- token to the signed-in web user. Requires via = 'web'.
 create or replace function api.complete_slack_link(p_token_hash text)
 returns table (slack_team_id text, slack_user_id text)
@@ -621,7 +621,7 @@ as $fn$
 declare
   v_token public.slack_link_tokens%rowtype;
 begin
-  if not paceline_private.is_human() or paceline_private.jwt_claim('via') <> 'web' then
+  if not y_private.is_human() or y_private.jwt_claim('via') <> 'web' then
     raise exception using errcode = '42501', message = 'complete_slack_link: requires a signed-in web session';
   end if;
   select * into v_token from public.slack_link_tokens t where t.token_hash = p_token_hash for update;
@@ -654,11 +654,11 @@ declare
   v_secret text;
 begin
   if p_owner_kind = 'user' then
-    if p_owner_id is distinct from auth.uid() or not paceline_private.is_human() then
+    if p_owner_id is distinct from auth.uid() or not y_private.is_human() then
       raise exception using errcode = '42501', message = 'rotate_channel_secret: not your channel';
     end if;
   elsif p_owner_kind = 'agent' then
-    if not paceline_private.agent_ok(p_owner_id) then
+    if not y_private.agent_ok(p_owner_id) then
       raise exception using errcode = '42501', message = 'rotate_channel_secret: not your channel';
     end if;
   else
@@ -667,7 +667,7 @@ begin
   insert into public.realtime_channels as c (owner_kind, owner_id)
   values (p_owner_kind, p_owner_id)
   on conflict (owner_kind, owner_id)
-    do update set secret = paceline_private.random_hex64(), rotated_at = now()
+    do update set secret = y_private.random_hex64(), rotated_at = now()
   returning c.secret into v_secret;
   return v_secret;
 end

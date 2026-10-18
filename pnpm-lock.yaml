@@ -29,28 +29,28 @@ importers:
       '@hono/node-server':
         specifier: ^2.1.5
         version: 2.1.5(hono@4.13.13)
-      '@paceline/capture':
+      '@y/capture':
         specifier: workspace:*
         version: link:../../packages/capture
-      '@paceline/db':
+      '@y/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@paceline/domain':
+      '@y/domain':
         specifier: workspace:*
         version: link:../../packages/domain
-      '@paceline/pointers':
+      '@y/pointers':
         specifier: workspace:*
         version: link:../../packages/pointers
-      '@paceline/redact':
+      '@y/redact':
         specifier: workspace:*
         version: link:../../packages/redact
-      '@paceline/retrieval':
+      '@y/retrieval':
         specifier: workspace:*
         version: link:../../packages/retrieval
-      '@paceline/safety':
+      '@y/safety':
         specifier: workspace:*
         version: link:../../packages/safety
-      '@paceline/schema':
+      '@y/schema':
         specifier: workspace:*
         version: link:../../packages/schema
       hono:
@@ -84,7 +84,7 @@ importers:
       '@mcp-use/client':
         specifier: ^2.4.4
         version: 2.4.4(@modelcontextprotocol/server@2.3.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(zod@4.6.7)
-      '@paceline/schema':
+      '@y/schema':
         specifier: workspace:*
         version: link:../../packages/schema
       mcp-use:
@@ -124,13 +124,13 @@ importers:
 
   cli:
     dependencies:
-      '@paceline/capture':
+      '@y/capture':
         specifier: workspace:*
         version: link:../packages/capture
-      '@paceline/redact':
+      '@y/redact':
         specifier: workspace:*
         version: link:../packages/redact
-      '@paceline/schema':
+      '@y/schema':
         specifier: workspace:*
         version: link:../packages/schema
     devDependencies:
@@ -155,22 +155,22 @@ importers:
       '@hono/node-server':
         specifier: ^2.1.5
         version: 2.1.5(hono@4.13.13)
-      '@paceline/core':
+      '@y/core':
         specifier: workspace:*
         version: link:../apps/core
-      '@paceline/db':
+      '@y/db':
         specifier: workspace:*
         version: link:../packages/db
-      '@paceline/mcp':
+      '@y/mcp':
         specifier: workspace:*
         version: link:../apps/mcp
-      '@paceline/plugin-claude-code':
+      '@y/plugin-claude-code':
         specifier: workspace:*
         version: link:../plugins/claude-code
-      '@paceline/pointers':
+      '@y/pointers':
         specifier: workspace:*
         version: link:../packages/pointers
-      '@paceline/schema':
+      '@y/schema':
         specifier: workspace:*
         version: link:../packages/schema
     devDependencies:
@@ -192,7 +192,7 @@ importers:
       '@mcp-use/client':
         specifier: ^2.4.4
         version: 2.4.4(@modelcontextprotocol/server@2.3.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(zod@4.6.7)
-      '@paceline/schema':
+      '@y/schema':
         specifier: workspace:*
         version: link:../packages/schema
     devDependencies:
@@ -211,7 +211,7 @@ importers:
 
   packages/capture:
     dependencies:
-      '@paceline/schema':
+      '@y/schema':
         specifier: workspace:*
         version: link:../schema
     devDependencies:
@@ -258,7 +258,7 @@ importers:
 
   packages/domain:
     dependencies:
-      '@paceline/schema':
+      '@y/schema':
         specifier: workspace:*
         version: link:../schema
     devDependencies:
@@ -274,7 +274,7 @@ importers:
 
   packages/pointers:
     dependencies:
-      '@paceline/schema':
+      '@y/schema':
         specifier: workspace:*
         version: link:../schema
     devDependencies:
@@ -290,7 +290,7 @@ importers:
 
   packages/redact:
     dependencies:
-      '@paceline/schema':
+      '@y/schema':
         specifier: workspace:*
         version: link:../schema
     devDependencies:
@@ -306,7 +306,7 @@ importers:
 
   packages/retrieval:
     dependencies:
-      '@paceline/schema':
+      '@y/schema':
         specifier: workspace:*
         version: link:../schema
       ai:
@@ -328,10 +328,10 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.135.0
         version: 0.135.0(zod@4.6.7)
-      '@paceline/redact':
+      '@y/redact':
         specifier: workspace:*
         version: link:../redact
-      '@paceline/schema':
+      '@y/schema':
         specifier: workspace:*
         version: link:../schema
     devDependencies:
@@ -363,16 +363,16 @@ importers:
 
   plugins/claude-code:
     dependencies:
-      '@paceline/capture':
+      '@y/capture':
         specifier: workspace:*
         version: link:../../packages/capture
-      '@paceline/pointers':
+      '@y/pointers':
         specifier: workspace:*
         version: link:../../packages/pointers
-      '@paceline/redact':
+      '@y/redact':
         specifier: workspace:*
         version: link:../../packages/redact
-      '@paceline/schema':
+      '@y/schema':
         specifier: workspace:*
         version: link:../../packages/schema
     devDependencies:
@@ -394,7 +394,7 @@ importers:
 
   plugins/codex:
     dependencies:
-      '@paceline/schema':
+      '@y/schema':
         specifier: workspace:*
         version: link:../../packages/schema
     devDependencies:
@@ -413,19 +413,19 @@ importers:
       '@hono/node-server':
         specifier: ^2.1.5
         version: 2.1.5(hono@4.13.13)
-      '@paceline/core':
+      '@y/core':
         specifier: workspace:*
         version: link:../../apps/core
-      '@paceline/db':
+      '@y/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@paceline/mcp':
+      '@y/mcp':
         specifier: workspace:*
         version: link:../../apps/mcp
-      '@paceline/plugin-claude-code':
+      '@y/plugin-claude-code':
         specifier: workspace:*
         version: link:../../plugins/claude-code
-      '@paceline/pointers':
+      '@y/pointers':
         specifier: workspace:*
         version: link:../../packages/pointers
     devDependencies:

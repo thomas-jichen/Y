@@ -6,9 +6,9 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { normalizeErrorSignature } from '@paceline/capture';
-import { HookMatchResponse } from '@paceline/schema/hook';
-import type { ErrorEpisode } from '@paceline/schema/ingest';
+import { normalizeErrorSignature } from '@y/capture';
+import { HookMatchResponse } from '@y/schema/hook';
+import type { ErrorEpisode } from '@y/schema/ingest';
 import { contextOutput, failOpen, OK, remaining, type HookCtx, type HookResult } from '../context.js';
 import { redactText } from '../redaction.js';
 import { ensureDir, httpJson, safeSid } from '../runtime.js';

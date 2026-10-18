@@ -1,6 +1,6 @@
 /**
  * `node scripts/dist/hook.mjs <Event>`: the sync/async hook entry point.
- * Exits 0 immediately for PACELINE_CHILD=1; fails open on every error.
+ * Exits 0 immediately for Y_CHILD=1; fails open on every error.
  */
 import { DEADLINES, makeCtx, OK } from '../context.js';
 import { HANDLERS, isHookEvent } from '../hooks/index.js';

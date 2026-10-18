@@ -84,10 +84,10 @@ function literals(list: string): string[] {
   return [...list.matchAll(/'([^']*)'/g)].map((m) => m[1] ?? '');
 }
 
-/** Values of `create domain paceline_private.<name> as text check (value in (...))`. */
+/** Values of `create domain y_private.<name> as text check (value in (...))`. */
 function domainValues(name: string): string[] {
-  const m = new RegExp(`create domain paceline_private\\.${name} as text\\s+check \\(value in \\(([^)]*)\\)\\)`).exec(SQL);
-  if (!m?.[1]) throw new Error(`domain paceline_private.${name} not found`);
+  const m = new RegExp(`create domain y_private\\.${name} as text\\s+check \\(value in \\(([^)]*)\\)\\)`).exec(SQL);
+  if (!m?.[1]) throw new Error(`domain y_private.${name} not found`);
   return literals(m[1]);
 }
 
@@ -131,7 +131,7 @@ function columnValues(table: string, column: string): string[] {
   if (!def) throw new Error(`column ${table}.${column} not found`);
   const own = new RegExp(`\\b${column} in \\(([^)]*)\\)`).exec(def);
   if (own?.[1]) return literals(own[1]);
-  const domain = /paceline_private\.([a-z_]+)/.exec(def);
+  const domain = /y_private\.([a-z_]+)/.exec(def);
   if (domain?.[1]) return domainValues(domain[1]);
   throw new Error(`column ${table}.${column} has no enum check`);
 }
@@ -207,7 +207,7 @@ describe('zod enums match the SQL CHECK constraints', () => {
   });
 
   it('ScreenLayer ↔ domain screen_layers (l0 required)', () => {
-    const m = /create domain paceline_private\.screen_layers as text\[\]\s+check \(value @> array\['l0'\]::text\[\] and value <@ array\[([^\]]*)\]/.exec(SQL);
+    const m = /create domain y_private\.screen_layers as text\[\]\s+check \(value @> array\['l0'\]::text\[\] and value <@ array\[([^\]]*)\]/.exec(SQL);
     expect(sorted(literals(m?.[1] ?? ''))).toEqual(sorted(ScreenLayer.options));
   });
 

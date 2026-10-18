@@ -1,6 +1,6 @@
 /**
  * pg adapter against a real Postgres. Skipped unless DATABASE_URL is set,
- * e.g. `DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54322/postgres pnpm --filter @paceline/db test`.
+ * e.g. `DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54322/postgres pnpm --filter @y/db test`.
  *
  * Non-destructive: everything happens in temp tables or rolled-back
  * transactions. asUser/asService checks need the Supabase roles (Supabase,
@@ -46,13 +46,13 @@ describe.skipIf(!url)('pg adapter (integration, DATABASE_URL)', () => {
   it('rolls back transactions', async () => {
     const result = await db
       .tx(async (tx) => {
-        await tx.exec('create temp table paceline_it_rollback (x int) on commit drop');
-        await tx.query('insert into paceline_it_rollback values (1)');
+        await tx.exec('create temp table y_it_rollback (x int) on commit drop');
+        await tx.query('insert into y_it_rollback values (1)');
         throw new Error('rollback please');
       })
       .catch((e: unknown) => e);
     expect((result as Error).message).toBe('rollback please');
-    const exists = await db.query<{ ok: boolean }>("select to_regclass('pg_temp.paceline_it_rollback') is null as ok");
+    const exists = await db.query<{ ok: boolean }>("select to_regclass('pg_temp.y_it_rollback') is null as ok");
     expect(exists.rows[0]!.ok).toBe(true);
   });
 
@@ -82,7 +82,7 @@ describe.skipIf(!url)('pg adapter (integration, DATABASE_URL)', () => {
 
   it('delivers LISTEN/NOTIFY, including transactional notifies on commit', async () => {
     const got: string[] = [];
-    const channel = `paceline_it_${process.pid}`;
+    const channel = `y_it_${process.pid}`;
     const unlisten = await db.listen(channel, (payload) => {
       got.push(payload);
     });

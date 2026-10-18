@@ -2,9 +2,9 @@
  * SessionEnd (sync, <200 ms; the harness gives plugins 1.5 s total): write a
  * close-marker chunk and spawn the detached `uploader --final`. No network.
  */
-import { PermissionMode } from '@paceline/schema/common';
-import { IngestChunk } from '@paceline/schema/ingest';
-import { emptyStats } from '@paceline/schema/stats';
+import { PermissionMode } from '@y/schema/common';
+import { IngestChunk } from '@y/schema/ingest';
+import { emptyStats } from '@y/schema/stats';
 import { failOpen, OK, type HookCtx, type HookResult } from '../context.js';
 import { writeChunk } from '../outbox.js';
 import { allocSeq, PLUGIN_VERSION } from '../runtime.js';

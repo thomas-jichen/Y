@@ -6,7 +6,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { IngestResponse } from '@paceline/schema/ingest';
+import { IngestResponse } from '@y/schema/ingest';
 import {
   ensureDir,
   httpJson,

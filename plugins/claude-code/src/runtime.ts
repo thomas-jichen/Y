@@ -29,18 +29,18 @@ export interface Config {
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const token = env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || undefined;
   const apiUrl = (env.CLAUDE_PLUGIN_OPTION_API_URL?.trim() || 'http://localhost:8787').replace(/\/+$/, '');
-  const dataDir = env.CLAUDE_PLUGIN_DATA || env.PACELINE_DATA_DIR || path.join(os.homedir(), '.paceline');
+  const dataDir = env.CLAUDE_PLUGIN_DATA || env.Y_DATA_DIR || path.join(os.homedir(), '.y');
   const sm = env.CLAUDE_PLUGIN_OPTION_SHARE_MODE;
   const shareMode: ShareModeSetting = sm === 'off' || sm === 'auto-team' ? sm : 'stats';
   const wk = env.CLAUDE_PLUGIN_OPTION_WAKE_ON_DM;
   const wakeOnDm: WakeSetting = wk === 'off' || wk === 'owner-only' ? wk : 'teammates';
-  const headless = env.PACELINE_MODE === 'ci' || env.CI === 'true' || env.CI === '1';
+  const headless = env.Y_MODE === 'ci' || env.CI === 'true' || env.CI === '1';
   return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT };
 }
 
-/** True when this process is a Paceline child (hooks must exit 0 immediately). */
+/** True when this process is a Y child (hooks must exit 0 immediately). */
 export function isChild(env: NodeJS.ProcessEnv): boolean {
-  return env.PACELINE_CHILD === '1';
+  return env.Y_CHILD === '1';
 }
 
 /* ================================================================ layout */
@@ -262,7 +262,7 @@ export function distDir(env: NodeJS.ProcessEnv): string {
   return path.dirname(fileURLToPath(import.meta.url));
 }
 
-/** Spawn a bundled script fully detached with `PACELINE_CHILD=1` (survives the hook's exit). */
+/** Spawn a bundled script fully detached with `Y_CHILD=1` (survives the hook's exit). */
 export function makeSpawnDetached(env: NodeJS.ProcessEnv): SpawnDetached {
   return (script, args) => {
     const file = path.join(distDir(env), `${script}.mjs`);
@@ -270,7 +270,7 @@ export function makeSpawnDetached(env: NodeJS.ProcessEnv): SpawnDetached {
     const child = spawn(process.execPath, [file, ...args], {
       detached: true,
       stdio: 'ignore',
-      env: { ...env, PACELINE_CHILD: '1' },
+      env: { ...env, Y_CHILD: '1' },
     });
     child.on('error', () => {});
     child.unref();

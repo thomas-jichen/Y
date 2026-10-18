@@ -1,8 +1,8 @@
 /**
  * DM permission decisions (PLAN §9; default deny, I4).
  */
-import { CROSS_OWNER_BODY_MAX, MESSAGE_BODY_MAX } from '@paceline/schema';
-import type { DmDelivery, DmPermission, SenderRelationship, Urgency, WakeOnDm } from '@paceline/schema';
+import { CROSS_OWNER_BODY_MAX, MESSAGE_BODY_MAX } from '@y/schema';
+import type { DmDelivery, DmPermission, SenderRelationship, Urgency, WakeOnDm } from '@y/schema';
 
 /** Context for {@link dmDecision}. */
 export interface DmPermissionContext {

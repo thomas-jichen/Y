@@ -40,7 +40,7 @@ export type PulseToken = z.infer<typeof PulseToken>;
 /**
  * Where a closed segment is distilled:
  * - `local` (default, zero-cost): the client runs Stage A/B with the user's
- *   own subscription (`PACELINE_CHILD=1 claude -p --safe-mode --model haiku
+ *   own subscription (`Y_CHILD=1 claude -p --safe-mode --model haiku
  *   --no-session-persistence --tools "" --output-format json --json-schema …`)
  *   and uploads `IngestChunk.distilled`; the digest text stays on the machine;
  * - `server`: the client uploads the redacted digest and the worker distills
@@ -85,7 +85,7 @@ export type ClaimedPackage = z.infer<typeof ClaimedPackage>;
 
 /**
  * A notice for the **human** (SessionStart `systemMessage`), rendered from a
- * fixed local sentence per kind. `url` must be on the configured Paceline
+ * fixed local sentence per kind. `url` must be on the configured Y
  * host; the hook drops notices whose URL host differs.
  */
 export const HumanNotice = z.object({

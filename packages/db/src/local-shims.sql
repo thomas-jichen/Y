@@ -1,18 +1,18 @@
 -- Local stand-ins for the Supabase built-ins that supabase/migrations rely on.
 --
--- Applied by @paceline/db's migration runner before supabase/migrations, and
+-- Applied by @y/db's migration runner before supabase/migrations, and
 -- ONLY where Supabase is absent:
---   * PGlite (PACELINE_DB_FLAVOR=pglite, the default without DATABASE_URL);
---   * plain Postgres (PACELINE_DB_FLAVOR=postgres): applied when the auth
+--   * PGlite (Y_DB_FLAVOR=pglite, the default without DATABASE_URL);
+--   * plain Postgres (Y_DB_FLAVOR=postgres): applied when the auth
 --     schema is missing or was created by these shims (its comment starts
---     with 'paceline local shim'), so a Supabase stack is never touched;
---   * any Postgres flagged PACELINE_DB_LOCAL=1 (always applied).
--- It is never applied to Supabase (PACELINE_DB_FLAVOR=supabase, the default
+--     with 'y local shim'), so a Supabase stack is never touched;
+--   * any Postgres flagged Y_DB_LOCAL=1 (always applied).
+-- It is never applied to Supabase (Y_DB_FLAVOR=supabase, the default
 -- with DATABASE_URL), which ships the real versions of everything below.
 --
 -- Idempotent: the runner applies it on every local migrate run, inside a
 -- transaction, so every statement must be safe to repeat. It is not tracked in
--- paceline_meta.migrations, which means it can evolve without tripping the
+-- y_meta.migrations, which means it can evolve without tripping the
 -- migration hash check.
 --
 -- What it mirrors:
@@ -25,11 +25,11 @@
 --   * pgcrypto and uuid-ossp in schema extensions, when they are available
 --   * a no-op Realtime: realtime.send(payload, event, topic, private) with
 --     Supabase's signature, implemented as
---     pg_notify('paceline_realtime', '{"topic","event","payload","private"}'),
+--     pg_notify('y_realtime', '{"topic","event","payload","private"}'),
 --     so the events trigger's broadcast path runs (and can be observed) locally
 --
 -- Schemas these shims create carry a comment starting with
--- 'paceline local shim'; that marker is how PACELINE_DB_FLAVOR=postgres tells
+-- 'y local shim'; that marker is how Y_DB_FLAVOR=postgres tells
 -- its own stand-ins from a real Supabase auth/realtime schema.
 
 -- Roles -----------------------------------------------------------------------
@@ -66,7 +66,7 @@ begin
   end if;
 exception
   when insufficient_privilege then
-    raise warning 'paceline local shims: could not grant API roles to %: %', current_user, sqlerrm;
+    raise warning 'y local shims: could not grant API roles to %: %', current_user, sqlerrm;
 end
 $shim$;
 
@@ -76,7 +76,7 @@ do $shim$
 begin
   if to_regnamespace('auth') is null then
     create schema auth;
-    comment on schema auth is 'paceline local shim: minimal stand-in for Supabase Auth (auth.users, auth.uid(), ...)';
+    comment on schema auth is 'y local shim: minimal stand-in for Supabase Auth (auth.users, auth.uid(), ...)';
   end if;
 end
 $shim$;
@@ -198,9 +198,9 @@ begin
   if to_regnamespace('realtime') is null then
     create schema realtime;
     comment on schema realtime is
-      'paceline local shim: realtime.send() is pg_notify(''paceline_realtime'', {topic, event, payload, private})';
+      'y local shim: realtime.send() is pg_notify(''y_realtime'', {topic, event, payload, private})';
   end if;
-  if coalesce(obj_description(to_regnamespace('realtime')::oid, 'pg_namespace'), '') like 'paceline local shim%' then
+  if coalesce(obj_description(to_regnamespace('realtime')::oid, 'pg_namespace'), '') like 'y local shim%' then
     execute $ddl$
       create or replace function realtime.send(payload jsonb, event text, topic text, private boolean default true)
       returns void
@@ -209,13 +209,13 @@ begin
       as $body$
       begin
         perform pg_catalog.pg_notify(
-          'paceline_realtime',
+          'y_realtime',
           pg_catalog.jsonb_build_object('topic', topic, 'event', event, 'payload', payload, 'private', private)::text);
       end
       $body$
     $ddl$;
     comment on function realtime.send(jsonb, text, text, boolean) is
-      'paceline local shim of Supabase realtime.send: NOTIFY paceline_realtime with {topic, event, payload, private}';
+      'y local shim of Supabase realtime.send: NOTIFY y_realtime with {topic, event, payload, private}';
     -- Only the migration owner (and its SECURITY DEFINER functions) broadcasts.
     revoke all on function realtime.send(jsonb, text, text, boolean) from public, anon, authenticated, service_role;
   end if;

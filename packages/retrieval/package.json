@@ -1,5 +1,5 @@
 {
-  "name": "@paceline/retrieval",
+  "name": "@y/retrieval",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "ai": "^7.0.143",
-    "@paceline/schema": "workspace:*"
+    "@y/schema": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^5.0.5",

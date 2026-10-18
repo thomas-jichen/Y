@@ -1,5 +1,5 @@
 {
-  "name": "@paceline/core",
+  "name": "@y/core",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -23,14 +23,14 @@
     "@anthropic-ai/sdk": "^0.135.0",
     "jose": "^6.2.12",
     "ulid": "^3.0.2",
-    "@paceline/schema": "workspace:*",
-    "@paceline/db": "workspace:*",
-    "@paceline/redact": "workspace:*",
-    "@paceline/safety": "workspace:*",
-    "@paceline/pointers": "workspace:*",
-    "@paceline/retrieval": "workspace:*",
-    "@paceline/domain": "workspace:*",
-    "@paceline/capture": "workspace:*"
+    "@y/schema": "workspace:*",
+    "@y/db": "workspace:*",
+    "@y/redact": "workspace:*",
+    "@y/safety": "workspace:*",
+    "@y/pointers": "workspace:*",
+    "@y/retrieval": "workspace:*",
+    "@y/domain": "workspace:*",
+    "@y/capture": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^5.0.5",

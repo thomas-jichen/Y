@@ -1,10 +1,10 @@
 /**
- * `pnpm --filter @paceline/core seed [dir]`: load seeds/highlights/*.json as
- * public, active, screened highlights by @paceline (idempotent). Uses the
- * configured embedder (PACELINE_EMBEDDINGS=gte in production). Run migrate first
+ * `pnpm --filter @y/core seed [dir]`: load seeds/highlights/*.json as
+ * public, active, screened highlights by @y (idempotent). Uses the
+ * configured embedder (Y_EMBEDDINGS=gte in production). Run migrate first
  * against a remote database; a local PGlite is migrated here.
  */
-import { createDb, migrate } from '@paceline/db';
+import { createDb, migrate } from '@y/db';
 import { createCoreEmbedder, loadConfig, migrateCore } from '../src/platform/index.js';
 import { defaultSeedDir, loadSeedHighlights } from '../src/platform/seed.js';
 

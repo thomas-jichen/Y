@@ -1,7 +1,7 @@
 /** Onboarding: mint an install token (+ agent + install) and poll connection status. Web callers only. */
 import { randomUUID } from 'node:crypto';
 import type { Hono } from 'hono';
-import { ConnectTokenRequest, type ConnectStatus, type ConnectToken } from '@paceline/schema';
+import { ConnectTokenRequest, type ConnectStatus, type ConnectToken } from '@y/schema';
 import type { CoreDeps } from '../../contracts.js';
 import { authenticate } from '../http.js';
 import { hmacHex, iso, mintInstallToken, parseOr, readJson, sha256Hex } from '../util.js';
@@ -19,12 +19,12 @@ export function installCommands(config: CoreDeps['config'], harness: string, tok
   const mp = config.pluginMarketplace ?? 'thomas-jichen/Y';
   const claudeCode =
     harness === 'claude_code'
-      ? `claude plugin install paceline --marketplace ${mp} --config agent_token=${token} --config api_url=${config.publicUrl}` +
+      ? `claude plugin install y --marketplace ${mp} --config agent_token=${token} --config api_url=${config.publicUrl}` +
         (config.mcpUrl ? ` --config mcp_url=${config.mcpUrl}` : '')
       : other('claude_code');
   const codex =
     harness === 'codex'
-      ? `# The Codex plugin is not released yet. This token authenticates the Paceline MCP server${config.mcpUrl ? ` (${config.mcpUrl})` : ''} as a bearer.`
+      ? `# The Codex plugin is not released yet. This token authenticates the Y MCP server${config.mcpUrl ? ` (${config.mcpUrl})` : ''} as a bearer.`
       : other('codex');
   return { claudeCode, codex };
 }

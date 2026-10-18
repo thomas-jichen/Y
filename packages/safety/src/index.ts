@@ -1,5 +1,5 @@
 /**
- * @paceline/safety: the classifier cascade and the content-safety helpers
+ * @y/safety: the classifier cascade and the content-safety helpers
  * (PLAN §10).
  *
  * The classifier is **triage, not the boundary** (I8): envelopes (I2),

@@ -1,7 +1,7 @@
 import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ActivityStats, Lap, SetupSnapshot } from '@paceline/schema';
+import { ActivityStats, Lap, SetupSnapshot } from '@y/schema';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   applySegmentEvent,
@@ -26,7 +26,7 @@ const FIX = join(import.meta.dirname, '..', 'test', 'fixtures');
 const lines = (f: string) => readFileSync(join(FIX, f), 'utf8').split('\n').filter(Boolean);
 const main = parseClaudeRecords(lines('session-main.jsonl'));
 const sub = parseClaudeRecords(lines('subagent-a1.jsonl'));
-const tmp = mkdtempSync(join(tmpdir(), 'paceline-capture-'));
+const tmp = mkdtempSync(join(tmpdir(), 'y-capture-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 describe('readTranscriptDelta', () => {
@@ -102,7 +102,7 @@ describe('computeStats', () => {
   });
   it('counts tools, MCP, skills, subagents', () => {
     expect(stats.toolCalls).toEqual({ Bash: 6, Edit: 2, Write: 1, Skill: 1, Task: 1 });
-    expect(stats.mcp).toEqual({ paceline: { search_network: 1 } });
+    expect(stats.mcp).toEqual({ y: { search_network: 1 } });
     expect(stats.skillsInvoked).toEqual(['db-helper']);
     expect(stats.subagents).toEqual({ count: 1, types: ['Explore'] });
   });
@@ -194,7 +194,7 @@ describe('buildDigest', () => {
     expect(d.text).toContain('TOOL Edit: src/db.ts (+1/−1)');
     expect(d.text).toContain('TOOL Write: docs/db.md (+3/−0)');
     expect(d.text).toContain('CONFIG CLAUDE.md:\n@@\n+Run migrations with QUARRY_DIRECT=1.');
-    expect(d.text).toContain('TOOL mcp:paceline/search_network');
+    expect(d.text).toContain('TOOL mcp:y/search_network');
     expect(d.text).toContain('ERROR Bash: FAIL src/db.test.ts > uses direct ⏎ Test Files 1 failed | 2 passed (3) ⏎ Tests 1 failed | 11 passed (12)\n');
     expect(d.text).toContain('OK Bash: Test Files 3 passed (3) ⏎ Tests 12 passed (12) ⏎ Duration 1.10s');
     expect(d.text).toMatch(/FINAL: Done: migrations use the direct connection/);
@@ -244,15 +244,15 @@ describe('snapshotSetup', () => {
     const home = join(tmp, 'home');
     const cfg = join(home, '.claude');
     const proj = join(tmp, 'proj');
-    const plug = join(cfg, 'plugins', 'cache', 'paceline');
+    const plug = join(cfg, 'plugins', 'cache', 'y');
     for (const d of [join(cfg, 'skills', 'db-helper'), join(cfg, 'agents'), join(proj, '.claude', 'skills', 'Bad Name!'), join(plug, 'skills', 'scroll'), join(plug, 'hooks')]) mkdirSync(d, { recursive: true });
     writeFileSync(join(cfg, 'settings.json'), JSON.stringify({
-      model: 'claude-opus-5-5', effortLevel: 'high', enabledPlugins: { 'paceline@paceline-mkt': true, 'off@x': false },
+      model: 'claude-opus-5-5', effortLevel: 'high', enabledPlugins: { 'y@y-mkt': true, 'off@x': false },
       hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'node secret-script.mjs --token abc' }] }] },
     }));
     writeFileSync(join(proj, '.claude', 'settings.json'), JSON.stringify({ permissions: { defaultMode: 'acceptEdits' }, outputStyle: 'Explanatory' }));
     writeFileSync(join(proj, '.claude', 'settings.local.json'), '{not json');
-    writeFileSync(join(cfg, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'paceline@paceline-mkt': [{ version: '0.1.0', installPath: plug }] } }));
+    writeFileSync(join(cfg, 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'y@y-mkt': [{ version: '0.1.0', installPath: plug }] } }));
     writeFileSync(join(plug, 'hooks', 'hooks.json'), JSON.stringify({ hooks: { PostToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'x' }] }] } }));
     writeFileSync(join(plug, 'skills', 'scroll', 'SKILL.md'), '---\nname: scroll\ndescription: Scroll the feed\n---\nbody');
     writeFileSync(join(cfg, 'skills', 'db-helper', 'SKILL.md'), '---\nname: db-helper\ndescription: "Helps Ada with quarry DBs"\n---\nSECRET BODY');
@@ -273,7 +273,7 @@ describe('snapshotSetup', () => {
     expect(snap.effort).toBe('high');
     expect(snap.permissionMode).toBe('acceptEdits');
     expect(snap.outputStyle).toBe('Explanatory');
-    expect(snap.plugins).toEqual([{ name: 'paceline', marketplace: 'paceline-mkt', version: '0.1.0' }]);
+    expect(snap.plugins).toEqual([{ name: 'y', marketplace: 'y-mkt', version: '0.1.0' }]);
     expect(snap.skills.map((s) => [s.name, s.scope, s.descriptionRedacted])).toEqual([
       ['Bad_Name_', 'project', ''],
       ['db-helper', 'user', 'Helps <USER> with quarry DBs'],

@@ -3,7 +3,7 @@
  *
  * @module normalize
  */
-import { INVISIBLE_CHARS_SOURCE } from '@paceline/schema';
+import { INVISIBLE_CHARS_SOURCE } from '@y/schema';
 
 /** Result of {@link normalizeUntrusted}. */
 export interface NormalizedText {
@@ -12,7 +12,7 @@ export interface NormalizedText {
   removedInvisible: number;
   /** Number of hidden constructs removed (HTML comments, markdown/HTML images). */
   removedHidden: number;
-  /** Number of delimiter look-alikes escaped (`<untrusted…`, `</paceline…`). */
+  /** Number of delimiter look-alikes escaped (`<untrusted…`, `</y…`). */
   escapedDelimiters: number;
   /** True if anything changed. */
   changed: boolean;
@@ -36,7 +36,7 @@ const CONTROLS_G = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
 const HTML_COMMENT_G = /<!--([\s\S]*?)(?:-->|$)/g;
 const MD_IMAGE_G = /!\[([^\]\n]*)\]\(([^)\n]*)\)/g;
 const HTML_IMG_G = /<img\b[^>]*>/gi;
-const DELIMITER_G = /<(\/?)(\s*)(untrusted|paceline)/gi;
+const DELIMITER_G = /<(\/?)(\s*)(untrusted|y)/gi;
 /** U+2039 SINGLE LEFT-POINTING ANGLE QUOTATION MARK: NFKC-stable look-alike for `<`. */
 const ESCAPED_LT = '‹';
 
@@ -118,11 +118,11 @@ export function normalizeDetailed(input: string): NormalizedDetail {
  * enveloping:
  * 1. Unicode NFKC;
  * 2. strip invisible and bidi-control characters (`INVISIBLE_CHARS_SOURCE`
- *    in `@paceline/schema`) and Unicode tag characters (U+E0000–E007F);
+ *    in `@y/schema`) and Unicode tag characters (U+E0000–E007F);
  * 3. CRLF/CR → LF; remove C0 controls except `\t` and `\n`, DEL and C1;
  * 4. remove hidden constructs: HTML comments, markdown images, `<img>` tags
  *    (counted in `removedHidden`);
- * 5. escape delimiter look-alikes (`<untrusted…`, `</paceline…`) by replacing
+ * 5. escape delimiter look-alikes (`<untrusted…`, `</y…`) by replacing
  *    `<` with U+2039 (`encodeUntrustedContent` additionally escapes every `<`
  *    when the content is enveloped);
  * 6. collapse runs of more than 2 blank lines to 2.

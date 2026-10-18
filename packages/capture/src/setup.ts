@@ -16,7 +16,7 @@ import type {
   SnapshotMcpServer,
   SnapshotPlugin,
   SnapshotSkill,
-} from '@paceline/schema';
+} from '@y/schema';
 import type { SnapshotSetupOptions } from './types.js';
 
 type Obj = Record<string, unknown>;

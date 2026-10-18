@@ -3,8 +3,8 @@
  *
  * `apps/mcp` holds no DB credentials (I7): every tool call becomes one signed
  * request to core carrying the caller's `Authorization` header unchanged.
- * The signature follows the `@paceline/schema/internal` contract:
- * `X-Paceline-Internal: t=<unix>,v1=<hex HMAC-SHA256(secret, internalSigningString(...))>`.
+ * The signature follows the `@y/schema/internal` contract:
+ * `X-Y-Internal: t=<unix>,v1=<hex HMAC-SHA256(secret, internalSigningString(...))>`.
  */
 import { createHash, createHmac } from 'node:crypto';
 import {
@@ -18,15 +18,15 @@ import {
   makeError,
   type InternalMcpMeta,
   type ToolName,
-} from '@paceline/schema';
+} from '@y/schema';
 
 /** Runtime configuration for the forwarder. */
 export interface CoreClientConfig {
   /** Base URL of core, e.g. `http://127.0.0.1:8787` (no trailing slash needed). */
   coreUrl: string;
-  /** `PACELINE_INTERNAL_SECRET`. */
+  /** `Y_INTERNAL_SECRET`. */
   internalSecret: string;
-  /** Paceline web origin for connect/reconnect guidance. */
+  /** Y web origin for connect/reconnect guidance. */
   webUrl: string;
   /** Per-request timeout, ms. */
   timeoutMs?: number;
@@ -48,7 +48,7 @@ export type CoreResult = { ok: true; output: unknown } | ErrorBody;
 
 const sha256Hex = (data: string): string => createHash('sha256').update(data, 'utf8').digest('hex');
 
-/** Compute the `X-Paceline-Internal` header value for one request. */
+/** Compute the `X-Y-Internal` header value for one request. */
 export function signInternalRequest(args: {
   secret: string;
   method: string;
@@ -71,10 +71,10 @@ export function signInternalRequest(args: {
 /** Read configuration from the environment. */
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): CoreClientConfig {
   return {
-    coreUrl: env.PACELINE_CORE_URL ?? 'http://127.0.0.1:8787',
-    internalSecret: env.PACELINE_INTERNAL_SECRET ?? '',
-    webUrl: env.PACELINE_WEB_URL ?? 'http://localhost:5173',
-    timeoutMs: env.PACELINE_CORE_TIMEOUT_MS ? Number(env.PACELINE_CORE_TIMEOUT_MS) : 20_000,
+    coreUrl: env.Y_CORE_URL ?? 'http://127.0.0.1:8787',
+    internalSecret: env.Y_INTERNAL_SECRET ?? '',
+    webUrl: env.Y_WEB_URL ?? 'http://localhost:5173',
+    timeoutMs: env.Y_CORE_TIMEOUT_MS ? Number(env.Y_CORE_TIMEOUT_MS) : 20_000,
   };
 }
 
@@ -83,7 +83,7 @@ export function unauthorizedError(webUrl: string, message?: string): ErrorBody {
   return makeError(
     'UNAUTHORIZED',
     message ??
-      'This tool needs a connected Paceline agent. Ask your human to connect this agent (install the Paceline plugin and run its connect step, or add a Paceline token to this MCP server), then retry.',
+      'This tool needs a connected Y agent. Ask your human to connect this agent (install the Y plugin and run its connect step, or add a Y token to this MCP server), then retry.',
     { next: { humanAction: 'reconnect', url: new URL('/connect', webUrl).toString() } },
   );
 }
@@ -119,7 +119,7 @@ export function createCoreClient(cfg: CoreClientConfig) {
     try {
       res = await doFetch(new URL(path, cfg.coreUrl), { method: 'POST', headers, body, signal });
     } catch {
-      return makeError('INTERNAL', 'Paceline core is unreachable right now. Retry shortly.', {
+      return makeError('INTERNAL', 'Y core is unreachable right now. Retry shortly.', {
         retryable: true,
         retryAfterS: 5,
       });
@@ -129,7 +129,7 @@ export function createCoreClient(cfg: CoreClientConfig) {
     try {
       json = await res.json();
     } catch {
-      return makeError('INTERNAL', `Paceline core returned an unreadable response (HTTP ${res.status}).`, {
+      return makeError('INTERNAL', `Y core returned an unreadable response (HTTP ${res.status}).`, {
         retryable: res.status >= 500,
       });
     }
@@ -146,7 +146,7 @@ export function createCoreClient(cfg: CoreClientConfig) {
       return parsed.data;
     }
     if (res.status === 401) return unauthorizedError(cfg.webUrl);
-    return makeError('INTERNAL', `Paceline core returned an unexpected response (HTTP ${res.status}).`, {
+    return makeError('INTERNAL', `Y core returned an unexpected response (HTTP ${res.status}).`, {
       retryable: res.status >= 500,
     });
   }

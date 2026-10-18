@@ -1,6 +1,6 @@
 /** Hook REST for plugins: POST /ingest, GET /agent/brief, POST /hook/match. Install-token callers. */
 import type { Hono } from 'hono';
-import type { Tx } from '@paceline/db';
+import type { Tx } from '@y/db';
 import {
   AgentBrief,
   AgentBriefQuery,
@@ -14,7 +14,7 @@ import {
   type KillSwitches,
   type Pointer,
   type HumanNotice,
-} from '@paceline/schema';
+} from '@y/schema';
 import type { Caller, CoreDeps } from '../../contracts.js';
 import { PlatformAuth } from '../auth.js';
 import { PgPushBus } from '../bus.js';

@@ -12,7 +12,7 @@ const ALICE = '0b6f3c1e-1d2a-4c5b-8e9f-0a1b2c3d4e5f';
 const BOB = '9e8d7c6b-5a49-4382-9172-6f5e4d3c2b1a';
 
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), 'paceline-sqltest-'));
+  root = await mkdtemp(join(tmpdir(), 'y-sqltest-'));
   migrations = join(root, 'migrations');
   tests = join(root, 'tests');
   await mkdir(migrations, { recursive: true });
@@ -146,7 +146,7 @@ describe('runSqlTests', () => {
 
 describe('pgTAP installation', () => {
   it('supports files that create the extension themselves, with or without IF NOT EXISTS', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'paceline-sqltest-ext-'));
+    const dir = await mkdtemp(join(tmpdir(), 'y-sqltest-ext-'));
     try {
       await writeFile(
         join(dir, 'a.sql'),

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { InboxOutput, MessageEnvelopeContent, PulseResponse, decodeUntrustedContent } from '@paceline/schema';
+import { InboxOutput, MessageEnvelopeContent, PulseResponse, decodeUntrustedContent } from '@y/schema';
 
-vi.mock('@paceline/safety', () => import('./test-fakes.js').then((m) => m.safety));
-vi.mock('@paceline/domain', () => import('./test-fakes.js').then((m) => m.domain));
-vi.mock('@paceline/retrieval', () => import('./test-fakes.js').then((m) => m.retrieval));
+vi.mock('@y/safety', () => import('./test-fakes.js').then((m) => m.safety));
+vi.mock('@y/domain', () => import('./test-fakes.js').then((m) => m.domain));
+vi.mock('@y/retrieval', () => import('./test-fakes.js').then((m) => m.retrieval));
 
 import { messagingModule } from './index.js';
 import { internalMcpModule } from '../internal-mcp/index.js';
@@ -44,7 +44,7 @@ describe('messaging', () => {
     const out = InboxOutput.parse(inbox.body.output);
     expect(out.messages).toHaveLength(1);
     const env0 = out.messages[0]!;
-    expect(env0.paceline_envelope).toBe('v1');
+    expect(env0.y_envelope).toBe('v1');
     expect(env0.from).toMatchObject({ agent: alice.agentHandle, owner: alice.handle, relationship: 'teammate' });
     expect(decodeUntrustedContent(env0.untrusted_content, MessageEnvelopeContent).body).toBe('Did you hit the flaky auth test too?');
     expect(out.threads[0]?.participants[0]).toMatchObject({ handle: alice.agentHandle, relationship: 'teammate' });
@@ -115,7 +115,7 @@ describe('messaging', () => {
 
   it('pulse returns a wake only for the targeted session', async () => {
     const pulse = (sid: string, cursor?: string, wait = 0) =>
-      env.app.request(`/api/v1/pulse?wait=${wait}${cursor ? `&cursor=${cursor}` : ''}`, { headers: { authorization: B, 'x-paceline-session': sid } });
+      env.app.request(`/api/v1/pulse?wait=${wait}${cursor ? `&cursor=${cursor}` : ''}`, { headers: { authorization: B, 'x-y-session': sid } });
     // Two listening sessions; s-new heartbeats last, so it holds the lease.
     expect((await pulse('s-old')).status).toBe(200);
     await new Promise((r) => setTimeout(r, 10));
@@ -124,7 +124,7 @@ describe('messaging', () => {
 
     await send(A, bob.agentHandle, 'build is red, can you look?', { urgency: 'wake' });
 
-    const other = PulseResponse.parse(await (await env.app.request(`/api/v1/pulse?wait=0&cursor=${first.cursor}`, { headers: { authorization: B, 'x-paceline-session': 's-old' } })).json());
+    const other = PulseResponse.parse(await (await env.app.request(`/api/v1/pulse?wait=0&cursor=${first.cursor}`, { headers: { authorization: B, 'x-y-session': 's-old' } })).json());
     expect(other.wake).toBeUndefined();
     const target = PulseResponse.parse(await (await pulse('s-new', first.cursor)).json());
     expect(target.wake?.targetSessionId).toBe('s-new');
@@ -136,8 +136,8 @@ describe('messaging', () => {
   });
 
   it('pulse long-polls and wakes on a targeted DM', async () => {
-    const first = PulseResponse.parse(await (await env.app.request('/api/v1/pulse?wait=0', { headers: { authorization: B, 'x-paceline-session': 's1' } })).json());
-    const pending = env.app.request(`/api/v1/pulse?wait=5&cursor=${first.cursor}`, { headers: { authorization: B, 'x-paceline-session': 's1' } });
+    const first = PulseResponse.parse(await (await env.app.request('/api/v1/pulse?wait=0', { headers: { authorization: B, 'x-y-session': 's1' } })).json());
+    const pending = env.app.request(`/api/v1/pulse?wait=5&cursor=${first.cursor}`, { headers: { authorization: B, 'x-y-session': 's1' } });
     await new Promise((r) => setTimeout(r, 50));
     await send(A, bob.agentHandle, 'wake up', { urgency: 'wake' });
     const res = PulseResponse.parse(await (await pending).json());

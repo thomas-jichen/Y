@@ -14,7 +14,7 @@ let db: PgliteDb;
 let empty: string;
 
 beforeAll(async () => {
-  empty = await mkdtemp(join(tmpdir(), 'paceline-shims-'));
+  empty = await mkdtemp(join(tmpdir(), 'y-shims-'));
   db = await createPgliteDb();
   await migrate(db, { migrationsDir: empty });
 });
@@ -127,9 +127,9 @@ describe('local shims', () => {
     for (const row of rows) expect(row.c.startsWith(LOCAL_SHIM_MARKER)).toBe(true);
   });
 
-  it('provide realtime.send(payload, event, topic, private) as NOTIFY paceline_realtime', async () => {
+  it('provide realtime.send(payload, event, topic, private) as NOTIFY y_realtime', async () => {
     const got: unknown[] = [];
-    const unlisten = await db.listen('paceline_realtime', (payload) => {
+    const unlisten = await db.listen('y_realtime', (payload) => {
       got.push(JSON.parse(payload));
     });
     try {

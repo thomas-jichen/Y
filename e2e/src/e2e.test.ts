@@ -1,5 +1,5 @@
 /**
- * Paceline v0 end to end, in one process tree, localhost only:
+ * Y v0 end to end, in one process tree, localhost only:
  * core (real modules, fresh PGlite, in-process job loop) + apps/mcp over real HTTP
  * + the BUILT plugin bundles (scripts/dist/*.mjs) as child processes.
  */
@@ -12,10 +12,10 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve, type ServerType } from '@hono/node-server';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createTestDb, type PgliteDb } from '@paceline/db';
-import { allJobHandlers, createApp, createDeps, loadConfig, type CoreDeps } from '@paceline/core';
-import { createServer as createMcpServer } from '@paceline/mcp';
-import { isRenderedPointer } from '@paceline/pointers';
+import { createTestDb, type PgliteDb } from '@y/db';
+import { allJobHandlers, createApp, createDeps, loadConfig, type CoreDeps } from '@y/core';
+import { createServer as createMcpServer } from '@y/mcp';
+import { isRenderedPointer } from '@y/pointers';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const PLUGIN_ROOT = path.join(ROOT, 'plugins/claude-code');
@@ -37,7 +37,7 @@ let mcpServer: ServerType;
 let coreUrl = '';
 let mcpUrl = '';
 let loop: NodeJS.Timeout | undefined;
-const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'paceline-e2e-'));
+const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'y-e2e-'));
 const hookOutputs: { label: string; stdout: string; stderr: string }[] = [];
 
 function listenOn(fetch: (req: Request) => Response | Promise<Response>): Promise<{ server: ServerType; url: string }> {
@@ -160,7 +160,7 @@ async function devLogin(login: string): Promise<Person> {
       CLAUDE_PLUGIN_DATA: dataDir,
       CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
       HOME: dataDir,
-      PACELINE_WEB_URL: coreUrl,
+      Y_WEB_URL: coreUrl,
     },
   };
   people[login] = p;
@@ -198,7 +198,7 @@ function writeTranscript(dir: string, sessionId: string): string {
 }
 
 beforeAll(async () => {
-  if (!fs.existsSync(path.join(DIST, 'hook.mjs'))) throw new Error('build the plugin first: pnpm --filter @paceline/plugin-claude-code build');
+  if (!fs.existsSync(path.join(DIST, 'hook.mjs'))) throw new Error('build the plugin first: pnpm --filter @y/plugin-claude-code build');
   db = await createTestDb();
   // Reserve the core port first so publicUrl (notice host checks) matches the real address.
   const holder = await listenOn(() => new Response('booting', { status: 503 }));
@@ -207,14 +207,14 @@ beforeAll(async () => {
   const config = loadConfig({
     PORT: String(port),
     PUBLIC_URL: `http://127.0.0.1:${port}`,
-    PACELINE_INTERNAL_SECRET: SECRET,
-    PACELINE_HMAC_KEY: randomBytes(16).toString('hex'),
-    PACELINE_DEV_AUTH: '1',
-    PACELINE_LLM: 'mock',
-    PACELINE_EMBEDDINGS: 'mock',
+    Y_INTERNAL_SECRET: SECRET,
+    Y_HMAC_KEY: randomBytes(16).toString('hex'),
+    Y_DEV_AUTH: '1',
+    Y_LLM: 'mock',
+    Y_EMBEDDINGS: 'mock',
   });
   const quiet: CoreDeps['log'] = (level, msg, data) => {
-    if (level === 'error' || process.env.PACELINE_TEST_LOG) console.error(`[core] ${level} ${msg}`, data ?? '');
+    if (level === 'error' || process.env.Y_TEST_LOG) console.error(`[core] ${level} ${msg}`, data ?? '');
   };
   deps = await createDeps(config, db, allJobHandlers(), { scheduleRecurring: false, log: quiet });
   const app = createApp(deps);
@@ -255,7 +255,7 @@ afterAll(async () => {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-describe('paceline v0 end to end', () => {
+describe('y v0 end to end', () => {
   let highlightId = '';
   const vivanSession = '5f2b3c1e-0000-4000-8000-00000000e2e1';
   const mayaSession = '5f2b3c1e-0000-4000-8000-00000000e2e2';
@@ -343,7 +343,7 @@ describe('paceline v0 end to end', () => {
     const hits = res.structuredContent.results as any[];
     expect(hits.length).toBeGreaterThan(0);
     const hit = hits[0];
-    expect(hit.item.paceline_envelope).toBe('v1');
+    expect(hit.item.y_envelope).toBe('v1');
     expect(hit.item).toHaveProperty('untrusted_content');
     expect(JSON.stringify(hit)).toMatch(/QUARRY_DIRECT/);
     expect(highlightId).not.toBe('');
@@ -400,7 +400,7 @@ describe('paceline v0 end to end', () => {
     const msgs = inbox.structuredContent.messages as any[];
     const m = msgs.find((x) => JSON.stringify(x).includes('QUARRY_DIRECT in CI'));
     expect(m, JSON.stringify(msgs)).toBeTruthy();
-    expect(m.paceline_envelope).toBe('v1');
+    expect(m.y_envelope).toBe('v1');
     expect(m).toHaveProperty('untrusted_content');
   });
 
@@ -436,7 +436,7 @@ describe('paceline v0 end to end', () => {
     await waitFor('the accepted stranger DM in vivan’s inbox', async () => {
       const ib = await mcpCall('inbox', { unread_only: false, limit: 20 }, v.install);
       const m = (ib.structuredContent?.messages ?? []).find((x: any) => JSON.stringify(x).includes('Zed Co'));
-      return m && m.paceline_envelope === 'v1' && m.from?.relationship !== 'teammate' ? m : undefined;
+      return m && m.y_envelope === 'v1' && m.from?.relationship !== 'teammate' ? m : undefined;
     });
   });
 

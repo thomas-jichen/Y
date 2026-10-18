@@ -18,7 +18,7 @@ import {
 let dir: string;
 
 beforeAll(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'paceline-testing-'));
+  dir = await mkdtemp(join(tmpdir(), 'y-testing-'));
   await writeFile(
     join(dir, '0001_profiles.sql'),
     `create table public.profiles (
@@ -84,7 +84,7 @@ describe('createTestDb', () => {
   });
 
   it('does not cache failed templates', async () => {
-    const broken = await mkdtemp(join(tmpdir(), 'paceline-testing-broken-'));
+    const broken = await mkdtemp(join(tmpdir(), 'y-testing-broken-'));
     try {
       await writeFile(join(broken, '0001_bad.sql'), 'select * from nowhere;');
       await expect(createTestDb({ migrationsDir: broken })).rejects.toThrow(/0001_bad\.sql failed/);

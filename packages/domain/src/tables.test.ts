@@ -1,4 +1,4 @@
-import { TOOL_NAMES, TOOL_POLICY } from '@paceline/schema';
+import { TOOL_NAMES, TOOL_POLICY } from '@y/schema';
 import { describe, expect, it } from 'vitest';
 import { QUALITY_WEIGHTS, RATE_LIMITS, WAKE_LIMITS } from './index.js';
 

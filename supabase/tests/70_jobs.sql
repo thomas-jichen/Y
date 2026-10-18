@@ -62,8 +62,8 @@ reset role;
 select ok(pg_get_functiondef('api.claim_jobs(text[], integer, interval)'::regprocedure) ~* 'for\s+update\s+skip\s+locked',
   'claim_jobs locks candidates with FOR UPDATE SKIP LOCKED (concurrent workers never claim the same job)');
 select ok(exists (select 1 from pg_trigger where tgname = 'jobs_notify' and tgrelid = 'public.jobs'::regclass)
-          and (select prosrc from pg_proc where proname = 'on_job_insert') ilike '%pg_notify(''paceline_jobs'', new.topic)%',
-  'job inserts NOTIFY paceline_jobs with the topic');
+          and (select prosrc from pg_proc where proname = 'on_job_insert') ilike '%pg_notify(''y_jobs'', new.topic)%',
+  'job inserts NOTIFY y_jobs with the topic');
 
 select * from finish();
 rollback;

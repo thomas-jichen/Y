@@ -5,12 +5,12 @@
  * wake budget allows it. The wake carries a pointer template only (I3).
  */
 import type { App, CoreDeps, PushEvent } from '../contracts.js';
-import { LEASE_STALE_MS, pickLeaseSession, wakeBudget, type LeaseCandidate } from '@paceline/domain';
-import { HarnessSessionId, PulseQuery, WakeAck, makePointer, validationError, type PulseResponse } from '@paceline/schema';
+import { LEASE_STALE_MS, pickLeaseSession, wakeBudget, type LeaseCandidate } from '@y/domain';
+import { HarnessSessionId, PulseQuery, WakeAck, makePointer, validationError, type PulseResponse } from '@y/schema';
 import { PlatformAuth } from '../platform/auth.js';
 import { HttpError, agentInfos, errorResponse, killSwitches, requireAgent, requireCaller, unreadCounts } from './util.js';
 
-const SESSION_HEADER = 'x-paceline-session';
+const SESSION_HEADER = 'x-y-session';
 
 interface LeaseRow {
   session_id: string; listening: string; last_heartbeat_at: Date | string; repo_key: string | null;
@@ -117,7 +117,7 @@ export function registerPulse(app: App, deps: CoreDeps): void {
       const q = PulseQuery.safeParse(c.req.query());
       if (!q.success) return c.json(validationError(q.error), 400);
       const sid = HarnessSessionId.safeParse(c.req.header(SESSION_HEADER) ?? q.data.sessionId);
-      if (!sid.success) throw new HttpError('VALIDATION', 'X-Paceline-Session header (harness session id) is required');
+      if (!sid.success) throw new HttpError('VALIDATION', 'X-Y-Session header (harness session id) is required');
       const sessionId = sid.data;
 
       // Heartbeat: this session is listening.

@@ -3,7 +3,7 @@
  * @module segments
  */
 import { createHmac } from 'node:crypto';
-import type { Harness, SegmentCloseReason } from '@paceline/schema';
+import type { Harness, SegmentCloseReason } from '@y/schema';
 import { SEGMENT_CAP_MS, SEGMENT_IDLE_MS, type SegmentEvent, type SegmentState, type SegmentTransition } from './types.js';
 
 /** Fresh state for a new session. */

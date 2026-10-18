@@ -6,7 +6,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { identityTermsFrom, redact, type IdentityTerms, type RedactResult } from '@paceline/redact';
+import { identityTermsFrom, redact, type IdentityTerms, type RedactResult } from '@y/redact';
 
 const cache = new Map<string, IdentityTerms | undefined>();
 

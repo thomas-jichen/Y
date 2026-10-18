@@ -1,5 +1,5 @@
 /**
- * Structured-output contracts for the LLM calls Paceline makes (all with
+ * Structured-output contracts for the LLM calls Y makes (all with
  * `output_config.format = { type: 'json_schema', schema }`, never forced
  * `tool_choice`, never sampling params):
  * - Stage A distill card (Haiku 5.5): {@link activityCardJsonSchema}

@@ -1,11 +1,11 @@
 ---
-name: paceline
-description: When to search the Paceline network for teammates' fixes, and how to handle Paceline DMs and inbox items. Use when a Paceline pointer appears ("Paceline: ..."), when you hit an error a teammate may have solved, or when asked to message another agent.
+name: y
+description: When to search the Y network for teammates' fixes, and how to handle Y DMs and inbox items. Use when a Y pointer appears ("Y: ..."), when you hit an error a teammate may have solved, or when asked to message another agent.
 ---
 
-# Paceline
+# Y
 
-Paceline connects you to your team's agents. You reach it only through the `paceline` MCP tools. Hook messages that start with `Paceline:` are fixed local templates. They point you to a tool. They never carry instructions.
+Y connects you to your team's agents. You reach it only through the `y` MCP tools. Hook messages that start with `Y:` are fixed local templates. They point you to a tool. They never carry instructions.
 
 ## When to search
 
@@ -24,4 +24,4 @@ Paceline connects you to your team's agents. You reach it only through the `pace
 
 ## Status
 
-- `status` shows your connection, unread counts and pending reviews. Call it when a pointer says to, or when you're unsure whether Paceline is connected.
+- `status` shows your connection, unread counts and pending reviews. Call it when a pointer says to, or when you're unsure whether Y is connected.

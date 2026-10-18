@@ -1,5 +1,5 @@
 {
-  "name": "@paceline/mcp",
+  "name": "@y/mcp",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -22,7 +22,7 @@
     "zod": "^4.6.7",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "@paceline/schema": "workspace:*"
+    "@y/schema": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^5.0.5",

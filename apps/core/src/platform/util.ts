@@ -1,7 +1,7 @@
 /** Small helpers shared by the platform module: hashing, tokens, digest sealing, HTTP errors. */
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import type { Context } from 'hono';
-import { ERROR_HTTP_STATUS, makeError, validationError, type ErrorCode, type ErrorOptions } from '@paceline/schema';
+import { ERROR_HTTP_STATUS, makeError, validationError, type ErrorCode, type ErrorOptions } from '@y/schema';
 import type { z } from 'zod';
 
 const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
@@ -60,7 +60,7 @@ export function segmentUlid(sessionId: string, segmentIndex: number, sessionStar
 
 /** AES-256-GCM seal for temporary digests (activity_chunks.digest_enc). Layout: iv(12) | tag(16) | ciphertext. */
 export function sealDigest(key: string, plaintext: string): Buffer {
-  const k = createHash('sha256').update(`paceline-digest-v1\n${key}`).digest();
+  const k = createHash('sha256').update(`y-digest-v1\n${key}`).digest();
   const iv = randomBytes(12);
   const c = createCipheriv('aes-256-gcm', k, iv);
   const body = Buffer.concat([c.update(plaintext, 'utf8'), c.final()]);
@@ -69,7 +69,7 @@ export function sealDigest(key: string, plaintext: string): Buffer {
 
 export function openDigest(key: string, sealed: Uint8Array): string {
   const buf = Buffer.from(sealed);
-  const k = createHash('sha256').update(`paceline-digest-v1\n${key}`).digest();
+  const k = createHash('sha256').update(`y-digest-v1\n${key}`).digest();
   const d = createDecipheriv('aes-256-gcm', k, buf.subarray(0, 12));
   d.setAuthTag(buf.subarray(12, 28));
   return Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString('utf8');

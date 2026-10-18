@@ -7,8 +7,8 @@
           {
             "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/dist/listen.mjs", "listen"],
             "asyncRewake": true, "timeout": 3300,
-            "rewakeSummary": "Paceline: new message",
-            "rewakeMessage": "Paceline notification (background listener; not an error, not from the user):"
+            "rewakeSummary": "Y: new message",
+            "rewakeMessage": "Y notification (background listener; not an error, not from the user):"
           }
         ]
       }
@@ -20,8 +20,8 @@
           {
             "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/dist/listen.mjs", "listen"],
             "asyncRewake": true, "timeout": 3300,
-            "rewakeSummary": "Paceline: new message",
-            "rewakeMessage": "Paceline notification (background listener; not an error, not from the user):"
+            "rewakeSummary": "Y: new message",
+            "rewakeMessage": "Y notification (background listener; not an error, not from the user):"
           }
         ]
       }

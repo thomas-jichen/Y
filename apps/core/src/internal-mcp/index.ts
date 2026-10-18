@@ -1,12 +1,12 @@
 /**
  * INTERNAL MCP API: POST /internal/mcp/:tool (apps/mcp → core).
- * 1. HMAC (X-Paceline-Internal) via deps.auth.verifyInternal; bad → 401.
+ * 1. HMAC (X-Y-Internal) via deps.auth.verifyInternal; bad → 401.
  * 2. Authorization → Caller via deps.auth.verifyBearer; a present-but-invalid
  *    token → 401; absent → 401 unless TOOL_POLICY[tool].auth is 'optional'.
  * 3. Validate input with TOOLS[tool].input, run the handler, validate the
  *    output with TOOLS[tool].output; respond {ok:true, output} or ErrorBody.
  */
-import { TOOLS, TOOL_POLICY, ToolName, makeError, toMcpErrorBody, validationError, type ErrorBody } from '@paceline/schema';
+import { TOOLS, TOOL_POLICY, ToolName, makeError, toMcpErrorBody, validationError, type ErrorBody } from '@y/schema';
 import type { ZodType } from 'zod';
 import type { CoreModule } from '../contracts.js';
 import { HttpError } from '../messaging/util.js';

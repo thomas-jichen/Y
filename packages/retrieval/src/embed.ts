@@ -10,9 +10,9 @@ import {
   EMBED_MAX_INPUTS,
   EMBED_MAX_INPUT_CHARS,
   EMBED_SECRET_HEADER,
-} from '@paceline/schema';
+} from '@y/schema';
 
-/** Re-exported hosting contracts (`@paceline/schema`): 384 dims, gte-small, the embed Edge Function path, header and limits. */
+/** Re-exported hosting contracts (`@y/schema`): 384 dims, gte-small, the embed Edge Function path, header and limits. */
 export { EMBEDDING_DIMS, EMBED_FUNCTION_PATH, EMBED_MAX_INPUTS, EMBED_MAX_INPUT_CHARS, EMBED_SECRET_HEADER };
 
 /** Production embedding model (Supabase built-in inference). */
@@ -125,7 +125,7 @@ export function createMockEmbedder(opts?: MockEmbedderOptions): Embedder {
 export interface GteEmbedderOptions {
   /** Supabase project URL (`https://<ref>.supabase.co`) or the full function URL ending in `/functions/v1/embed`. */
   url: string;
-  /** `PACELINE_EMBED_SECRET`. */
+  /** `Y_EMBED_SECRET`. */
   secret: string;
   /** Injected fetch (default `globalThis.fetch`). */
   fetch?: typeof fetch;
@@ -162,7 +162,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
  * gte-small embedder calling the Supabase `embed` Edge Function
- * (`POST <url>/functions/v1/embed`, header `x-paceline-embed-secret`, body
+ * (`POST <url>/functions/v1/embed`, header `x-y-embed-secret`, body
  * `{"input": string[]}` ≤ 32 inputs of ≤ 8,000 chars). Inputs are truncated
  * to 8,000 chars; empty/whitespace inputs are not sent and get the unit
  * vector on bucket 0. Every returned vector is checked to be 384 long and
@@ -249,21 +249,21 @@ export function createGteEmbedder(opts: GteEmbedderOptions): Embedder {
 
 /** Gateway embeddings were cut (384-dim gte-small via Supabase replaced them). Always throws `NOT_IMPLEMENTED`. */
 export function createGatewayEmbedder(_opts?: unknown): Embedder {
-  throw new EmbedError('NOT_IMPLEMENTED', 'gateway embeddings are cut; use createGteEmbedder (PACELINE_EMBEDDINGS=supabase)', false);
+  throw new EmbedError('NOT_IMPLEMENTED', 'gateway embeddings are cut; use createGteEmbedder (Y_EMBEDDINGS=supabase)', false);
 }
 
 /**
- * Pick an embedder from env: `PACELINE_EMBEDDINGS=supabase` (or `gte`) →
- * {@link createGteEmbedder} with `SUPABASE_URL` and `PACELINE_EMBED_SECRET`
+ * Pick an embedder from env: `Y_EMBEDDINGS=supabase` (or `gte`) →
+ * {@link createGteEmbedder} with `SUPABASE_URL` and `Y_EMBED_SECRET`
  * (throws when either is missing); `gateway` → throws `NOT_IMPLEMENTED`;
  * anything else (including unset and `mock`) → {@link createMockEmbedder}.
  */
 export function embedderFromEnv(env: Record<string, string | undefined> = process.env): Embedder {
-  const mode = (env.PACELINE_EMBEDDINGS ?? 'mock').trim().toLowerCase();
+  const mode = (env.Y_EMBEDDINGS ?? 'mock').trim().toLowerCase();
   if (mode === 'supabase' || mode === 'gte') {
     const url = env.SUPABASE_URL;
-    const secret = env.PACELINE_EMBED_SECRET;
-    if (!url || !secret) throw new EmbedError('EMBED_VALIDATION', 'PACELINE_EMBEDDINGS=supabase needs SUPABASE_URL and PACELINE_EMBED_SECRET', false);
+    const secret = env.Y_EMBED_SECRET;
+    if (!url || !secret) throw new EmbedError('EMBED_VALIDATION', 'Y_EMBEDDINGS=supabase needs SUPABASE_URL and Y_EMBED_SECRET', false);
     return createGteEmbedder({ url, secret });
   }
   if (mode === 'gateway') return createGatewayEmbedder();

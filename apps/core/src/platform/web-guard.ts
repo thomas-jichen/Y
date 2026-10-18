@@ -1,11 +1,11 @@
 /**
  * Browser-facing hardening, applied in createApp before every module's routes:
  *
- * - CORS for PACELINE_WEB_ORIGIN (credentials false: the web app sends bearer tokens).
+ * - CORS for Y_WEB_ORIGIN (credentials false: the web app sends bearer tokens).
  * - Origin check on mutating web routes: a browser request whose Origin is not an
  *   allowed web origin (or core's own) is rejected. Requests without Origin
  *   (CLI, hooks, server-to-server) pass; they cannot ride a browser's cookies.
- * - Demo gate: when PACELINE_DEMO_SECRET is set, /api/v1/dev/* needs X-Demo-Secret.
+ * - Demo gate: when Y_DEMO_SECRET is set, /api/v1/dev/* needs X-Demo-Secret.
  * - Step-up (I5): review decisions and owner instructions need a web login
  *   younger than 12 h (STEP_UP_REQUIRED otherwise).
  */

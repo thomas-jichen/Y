@@ -76,16 +76,16 @@ An instance was still serving with `msSinceBoot` ≈ 438 s, so instances survive
 
 ### 3. Header pass-through: **both arrive intact**
 
-Sent `Authorization: Bearer paceline-test-token-123456789` and `X-Paceline-Test: hello-from-s3`:
+Sent `Authorization: Bearer y-test-token-123456789` and `X-Y-Test: hello-from-s3`:
 
 ```json
 { "authorizationArrived": true,
   "authorizationValue": "Bearer pacel…(36 chars)",
-  "xPacelineTest": "hello-from-s3" }
+  "xYTest": "hello-from-s3" }
 ```
 
-So we can carry a Paceline bearer token and our own metadata headers end to end. Reading them in mcp-use is
-**`ctx.req.header('x-paceline-test')`**; `ctx.request` is a Hono request wrapper (`{raw, routeIndex, path,
+So we can carry a Y bearer token and our own metadata headers end to end. Reading them in mcp-use is
+**`ctx.req.header('x-y-test')`**; `ctx.request` is a Hono request wrapper (`{raw, routeIndex, path,
 bodyCache}`), so the full set is `ctx.request.raw.headers`. Not `ctx.headers`, which does not exist — this cost a
 redeploy cycle to find, so note it for `apps/mcp`.
 
@@ -168,7 +168,7 @@ the quotas from Manufact directly — which pairs with the organiser question al
 ## Decision
 
 **Default: host `apps/mcp` on Manufact Cloud.** It clears every requirement we actually have — stateless HTTP
-transport, `Authorization` pass-through for Paceline tokens, open egress for calling `apps/core`, a sane 401/OAuth
+transport, `Authorization` pass-through for Y tokens, open egress for calling `apps/core`, a sane 401/OAuth
 story on the Claude Code side, subfolder deploys for the monorepo, and custom domains when we want one.
 
 Build notes for whoever owns `apps/mcp`:

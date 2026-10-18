@@ -1,4 +1,4 @@
-import { MessageState, ScreenAction, TERMINAL_MESSAGE_STATES, ThreadState } from '@paceline/schema';
+import { MessageState, ScreenAction, TERMINAL_MESSAGE_STATES, ThreadState } from '@y/schema';
 import { describe, expect, it } from 'vitest';
 import {
   IllegalTransitionError,

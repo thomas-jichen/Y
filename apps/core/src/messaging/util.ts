@@ -4,7 +4,7 @@
  * handle/ref resolution and the relationship between two agents.
  */
 import type { Context } from 'hono';
-import type { Queryable, Tx } from '@paceline/db';
+import type { Queryable, Tx } from '@y/db';
 import {
   ERROR_HTTP_STATUS,
   ErrorCode,
@@ -15,7 +15,7 @@ import {
   type ErrorOptions,
   type IdKind,
   type KillSwitches,
-} from '@paceline/schema';
+} from '@y/schema';
 import type { Caller, CoreDeps } from '../contracts.js';
 
 /** Thrown by handlers; rendered as the standard error body. */
@@ -36,7 +36,7 @@ export class HttpError extends Error {
 }
 
 /**
- * NOT_IMPLEMENTED is not (yet) an ErrorCode in @paceline/schema. Until it is,
+ * NOT_IMPLEMENTED is not (yet) an ErrorCode in @y/schema. Until it is,
  * cut tools answer NOT_FOUND with a "not implemented" message (HTTP 501).
  */
 export const NOT_IMPLEMENTED_CODE: ErrorCode = (ErrorCode.options as readonly string[]).includes('NOT_IMPLEMENTED')

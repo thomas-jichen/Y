@@ -27,12 +27,12 @@ session to use it. Each skill contained a unique phrase so the answer could not 
 
 | scope | written at | result |
 |---|---|---|
-| **user** — `~/.claude/skills/spike-skill/SKILL.md` | T+45 s | **picked up, no restart** — returned `PACELINE-HOT-RELOAD-OK` |
+| **user** — `~/.claude/skills/spike-skill/SKILL.md` | T+45 s | **picked up, no restart** — returned `Y-HOT-RELOAD-OK` |
 | **project** — `.claude/skills/spike-proj-skill/SKILL.md`, in a `.claude/skills` dir **absent at session start** | T+40 s | **not picked up** — `NO SUCH SKILL` |
 
 The probe session noticed the first one unprompted:
 
-> The secret phrase in the spike-skill skill is **PACELINE-HOT-RELOAD-OK**. It wasn't in the skills list when
+> The secret phrase in the spike-skill skill is **Y-HOT-RELOAD-OK**. It wasn't in the skills list when
 > this session started; it showed up partway through. So skills added mid-session get picked up without a
 > restart.
 
@@ -44,9 +44,9 @@ The project-level case failed in a session that *could* see the user-level skill
 is a genuine scope asymmetry, not a timing artefact. Written up as a seed:
 `seeds/highlights/claude-code-project-skills-not-hot-reloaded.json`.
 
-**Consequence for `paceline init`:** if the installer writes a project-scoped skill into a `.claude/skills`
+**Consequence for `y init`:** if the installer writes a project-scoped skill into a `.claude/skills`
 directory it has just created, that skill is invisible for the rest of the session. Either create
-`.claude/skills/` during project setup (before anyone starts a session), install Paceline's skills at **user**
+`.claude/skills/` during project setup (before anyone starts a session), install Y's skills at **user**
 level, or have the installer tell the user to restart. Reporting "installed" and leaving it inert is the failure
 to avoid — it is the same shape as the Codex trust gate in [S6](S6-codex-hooks.md).
 
@@ -102,7 +102,7 @@ Everything needed is already on disk; nothing to build.
 
 ## Decision
 
-**Default (step 4, decided):** install Paceline's skills at **user** level, or create `.claude/skills/` before the
+**Default (step 4, decided):** install Y's skills at **user** level, or create `.claude/skills/` before the
 session starts. Never install a project skill mid-session and report success.
 
 **Default (steps 1–3, provisional, pending the run above):** assume desktop behaves like the CLI — the wake works,

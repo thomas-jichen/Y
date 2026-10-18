@@ -45,7 +45,7 @@ This decides whether a DM can wake your idle agent.
    ```js
    const s = Number(process.env.WAKE_AFTER_S ?? 120);
    setTimeout(() => {
-     process.stderr.write('Paceline: 1 unread DM from @spike-bot. Call the inbox tool.\n');
+     process.stderr.write('Y: 1 unread DM from @spike-bot. Call the inbox tool.\n');
      process.exit(2);
    }, s * 1000);
    ```
@@ -69,7 +69,7 @@ This decides whether a DM can wake your idle agent.
 
 Follow the Codex hooks docs (learn.chatgpt.com/docs/hooks) for the file format. In `~/.codex/hooks.json` or a scratch repo's `.codex/hooks.json`:
 
-1. **SessionStart** returning `additionalContext` ("Paceline: 0 unread"). Does the model see it?
+1. **SessionStart** returning `additionalContext` ("Y: 0 unread"). Does the model see it?
 2. **PreToolUse** that returns `deny` for any write to `AGENTS.md`. Is the write actually blocked? Also try `ask`: we expect it to be unsupported and let the call through, so confirm.
 3. **PostToolUse** on a failing shell command, returning `additionalContext`. Is it shown next to the error?
 4. **SessionEnd** that sleeps 2 s, then 4 s. Is it killed, and what is `reason`?
@@ -86,7 +86,7 @@ Follow the Codex hooks docs (learn.chatgpt.com/docs/hooks) for the file format. 
 
 1. Scaffold a hello mcp-use server and deploy it with `npx mcp-use deploy`. Record the URL format.
 2. **Cold start**: how long does the first call take after more than 10 minutes idle?
-3. **Header pass-through**: add a tool that echoes its request headers. Do `Authorization` and a custom `X-Paceline-Test` arrive?
+3. **Header pass-through**: add a tool that echoes its request headers. Do `Authorization` and a custom `X-Y-Test` arrive?
 4. **Egress**: can a tool `fetch('https://httpbin.org/get')`?
 5. **401 behavior**: return HTTP 401 with a `WWW-Authenticate` header from middleware. What does Claude Code show? What does claude.ai show?
 6. Can a monorepo subfolder (`apps/mcp`) be deployed? Can you set a custom domain and env vars?
@@ -153,4 +153,4 @@ Only include facts you've checked against current docs, and put the source URLs 
 
 - [ ] Line up 2–3 friendly teams who use Claude Code and/or Codex to pilot in M8.
 - [ ] Ask the Manufact organizers whether entries must run on Manufact Cloud. Ask the Armature organizers what before/after baseline they want to see.
-- [ ] Check that the name "Paceline" is free (trademark, npm scope `@paceline`, domain, GitHub org).
+- [ ] Check that the name "Y" is free (trademark, npm scope `@y`, domain, GitHub org).

@@ -7,7 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Hono } from 'hono';
 import { z } from 'zod';
-import { GithubLogin, Slug } from '@paceline/schema';
+import { GithubLogin, Slug } from '@y/schema';
 import type { CoreDeps } from '../../contracts.js';
 import { authenticate } from '../http.js';
 import { fail, mintWebToken, parseOr, readJson, sha256Hex } from '../util.js';
@@ -29,7 +29,7 @@ async function ensureUser(deps: CoreDeps, login: string): Promise<string> {
   await deps.db.query(
     `insert into auth.users (id, email, raw_user_meta_data, raw_app_meta_data, email_confirmed_at)
      values ($1, $2, $3::jsonb, $4::jsonb, now())`,
-    [id, `${login.toLowerCase()}@dev.paceline.test`, JSON.stringify({ user_name: login, full_name: login }), JSON.stringify({ provider: 'dev', providers: ['dev'] })],
+    [id, `${login.toLowerCase()}@dev.y.test`, JSON.stringify({ user_name: login, full_name: login }), JSON.stringify({ provider: 'dev', providers: ['dev'] })],
   );
   return id;
 }
@@ -60,7 +60,7 @@ export function registerDevRoutes(app: Hono, deps: CoreDeps): void {
     if (team) await addToTeam(deps, team, team === DEV_TEAM ? 'Dev team' : team, [userId], userId);
     const token = mintWebToken();
     await deps.db.asService((tx) =>
-      tx.query('insert into paceline_private.web_sessions (token_hash, user_id) values ($1, $2)', [sha256Hex(token), userId]),
+      tx.query('insert into y_private.web_sessions (token_hash, user_id) values ($1, $2)', [sha256Hex(token), userId]),
     );
     const u = await deps.db.asUser({ sub: userId, via: 'web' }, (tx) =>
       tx.query<{ handle: string }>('select handle from public.users where id = $1', [userId]),

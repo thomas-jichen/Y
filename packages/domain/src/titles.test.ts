@@ -1,11 +1,11 @@
-import { emptyStats, type ActivityStats } from '@paceline/schema';
+import { emptyStats, type ActivityStats } from '@y/schema';
 import { describe, expect, it } from 'vitest';
 import { compactCount, isWarmup, segmentKey, sizeBucketFor, templatedTitle, totalToolCalls } from './index.js';
 
 function stats(over: { calls?: number; mcpCalls?: number; tokens?: number; testsRan?: boolean; green?: boolean; wallMs?: number } = {}): ActivityStats {
   const s = emptyStats('2.1.0');
   s.toolCalls = over.calls ? { Bash: Math.ceil(over.calls / 2), Edit: Math.floor(over.calls / 2) } : {};
-  s.mcp = over.mcpCalls ? { paceline: { search_network: over.mcpCalls } } : {};
+  s.mcp = over.mcpCalls ? { y: { search_network: over.mcpCalls } } : {};
   s.tokens = { ...s.tokens, total: over.tokens ?? 0 };
   s.tests = { runs: over.testsRan ? 2 : 0, greenAtEnd: over.green ?? false, confidence: 0.9 };
   s.wallMs = over.wallMs ?? 600_000;

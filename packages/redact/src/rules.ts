@@ -1,5 +1,5 @@
 /**
- * Rule table, markers and option types for @paceline/redact.
+ * Rule table, markers and option types for @y/redact.
  * @module rules
  */
 /** Rule families. Only `secret`, `entropy`, `env_dump` and `url_credential` count toward fail-closed. */
@@ -43,7 +43,7 @@ export const RULES: readonly RuleInfo[] = [
   secret('slack_webhook', 'Slack incoming webhook URLs'),
   secret('google_api_key', 'Google API keys (AIza…)'),
   secret('jwt', 'JSON Web Tokens (three base64url segments starting eyJ)'),
-  secret('paceline_token', 'Paceline install tokens (pcl_agt_…)'),
+  secret('y_token', 'Y install tokens (pcl_agt_…)'),
   secret('npm_token', 'npm tokens (npm_…)'),
   secret('bearer_token', 'Authorization: Bearer <token> values'),
   secret('generic_assignment', 'password/secret/token/api_key = "<value>" assignments'),

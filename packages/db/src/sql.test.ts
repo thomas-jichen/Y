@@ -89,14 +89,14 @@ describe('context statements', () => {
 
 describe('identifiers and channels', () => {
   it('quotes identifiers and doubles embedded quotes', () => {
-    expect(quoteIdent('paceline_events')).toBe('"paceline_events"');
+    expect(quoteIdent('y_events')).toBe('"y_events"');
     expect(quoteIdent('we"ird')).toBe('"we""ird"');
     expect(() => quoteIdent('')).toThrow();
     expect(() => quoteIdent('a\0b')).toThrow();
   });
 
   it('accepts lowercase identifier channels only', () => {
-    expect(assertChannel('paceline_events')).toBe('paceline_events');
+    expect(assertChannel('y_events')).toBe('y_events');
     expect(assertChannel('_jobs2')).toBe('_jobs2');
     for (const bad of ['', 'Upper', '1abc', 'with space', 'semi;colon', 'quote"', 'x'.repeat(64), 'dash-ed']) {
       expect(() => assertChannel(bad), bad).toThrow();
@@ -104,7 +104,7 @@ describe('identifiers and channels', () => {
   });
 
   it('builds LISTEN/UNLISTEN with a quoted channel', () => {
-    expect(listenSql('paceline_events')).toBe('LISTEN "paceline_events"');
+    expect(listenSql('y_events')).toBe('LISTEN "y_events"');
     expect(unlistenSql('jobs')).toBe('UNLISTEN "jobs"');
     expect(() => listenSql('bad channel')).toThrow();
   });

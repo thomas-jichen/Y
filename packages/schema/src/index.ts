@@ -1,9 +1,9 @@
 /**
- * @paceline/schema: the zod v4 contracts every part of Paceline shares.
+ * @y/schema: the zod v4 contracts every part of Y shares.
  * The single source of truth for wire shapes (JSON, camelCase).
  *
- * Every module is also importable on its own as `@paceline/schema/<module>`
- * (e.g. `@paceline/schema/canonical`, which has no dependencies).
+ * Every module is also importable on its own as `@y/schema/<module>`
+ * (e.g. `@y/schema/canonical`, which has no dependencies).
  * See docs/CONTRACTS.md for the index of contracts and who produces/consumes each.
  *
  * @packageDocumentation

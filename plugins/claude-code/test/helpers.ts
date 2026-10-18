@@ -54,12 +54,12 @@ export async function startFakeCore(route: Route): Promise<FakeCore> {
 }
 
 export function tmpDataDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'paceline-plugin-test-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'y-plugin-test-'));
 }
 
 export function testEnv(dataDir: string, apiUrl: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   return {
-    PACELINE_DATA_DIR: dataDir,
+    Y_DATA_DIR: dataDir,
     CLAUDE_PLUGIN_OPTION_AGENT_TOKEN: 'tok_test_install_0000000000',
     CLAUDE_PLUGIN_OPTION_API_URL: apiUrl,
     HOME: dataDir,

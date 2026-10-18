@@ -1,10 +1,10 @@
 /**
- * @paceline/db: database adapters (PGlite and `pg`), RLS-scoped transactions,
+ * @y/db: database adapters (PGlite and `pg`), RLS-scoped transactions,
  * the migration runner, test helpers and the pgTAP runner.
  *
  * Typical use in apps/core:
  *
- *   const db = await createDb(process.env); // PACELINE_DB_FLAVOR=pglite|postgres|supabase
+ *   const db = await createDb(process.env); // Y_DB_FLAVOR=pglite|postgres|supabase
  *   await migrate(db);
  *   const rows = await db.asUser({ sub: userId, agent_id, via: 'install' }, (tx) =>
  *     tx.query('select * from activities where id = $1', [id]),

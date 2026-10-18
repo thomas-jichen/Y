@@ -19,12 +19,12 @@ Mocks are on by default (no backend needed): they stay on while `VITE_API_URL` i
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | Enables "Sign in with GitHub" (Supabase Auth) and Realtime. Publishable key only. |
 | `VITE_DEMO_SECRET` | Sent as `X-Demo-Secret` on dev login. It ships in the bundle, so it only gates a demo. |
 | `VITE_DEV_LOGIN` | `1` shows the dev login form even with Supabase configured, `0` hides it. Default: shown without Supabase or with a demo secret. |
-| `PACELINE_CORE_URL` | Dev server only: where the `/api` proxy points (default `http://127.0.0.1:8787`). |
+| `Y_CORE_URL` | Dev server only: where the `/api` proxy points (default `http://127.0.0.1:8787`). |
 
 Against a local core (docs/RUNNING.md):
 
 ```bash
-PACELINE_DATA_DIR=memory pnpm --filter @paceline/core start   # repo root, port 8787
+Y_DATA_DIR=memory pnpm --filter @y/core start   # repo root, port 8787
 cd apps/web && VITE_MOCKS=0 npm run dev                        # proxies /api to core
 ```
 

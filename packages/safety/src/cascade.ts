@@ -19,7 +19,7 @@ import {
   type ScreenAction,
   type ScreenCategory,
   type Verdict,
-} from '@paceline/schema';
+} from '@y/schema';
 import { JudgeError, type Judge } from './judge.js';
 import { hiddenFindings, l0Scan, labelFromFindings, requiresL2, type L0Options } from './l0.js';
 import { deepNormalize, normalizeDetailed, type NormalizedText } from './normalize.js';

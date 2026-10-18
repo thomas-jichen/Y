@@ -1,6 +1,6 @@
-/** Ed25519 signing of owner instructions (paceline-oi-v1). Key from config, else one per process (dev). */
+/** Ed25519 signing of owner instructions (y-oi-v1). Key from config, else one per process (dev). */
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
-import { ownerInstructionSigningMessage, type OwnerInstruction } from '@paceline/schema';
+import { ownerInstructionSigningMessage, type OwnerInstruction } from '@y/schema';
 import type { CoreConfig } from '../contracts.js';
 
 let cached: { key: KeyObject; kid: string; source: string | null } | null = null;

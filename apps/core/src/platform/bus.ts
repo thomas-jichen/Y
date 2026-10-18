@@ -1,9 +1,9 @@
 /**
- * PushBus: events rows (ids/counts only, I3) + NOTIFY paceline_events → in-process
+ * PushBus: events rows (ids/counts only, I3) + NOTIFY y_events → in-process
  * fan-out to agent long-poll waiters and web SSE subscribers. Cursor = events.id.
  */
-import type { Db, Tx, Unlisten } from '@paceline/db';
-import { NOTIFY_CHANNEL } from '@paceline/schema';
+import type { Db, Tx, Unlisten } from '@y/db';
+import { NOTIFY_CHANNEL } from '@y/schema';
 import type { PushBus, PushEvent } from '../contracts.js';
 
 const SYSTEM_TYPES = new Set(['kill_switch.changed', 'takedown', 'wake.requested']);

@@ -4,7 +4,7 @@
  * the capture → publish → distill → review pipeline jobs.
  */
 import { fileURLToPath } from 'node:url';
-import { migrate, type Db } from '@paceline/db';
+import { migrate, type Db } from '@y/db';
 import type { JWTVerifyGetKey } from 'jose';
 import type { CoreConfig, CoreDeps, CoreModule } from '../contracts.js';
 import { PlatformAuth } from './auth.js';
@@ -58,7 +58,7 @@ export interface CreateDepsOptions {
 }
 
 function defaultLog(level: 'debug' | 'info' | 'warn' | 'error', msg: string, data?: Record<string, unknown>): void {
-  if (level === 'debug' && !process.env.PACELINE_DEBUG) return;
+  if (level === 'debug' && !process.env.Y_DEBUG) return;
   const line = data ? `${msg} ${JSON.stringify(data)}` : msg;
   (level === 'error' ? console.error : level === 'warn' ? console.warn : console.log)(`[core] ${level} ${line}`);
 }

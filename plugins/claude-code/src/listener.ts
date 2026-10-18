@@ -26,9 +26,9 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { KillSwitches } from '@paceline/schema/common';
-import { Pointer } from '@paceline/schema/pointers';
-import { PULSE_MAX_WAIT_S, UnreadCounts } from '@paceline/schema/pulse';
+import { KillSwitches } from '@y/schema/common';
+import { Pointer } from '@y/schema/pointers';
+import { PULSE_MAX_WAIT_S, UnreadCounts } from '@y/schema/pulse';
 import { failOpen, OK, type HookCtx, type HookResult } from './context.js';
 import { Doorbell, globalWebSocket, type SupabaseChannel, type WsCtor } from './realtime.js';
 import { httpJson, logLine, pidAlive, readJson, safeSid, sleep, writeJsonAtomic } from './runtime.js';
@@ -190,7 +190,7 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
           const res = await httpJson(ctx.fetch, 'GET', `${ctx.config.apiUrl}/api/v1/pulse?${q}`, {
             token: pulseBearer(ctx),
             timeoutMs: waitS * 1000 + 10_000,
-            headers: { 'x-paceline-session': sid },
+            headers: { 'x-y-session': sid },
           });
           if (res.status >= 200 && res.status < 300 && res.body && typeof res.body === 'object') {
             ok = true;

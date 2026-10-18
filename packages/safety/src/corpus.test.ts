@@ -1,8 +1,8 @@
-import { LABEL_SEVERITY } from '@paceline/schema';
+import { LABEL_SEVERITY } from '@y/schema';
 import { describe, expect, it, vi } from 'vitest';
 
-// @paceline/redact may still be a stub: make scanSecrets throw so the local fallback is exercised.
-vi.mock('@paceline/redact', () => ({
+// @y/redact may still be a stub: make scanSecrets throw so the local fallback is exercised.
+vi.mock('@y/redact', () => ({
   scanSecrets: () => {
     throw new Error('not implemented: scanSecrets');
   },

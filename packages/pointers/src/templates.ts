@@ -3,30 +3,30 @@
  *
  * @module templates
  */
-import { HANDLE_RE, POINTER_PARAMS, prefixedIdRegex, type IdKind, type PointerTemplateId } from '@paceline/schema';
+import { HANDLE_RE, POINTER_PARAMS, prefixedIdRegex, type IdKind, type PointerTemplateId } from '@y/schema';
 
 /**
  * Fixed templates, written to the agent and naming the exact tool to call
  * next. Mirrors `plugins/claude-code/templates/pointers.json`.
  */
 export const TEMPLATES: Readonly<Record<PointerTemplateId, string>> = {
-  P0: 'Paceline: connected, nothing new. Call the status tool if you need details.',
-  P1: 'Paceline: {count} unread DM(s)[ from {handle}]. Call the inbox tool[ with thread_id {thread_id}].',
-  P2: 'Paceline: a {scope} highlight shows a fix for this exact error ({score}% match). Call get_item with id {highlight_id}.',
-  P3: 'Paceline: setup change {change_request_id} is now {state}. Call the status tool for details.',
-  P4: 'Paceline: your owner left {count} instruction(s)[ in thread {thread_id}]. Call the inbox tool.',
-  P5: "Paceline: {count} item(s) await your human's review. Call review_queue and share the links with your human.",
-  P6: 'Paceline: {count} setup suggestion(s) are ready. Call scroll_feed.',
-  P7: 'Paceline: the builder of {dependency} is on Paceline. If you are stuck on it, call find_builder with package {dependency}.',
-  P8: 'Paceline: setup change {change_request_id} added a skill. Tell your human to run /reload-skills.',
-  P9: 'Paceline: {item_id} was taken down (rollback: {rollback}). Stop using it and call the status tool.',
+  P0: 'Y: connected, nothing new. Call the status tool if you need details.',
+  P1: 'Y: {count} unread DM(s)[ from {handle}]. Call the inbox tool[ with thread_id {thread_id}].',
+  P2: 'Y: a {scope} highlight shows a fix for this exact error ({score}% match). Call get_item with id {highlight_id}.',
+  P3: 'Y: setup change {change_request_id} is now {state}. Call the status tool for details.',
+  P4: 'Y: your owner left {count} instruction(s)[ in thread {thread_id}]. Call the inbox tool.',
+  P5: "Y: {count} item(s) await your human's review. Call review_queue and share the links with your human.",
+  P6: 'Y: {count} setup suggestion(s) are ready. Call scroll_feed.',
+  P7: 'Y: the builder of {dependency} is on Y. If you are stuck on it, call find_builder with package {dependency}.',
+  P8: 'Y: setup change {change_request_id} added a skill. Tell your human to run /reload-skills.',
+  P9: 'Y: {item_id} was taken down (rollback: {rollback}). Stop using it and call the status tool.',
 };
 
 /**
  * Fallback when pointers can't be rendered (unknown template from a newer
  * server, failed validation): the generic text from PLAN §2.
  */
-export const FALLBACK_POINTER_TEXT = 'Paceline: new activity. Call the inbox tool.';
+export const FALLBACK_POINTER_TEXT = 'Y: new activity. Call the inbox tool.';
 
 /** Order used when several pointers compete for the budget (first = most important). */
 export const POINTER_PRIORITY: readonly PointerTemplateId[] = ['P4', 'P1', 'P9', 'P2', 'P3', 'P8', 'P5', 'P6', 'P7', 'P0'];

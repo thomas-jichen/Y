@@ -2,7 +2,7 @@
  * Worker jobs (db.asService only here): finalize → screen → publish, distill_heuristic →
  * screen (highlight) → review item, review.draft (approval publishes), embed, close_idle.
  */
-import type { Tx } from '@paceline/db';
+import type { Tx } from '@y/db';
 import {
   ActivityStats,
   HighlightDraft,
@@ -12,11 +12,11 @@ import {
   type ErrorEpisode,
   type Lap,
   type LocalDistill,
-} from '@paceline/schema';
-import { isWarmup, sizeBucketFor, templatedTitle } from '@paceline/domain';
-import { redact } from '@paceline/redact';
-import { actionFor, l0Scan } from '@paceline/safety';
-import { normalizeErrorSignature } from '@paceline/capture';
+} from '@y/schema';
+import { isWarmup, sizeBucketFor, templatedTitle } from '@y/domain';
+import { redact } from '@y/redact';
+import { actionFor, l0Scan } from '@y/safety';
+import { normalizeErrorSignature } from '@y/capture';
 import type { CoreDeps, JobHandler } from '../contracts.js';
 import { heuristicDrafts } from './distill.js';
 import { openDigest, toVectorLiteral } from './util.js';

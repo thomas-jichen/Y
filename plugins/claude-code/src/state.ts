@@ -4,12 +4,12 @@
  * by field so one hostile entry can't take the whole response down, and
  * nothing but rendered templates ever reaches a push path.
  */
-import { BriefPolicy, HumanNotice, TokenState, PulseToken } from '@paceline/schema/brief';
-import { KillSwitches } from '@paceline/schema/common';
-import { RealtimeChannel } from '@paceline/schema/hosting';
-import { Pointer } from '@paceline/schema/pointers';
-import { UnreadCounts } from '@paceline/schema/pulse';
-import { FALLBACK_POINTER_TEXT, isRenderedPointer, renderPointer } from '@paceline/pointers';
+import { BriefPolicy, HumanNotice, TokenState, PulseToken } from '@y/schema/brief';
+import { KillSwitches } from '@y/schema/common';
+import { RealtimeChannel } from '@y/schema/hosting';
+import { Pointer } from '@y/schema/pointers';
+import { UnreadCounts } from '@y/schema/pulse';
+import { FALLBACK_POINTER_TEXT, isRenderedPointer, renderPointer } from '@y/pointers';
 import { readJson, writeJsonAtomic, type Paths } from './runtime.js';
 
 /** The brief as cached in `state/brief.json` (only validated fields). */

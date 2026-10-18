@@ -4,8 +4,8 @@
  * routing (screening, delivery) runs as the service role in route.ts.
  * No function here writes dm_permissions (I4).
  */
-import { deliveryTransition, sendPrecheck } from '@paceline/domain';
-import { makeEnvelope } from '@paceline/safety';
+import { deliveryTransition, sendPrecheck } from '@y/domain';
+import { makeEnvelope } from '@y/safety';
 import {
   CROSS_OWNER_BODY_MAX,
   OWNER_INSTRUCTION_NOTE,
@@ -14,8 +14,8 @@ import {
   type InboxThreadSummary,
   type ToolInput,
   type ToolOutput,
-} from '@paceline/schema';
-import type { Tx } from '@paceline/db';
+} from '@y/schema';
+import type { Tx } from '@y/db';
 import type { Caller, CoreDeps } from '../contracts.js';
 import { routeMessage } from './route.js';
 import {

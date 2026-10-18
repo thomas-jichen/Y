@@ -7,9 +7,9 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from 'jose';
-import { createTestDb, type PgliteDb } from '@paceline/db';
-import { AgentBrief, ConnectToken, JobsTickResponse, Me } from '@paceline/schema';
-import { fx } from '@paceline/schema/fixtures';
+import { createTestDb, type PgliteDb } from '@y/db';
+import { AgentBrief, ConnectToken, JobsTickResponse, Me } from '@y/schema';
+import { fx } from '@y/schema/fixtures';
 import type { Hono } from 'hono';
 import { createApp, allJobHandlers } from '../app.js';
 import type { CoreConfig, CoreDeps } from '../contracts.js';
@@ -21,7 +21,7 @@ import { SEND_BUCKET, takeToken } from './rate-limit.js';
 import { defaultSeedDir, fit, loadSeedHighlights, seedUlid, shapeSeed } from './seed.js';
 
 const SUPA = 'https://proj.supabase.test';
-const WEB = 'https://app.paceline.test';
+const WEB = 'https://app.y.test';
 const CRON = 'cron-secret-0123456789abcdef';
 const DEMO = 'demo-secret-0123456789abcdef';
 const quiet: CoreDeps['log'] = () => undefined;
@@ -60,7 +60,7 @@ async function req(fetcher: (r: Request) => Promise<Response> | Response, method
 }
 
 function baseEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return { NODE_ENV: 'test', PACELINE_INTERNAL_SECRET: 'internal-secret', PACELINE_HMAC_KEY: 'hmac', PUBLIC_URL: 'http://core.test', ...extra };
+  return { NODE_ENV: 'test', Y_INTERNAL_SECRET: 'internal-secret', Y_HMAC_KEY: 'hmac', PUBLIC_URL: 'http://core.test', ...extra };
 }
 
 async function appFor(config: CoreConfig, extra: Parameters<typeof createDeps>[3] = {}): Promise<{ app: Hono; deps: CoreDeps }> {
@@ -78,23 +78,23 @@ async function devUser(app: Hono, login: string, headers: Record<string, string>
 }
 
 describe('loadConfig (production + serverless)', () => {
-  it('selects serverless on VERCEL or PACELINE_MODE and gates dev auth in production', () => {
+  it('selects serverless on VERCEL or Y_MODE and gates dev auth in production', () => {
     expect(loadConfig(baseEnv({ VERCEL: '1' })).mode).toBe('serverless');
-    expect(loadConfig(baseEnv({ PACELINE_MODE: 'serverless' })).mode).toBe('serverless');
+    expect(loadConfig(baseEnv({ Y_MODE: 'serverless' })).mode).toBe('serverless');
     expect(loadConfig(baseEnv()).mode).toBe('server');
-    const prod = { NODE_ENV: 'production', PACELINE_INTERNAL_SECRET: 'x'.repeat(32), PACELINE_HMAC_KEY: 'y'.repeat(32), SUPABASE_URL: SUPA };
+    const prod = { NODE_ENV: 'production', Y_INTERNAL_SECRET: 'x'.repeat(32), Y_HMAC_KEY: 'y'.repeat(32), SUPABASE_URL: SUPA };
     expect(loadConfig(prod).devAuth).toBe(false);
-    expect(loadConfig({ ...prod, PACELINE_DEMO_SECRET: DEMO }).devAuth).toBe(true);
-    expect(() => loadConfig({ ...prod, PACELINE_DEV_AUTH: '1' })).toThrow(/DEMO_SECRET/);
-    expect(() => loadConfig({ ...prod, VERCEL: '1' })).toThrow(/PACELINE_CRON_SECRET/);
-    expect(loadConfig({ ...prod, PACELINE_WEB_ORIGIN: `${WEB}, http://localhost:5173` }).webOrigins).toEqual([WEB, 'http://localhost:5173']);
-    expect(() => loadConfig(baseEnv({ PACELINE_EMBEDDINGS: 'gte' }))).toThrow(/PACELINE_EMBED_SECRET/);
+    expect(loadConfig({ ...prod, Y_DEMO_SECRET: DEMO }).devAuth).toBe(true);
+    expect(() => loadConfig({ ...prod, Y_DEV_AUTH: '1' })).toThrow(/DEMO_SECRET/);
+    expect(() => loadConfig({ ...prod, VERCEL: '1' })).toThrow(/Y_CRON_SECRET/);
+    expect(loadConfig({ ...prod, Y_WEB_ORIGIN: `${WEB}, http://localhost:5173` }).webOrigins).toEqual([WEB, 'http://localhost:5173']);
+    expect(() => loadConfig(baseEnv({ Y_EMBEDDINGS: 'gte' }))).toThrow(/Y_EMBED_SECRET/);
   });
 });
 
 describe('serverless handler', () => {
   it('serves the app, drains jobs after ingest, and long-polls by polling', async () => {
-    const config = loadConfig(baseEnv({ PACELINE_MODE: 'serverless', PACELINE_CRON_SECRET: CRON }));
+    const config = loadConfig(baseEnv({ Y_MODE: 'serverless', Y_CRON_SECRET: CRON }));
     const handler = createServerlessHandler({ db, config, waitUntil: null, log: quiet, serverlessPollMs: 50 });
     const { deps, app } = await handler.ready();
     expect(deps.bus).toBeInstanceOf(ServerlessPushBus);
@@ -124,7 +124,7 @@ describe('serverless handler', () => {
   }, 60_000);
 
   it('uses waitUntil when available', async () => {
-    const config = loadConfig(baseEnv({ PACELINE_MODE: 'serverless' }));
+    const config = loadConfig(baseEnv({ Y_MODE: 'serverless' }));
     const pending: Promise<unknown>[] = [];
     const handler = createServerlessHandler({ db, config, waitUntil: (p) => pending.push(p), log: quiet });
     const { app } = await handler.ready();
@@ -138,7 +138,7 @@ describe('serverless handler', () => {
 
 describe('POST /internal/jobs/tick', () => {
   it('needs the cron secret and reports what it drained', async () => {
-    const { app } = await appFor(loadConfig(baseEnv({ PACELINE_MODE: 'serverless', PACELINE_CRON_SECRET: CRON })));
+    const { app } = await appFor(loadConfig(baseEnv({ Y_MODE: 'serverless', Y_CRON_SECRET: CRON })));
     const f = (r: Request) => app.fetch(r);
     expect((await req(f, 'POST', '/internal/jobs/tick', { body: { source: 'pg_cron' } })).status).toBe(401);
     expect((await req(f, 'POST', '/internal/jobs/tick', { token: 'wrong-secret-0123456789', body: { source: 'pg_cron' } })).status).toBe(401);
@@ -163,7 +163,7 @@ describe('Supabase access tokens', () => {
     const { publicKey, privateKey } = await generateKeyPair('ES256');
     const jwk = { ...(await exportJWK(publicKey)), kid: 'k1', alg: 'ES256' };
     const jwks = createLocalJWKSet({ keys: [jwk] });
-    const config = loadConfig(baseEnv({ SUPABASE_URL: SUPA, SUPABASE_JWT_SECRET: HS, PACELINE_WEB_ORIGIN: WEB }));
+    const config = loadConfig(baseEnv({ SUPABASE_URL: SUPA, SUPABASE_JWT_SECRET: HS, Y_WEB_ORIGIN: WEB }));
     expect(config.devAuth).toBe(false);
     ({ app } = await appFor(config, { jwks }));
     sign = async (claims, opts = {}) => {
@@ -229,7 +229,7 @@ describe('Supabase access tokens', () => {
     expect((await req(f, 'PUT', ri, { token: fresh, body: { agentId: randomUUID(), on: false } })).status).toBe(404);
   });
 
-  it('CORS for PACELINE_WEB_ORIGIN and the Origin check on mutating web routes', async () => {
+  it('CORS for Y_WEB_ORIGIN and the Origin check on mutating web routes', async () => {
     const pre = await f(new Request('http://core.test/api/v1/me', { method: 'OPTIONS', headers: { origin: WEB, 'access-control-request-method': 'GET', 'access-control-request-headers': 'authorization' } }));
     expect(pre.headers.get('access-control-allow-origin')).toBe(WEB);
     expect(pre.headers.get('access-control-allow-credentials')).toBeNull();
@@ -247,8 +247,8 @@ describe('Supabase access tokens', () => {
 });
 
 describe('demo login gate', () => {
-  it('requires X-Demo-Secret when PACELINE_DEMO_SECRET is set', async () => {
-    const { app } = await appFor(loadConfig(baseEnv({ PACELINE_DEMO_SECRET: DEMO, SUPABASE_URL: SUPA })));
+  it('requires X-Demo-Secret when Y_DEMO_SECRET is set', async () => {
+    const { app } = await appFor(loadConfig(baseEnv({ Y_DEMO_SECRET: DEMO, SUPABASE_URL: SUPA })));
     const f = (r: Request) => app.fetch(r);
     expect((await req(f, 'POST', '/api/v1/dev/login', { body: { githubLogin: 'demo-a' } })).status).toBe(401);
     expect((await req(f, 'POST', '/api/v1/dev/login', { body: { githubLogin: 'demo-a' }, headers: { 'x-demo-secret': 'wrong' } })).status).toBe(401);
@@ -260,10 +260,10 @@ describe('demo login gate', () => {
 
 describe('connect install commands', () => {
   it('gives a runnable command only for the token harness, with the configured URLs', () => {
-    const cfg = loadConfig(baseEnv({ PACELINE_MCP_URL: 'https://mcp.paceline.test/mcp' }));
+    const cfg = loadConfig(baseEnv({ Y_MCP_URL: 'https://mcp.y.test/mcp' }));
     const cc = installCommands(cfg, 'claude_code', 'pcl_agt_x');
     expect(cc.claudeCode).toBe(
-      'claude plugin install paceline --marketplace thomas-jichen/Y --config agent_token=pcl_agt_x --config api_url=http://core.test --config mcp_url=https://mcp.paceline.test/mcp',
+      'claude plugin install y --marketplace thomas-jichen/Y --config agent_token=pcl_agt_x --config api_url=http://core.test --config mcp_url=https://mcp.y.test/mcp',
     );
     expect(cc.codex).toMatch(/^# This token is for Claude Code/);
     const cx = installCommands(cfg, 'codex', 'pcl_agt_y');
@@ -275,7 +275,7 @@ describe('connect install commands', () => {
 describe('realtime channel descriptors', () => {
   it('Me.realtime and AgentBrief.realtime: supabase with a publishable key, else local', async () => {
     const PK = 'sb_publishable_0123456789abcdefABCDEF';
-    const { app } = await appFor(loadConfig(baseEnv({ SUPABASE_URL: SUPA, SUPABASE_PUBLISHABLE_KEY: PK, PACELINE_DEMO_SECRET: DEMO })));
+    const { app } = await appFor(loadConfig(baseEnv({ SUPABASE_URL: SUPA, SUPABASE_PUBLISHABLE_KEY: PK, Y_DEMO_SECRET: DEMO })));
     const f = (r: Request) => app.fetch(r);
     const u = await devUser(app, 'rt-alice', { 'x-demo-secret': DEMO });
     const me = Me.parse((await req(f, 'GET', '/api/v1/me', { token: u.web })).json);
@@ -348,11 +348,11 @@ describe('stream tokens, rate limits, pulse revoke', () => {
     expect(brief.status).toBe(200);
     const pulse = brief.json!.pulseToken.token as string;
     const path = '/api/v1/pulse?wait=0';
-    expect((await req(f, 'GET', path, { token: pulse, headers: { 'x-paceline-session': 'pulse-s1' } })).status).toBe(200);
+    expect((await req(f, 'GET', path, { token: pulse, headers: { 'x-y-session': 'pulse-s1' } })).status).toBe(200);
     await db.asService((tx) =>
       tx.query(`update public.installs set revoked_at = now() where agent_id = (select id from public.agents where handle = 'limits-alice-claude')`),
     );
-    const r = await req(f, 'GET', path, { token: pulse, headers: { 'x-paceline-session': 'pulse-s1' } });
+    const r = await req(f, 'GET', path, { token: pulse, headers: { 'x-y-session': 'pulse-s1' } });
     expect(r.status).toBe(401);
     expect(r.json!.error.code).toBe('UNAUTHORIZED');
     void deps;
@@ -366,11 +366,11 @@ describe('Realtime REST fan-out (serverless)', () => {
       calls.push({ url: String(url), body: JSON.parse(String(init?.body)), headers: init?.headers as Record<string, string> });
       return new Response('{}', { status: 202 });
     }) as typeof fetch;
-    const env = { PACELINE_MODE: 'serverless', SUPABASE_URL: SUPA, SUPABASE_SERVICE_ROLE_KEY: 'service-role-key-for-tests', PACELINE_DEV_AUTH: '1' };
+    const env = { Y_MODE: 'serverless', SUPABASE_URL: SUPA, SUPABASE_SERVICE_ROLE_KEY: 'service-role-key-for-tests', Y_DEV_AUTH: '1' };
     // PGlite's shim defines realtime.send, so 'auto' leaves broadcasting to the DB trigger; force the REST path.
     const auto = await appFor(loadConfig(baseEnv(env)), { fetch: (async () => new Response('{}')) as unknown as typeof fetch });
     expect((auto.deps.bus as ServerlessPushBus).broadcasting).toBe(false);
-    const config = loadConfig(baseEnv({ ...env, PACELINE_REALTIME_REST: 'on' }));
+    const config = loadConfig(baseEnv({ ...env, Y_REALTIME_REST: 'on' }));
     const { deps, app } = await appFor(config, { fetch: fakeFetch });
     const bus = deps.bus as ServerlessPushBus;
     expect(bus.broadcasting).toBe(true);
@@ -417,7 +417,7 @@ describe('seed loader', () => {
       tx.query<{ n: number; emb: number }>(
         `select count(*)::int as n, count(embedding)::int as emb from public.highlights h
            join public.agents a on a.id = h.author_agent_id
-          where a.handle = 'paceline' and h.status = 'active' and h.visibility = 'public' and h.screen_action in ('allow', 'label')`,
+          where a.handle = 'yhq' and h.status = 'active' and h.visibility = 'public' and h.screen_action in ('allow', 'label')`,
       ),
     );
     expect(rows.rows[0]).toEqual({ n: first.inserted, emb: first.inserted });

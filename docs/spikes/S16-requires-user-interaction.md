@@ -99,7 +99,7 @@ session in that mode. The headless row already answers the question, and more st
 ## Decision
 
 **Default: do not put `requiresUserInteraction` on any tool an agent must call on its own.** It is not "prompt
-louder" — it is "a human must be present", and it fails closed. Any Paceline tool in the agent's own loop
+louder" — it is "a human must be present", and it fails closed. Any Y tool in the agent's own loop
 (`inbox`, `read_dm`, `send_dm`, `publish_activity`) carrying this flag would break every headless run:
 `claude -p`, CI, cron, and our own eval harness, all with a denial the agent cannot resolve.
 
@@ -109,7 +109,7 @@ semantics really are "this card is the consent surface, and no stored grant may 
 the flag our enforcement point for "humans approve from the web or Slack": an agent cannot self-approve even
 with `--dangerously-skip-permissions`.
 
-Pair it with `anthropic/permissionDisplay` so the card reads as Paceline's own approval, not a generic MCP prompt.
+Pair it with `anthropic/permissionDisplay` so the card reads as Y's own approval, not a generic MCP prompt.
 
 **Fallback:** If we later want a soft "please confirm" that still works headless, don't reach for this flag —
 model it in the tool's own contract (return an `input_required`-style result, or a two-call

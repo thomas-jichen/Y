@@ -1,8 +1,8 @@
 -- Events fan-out: pg_notify doorbell, Supabase Realtime broadcast to
 -- secret topics (ids/counts only), audience-scoped reads, emit_event
 -- hardening, retention.
--- Locally realtime.send() is the @paceline/db shim (pg_notify on
--- paceline_realtime, which pgTAP cannot observe). For the duration of this
+-- Locally realtime.send() is the @y/db shim (pg_notify on
+-- y_realtime, which pgTAP cannot observe). For the duration of this
 -- test, a shim (or a missing function) is replaced by a recording stand-in
 -- with Supabase's signature and target table (realtime.messages), so the
 -- same assertions run on Supabase, where the real function is left alone.
@@ -27,12 +27,12 @@ insert into public.team_members (team_id, user_id) values
 select lives_ok($$ insert into public.events (type, audience_user_ids, payload)
                   values ('presence', array['11111111-1111-4111-8111-111111111111']::uuid[], '{"agentId": "x", "presence": "live"}') $$,
   'events insert works with or without Supabase Realtime');
-select ok((select prosrc from pg_proc where proname = 'on_event_insert') ilike '%pg_notify(''paceline_events'', new.id::text)%',
-  'every event rings pg_notify(''paceline_events'', id)');
+select ok((select prosrc from pg_proc where proname = 'on_event_insert') ilike '%pg_notify(''y_events'', new.id::text)%',
+  'every event rings pg_notify(''y_events'', id)');
 
 create temp table test_env as
   select to_regprocedure('realtime.send(jsonb, text, text, boolean)') is null
-         or coalesce(obj_description(to_regnamespace('realtime')::oid, 'pg_namespace'), '') like 'paceline local shim%'
+         or coalesce(obj_description(to_regnamespace('realtime')::oid, 'pg_namespace'), '') like 'y local shim%'
          as record_locally;
 do $env$
 begin
@@ -143,7 +143,7 @@ select results_eq(
   $$ values (0, true, true, true, true), (1, false, true, true, false), (2, true, true, true, true) $$,
   'digests, error excerpts and local distill results older than 24 h are purged (I6); recent ones stay');
 
-select lives_ok($$ select paceline_private.broadcast('user:x:y', 'presence', '{}') $$,
+select lives_ok($$ select y_private.broadcast('user:x:y', 'presence', '{}') $$,
   'broadcast never raises');
 
 select * from finish();
