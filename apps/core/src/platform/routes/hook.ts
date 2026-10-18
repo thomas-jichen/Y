@@ -1,5 +1,6 @@
 /** Hook REST for plugins: POST /ingest, GET /agent/brief, POST /hook/match. Install-token callers. */
 import type { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type { Tx } from '@y/db';
 import {
   AgentBrief,
@@ -22,10 +23,12 @@ import { authenticate } from '../http.js';
 import { refreshAgentPresence } from '../presence.js';
 import { realtimeChannelFor } from '../realtime-channel.js';
 import type { SealedChunk } from '../pipeline.js';
-import { INGEST_BUCKET, takeToken } from '../rate-limit.js';
+import { takeIngestToken } from '../rate-limit.js';
 import { fail, parseOr, readJson, sealDigest, segmentUlid } from '../util.js';
 
 export const MIN_PLUGIN_VERSION = '0.1.0';
+/** Request body cap for POST /api/v1/ingest (Vercel's own limit is 4.5 MB). */
+export const INGEST_MAX_BODY_BYTES = 4 * 1024 * 1024;
 /** P2 push threshold (packages/retrieval THRESHOLDS.push). */
 export const PUSH_MATCH_THRESHOLD = 0.6;
 /** Segment close reasons that also end the harness session (the rest only close a segment). */
@@ -56,6 +59,8 @@ const clamp999 = (n: number) => Math.max(1, Math.min(999, n));
 
 export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
   /* --------------------------------------------------------------- ingest */
+  // A chunk is at most ~100k digest chars plus a setup snapshot; refuse anything far larger before parsing.
+  app.use('/api/v1/ingest', bodyLimit({ maxSize: INGEST_MAX_BODY_BYTES, onError: (c) => fail(c, 'VALIDATION', 'ingest chunk is too large') }));
   app.post('/api/v1/ingest', async (c) => {
     const caller = await authenticate(c, deps, 'agent');
     if (caller instanceof Response) return caller;
@@ -64,10 +69,10 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
     const ch = parsed.data;
     if ((await killSwitches(deps)).ingest) return fail(c, 'RATE_LIMITED', 'ingest is paused (kill switch)', { retryAfterS: 300 });
     const agentId = caller.agentId!;
-    const rl = await deps.db.asUser(caller.claims, (tx) => takeToken(tx, 'ingest', [agentId, ch.sessionId], INGEST_BUCKET));
+    const rl = await deps.db.asUser(caller.claims, (tx) => takeIngestToken(tx, agentId, ch.sessionId));
     if (!rl.allowed) {
       c.header('retry-after', String(rl.retryAfterS));
-      return fail(c, 'RATE_LIMITED', 'too many chunks for this session', { retryAfterS: rl.retryAfterS });
+      return fail(c, 'RATE_LIMITED', rl.message, { retryAfterS: rl.retryAfterS });
     }
 
     const segment = await resolveSegment(deps, agentId, ch);

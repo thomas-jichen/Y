@@ -5,6 +5,9 @@
  * and produces at most 2 `fix` highlight drafts:
  *   problem = normalized error signature, steps = successful TOOL lines inside the
  *   window, pitfalls = TOOL lines that were followed by an ERROR, verification = the OK line.
+ * Steps and pitfalls that carry a URL, host name, IP, e-mail, absolute or home path, or a
+ * credential-looking file or variable name are left out (PLAN §7: no paths or URLs), and such
+ * error text or OK output is replaced by templated text.
  */
 import { HighlightDraft, type ErrorEpisode, type HighlightDraft as HighlightDraftT } from '@y/schema';
 
@@ -30,6 +33,21 @@ function parseLines(digest: string): Line[] {
 function clip(s: string, n: number): string {
   const one = s.normalize('NFKC').replace(/\s+/g, ' ').trim();
   return one.length <= n ? one : `${one.slice(0, n - 3).trimEnd()}...`;
+}
+
+const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/\S/i;
+/** Absolute (POSIX or Windows) or home-relative paths; package specifiers like `@types/node` or `vitest/config` are not. */
+const PATH_RE = /(?:^|[\s'"`=(:,])(?:~[\w.-]*|\$HOME|\$\{HOME\})?\/[^\s/'"`]+|(?:^|[\s'"`=(:,])~[\w.-]*(?:[\s'"`]|$)|\b[A-Za-z]:\\[^\s]|%USERPROFILE%/;
+const HOST_RE =
+  /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|dev|app|ai|co|cloud|internal|local|localhost|corp|lan|intranet|home|gov|edu|us|uk|de|eu|info|biz|tech|xyz)\b/i;
+const IP_RE = /(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])/;
+const EMAIL_RE = /[\w.+-]+@[a-z0-9-]*[a-z][a-z0-9-]*\.[a-z]{2,}/i;
+const SECRET_FILE_RE = /(?:^|[^\w.])\.env\b|\bid_(?:rsa|ed25519|ecdsa|dsa)\b|\.(?:ssh|aws|gnupg|kube|docker)\b|\.(?:npmrc|netrc|pgpass|git-credentials)\b|\bcredentials\b/i;
+const SECRET_VAR_RE = /\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_KEY|DATABASE_URL|DSN)[A-Z0-9_]*\b/;
+
+/** True when a line would leak where or what (a URL, host, IP, e-mail, path or credential name) if published. */
+export function revealsEnvironment(text: string): boolean {
+  return [URL_RE, PATH_RE, HOST_RE, IP_RE, EMAIL_RE, SECRET_FILE_RE, SECRET_VAR_RE].some((re) => re.test(text));
 }
 
 export interface HeuristicInput {
@@ -62,17 +80,22 @@ export function heuristicDrafts(input: HeuristicInput): HeuristicDraft[] {
       while (s > 0 && lines[s - 1]!.kind === 'TOOL') s--;
       return s;
     })();
+    // Raw error text that names a host, path or credential falls back to the (normalized) signature.
+    const failedBecause = (text: string) =>
+      text && !revealsEnvironment(text) ? text : sig && !revealsEnvironment(sig) ? sig : 'Failed with the same error';
     for (let j = windowStart; j < okIdx; j++) {
       const l = lines[j]!;
       if (l.kind !== 'TOOL' || !l.text) continue;
+      // A command that names a host, path, URL or credential is never published.
+      if (revealsEnvironment(l.text)) continue;
       const next = lines.slice(j + 1).find((x) => x.kind !== 'OTHER');
-      if (next?.kind === 'ERROR') pitfalls.push({ tried: clip(`${l.tool}: ${l.text}`, 200), whyFailed: clip(next.text || sig, 300) });
+      if (next?.kind === 'ERROR') pitfalls.push({ tried: clip(`${l.tool}: ${l.text}`, 200), whyFailed: clip(failedBecause(next.text), 300) });
       else steps.push(clip(`${l.tool}: ${l.text}`, 300));
     }
     const okLine = lines[okIdx]!;
     if (steps.length === 0) {
       // The fix is the last TOOL line before OK when no clean step was found.
-      const last = [...lines.slice(i + 1, okIdx)].reverse().find((l) => l.kind === 'TOOL' && l.text);
+      const last = [...lines.slice(i + 1, okIdx)].reverse().find((l) => l.kind === 'TOOL' && l.text && !revealsEnvironment(l.text));
       if (last) steps.push(clip(`${last.tool}: ${last.text}`, 300));
     }
     if (steps.length === 0 || pitfalls.length === 0) continue;
@@ -88,7 +111,10 @@ export function heuristicDrafts(input: HeuristicInput): HeuristicDraft[] {
         problem: clip(sig, 600),
         steps: steps.slice(0, 8),
         pitfalls: pitfalls.slice(0, 5),
-        verification: clip(`${okLine.tool}: ${okLine.text}`, 300),
+        verification: clip(
+          revealsEnvironment(okLine.text) ? `Verified by a passing ${okLine.tool} run` : `${okLine.tool}: ${okLine.text}`,
+          300,
+        ),
         appliesWhen: clip(`The error signature matches: ${sig}`, 300),
         notAppliesWhen: '',
       },

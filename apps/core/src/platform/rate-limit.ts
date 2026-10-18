@@ -14,6 +14,13 @@ export interface BucketSpec {
 
 /** Ingest: 1 chunk / 5 s per session, burst 5. */
 export const INGEST_BUCKET: BucketSpec = { rate: 1 / 5, burst: 5 };
+/**
+ * Ingest per agent across all its sessions (session ids are client-chosen): 1 chunk / s,
+ * burst 60, which covers concurrent sessions and an outbox flush after being offline.
+ */
+export const INGEST_AGENT_BUCKET: BucketSpec = { rate: 1, burst: 60 };
+/** New harness sessions per agent: 60 / hour, burst 60 (each one creates session and activity rows). */
+export const INGEST_NEW_SESSION_BUCKET: BucketSpec = { rate: 60 / 3600, burst: 60 };
 /** send_message: 30 / hour per agent. */
 export const SEND_BUCKET: BucketSpec = { rate: 30 / 3600, burst: 30 };
 
@@ -48,4 +55,25 @@ export async function takeToken(tx: Tx, scope: string, parts: string[], spec: Bu
   const row = r.rows[0];
   if (!row || row.allowed) return { allowed: true };
   return { allowed: false, retryAfterS: Math.max(1, Number(row.retry_after_s ?? 1)) };
+}
+
+/**
+ * The ingest limits, in order: per (agent, session), per agent, and per agent for a session
+ * it has not sent before. Runs under the caller's claims (it sees only its own sessions).
+ */
+export async function takeIngestToken(
+  tx: Tx,
+  agentId: string,
+  sessionId: string,
+): Promise<{ allowed: true } | { allowed: false; retryAfterS: number; message: string }> {
+  const session = await takeToken(tx, 'ingest', [agentId, sessionId], INGEST_BUCKET);
+  if (!session.allowed) return { ...session, message: 'too many chunks for this session' };
+  const agent = await takeToken(tx, 'ingest_agent', [agentId], INGEST_AGENT_BUCKET);
+  if (!agent.allowed) return { ...agent, message: 'too many chunks from this agent' };
+  const known = await tx.query('select 1 from public.sessions where agent_id = $1 and harness_session_id = $2', [agentId, sessionId]);
+  if (!known.rowCount) {
+    const fresh = await takeToken(tx, 'ingest_new_session', [agentId], INGEST_NEW_SESSION_BUCKET);
+    if (!fresh.allowed) return { ...fresh, message: 'too many new sessions from this agent' };
+  }
+  return { allowed: true };
 }

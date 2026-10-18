@@ -1,16 +1,21 @@
 /**
  * Worker jobs (db.asService only here): finalize → screen → publish, distill_heuristic →
  * screen (highlight) → review item, review.draft (approval publishes), embed, close_idle,
- * presence_sweep (presence.ts).
+ * presence_sweep (presence.ts), purge_expired (server mode).
+ *
+ * Each job enqueues its follow-up inside the transaction that commits its state change, so a
+ * crash between the two can never strand a row whose idempotency guard then skips the retry.
  */
 import type { Tx } from '@y/db';
 import {
   ActivityStats,
   HighlightDraft,
+  INVISIBLE_CHARS_SOURCE,
   emptyStats,
   mergeStats,
   totalToolCalls,
   type ErrorEpisode,
+  type Label,
   type Lap,
   type LocalDistill,
 } from '@y/schema';
@@ -36,6 +41,17 @@ export interface SealedChunk {
 
 const IDLE_MINUTES = 30;
 const CLOSE_IDLE_EVERY_MS = 5 * 60_000;
+/** Retention (api.purge_expired) runs hourly from the worker in server mode (pg_cron does it on Supabase). */
+const PURGE_EVERY_MS = 60 * 60_000;
+/**
+ * The close_idle digest backstop purges at 23 h, so with the 5-min tick (and a busy queue)
+ * a digest never outlives the 24 h bound (I6).
+ */
+const DIGEST_BACKSTOP = '23 hours';
+/** Neutral title used when the owner turns the title off on approval. */
+const NEUTRAL_HIGHLIGHT_TITLE = 'Highlight from a captured session';
+const HIGHLIGHT_TITLE_MAX = 90;
+const HIGHLIGHT_SUMMARY_MAX = 400;
 
 function str(p: Record<string, unknown>, k: string): string {
   const v = p[k];
@@ -49,9 +65,68 @@ function pass2(text: string): string {
   return r.dropped ? '' : r.text;
 }
 
-function screenAction(text: string, contentClass: 'card' | 'highlight'): { label: string; action: string } {
-  const l0 = l0Scan(text, contentClass);
-  return { label: l0.label, action: actionFor(contentClass, l0.label).action };
+/**
+ * Clip a redacted string to the DB limit. Redaction markers can be longer than what they
+ * replace, so this runs after pass2; a marker cut in half is dropped entirely.
+ */
+export function fitRedacted(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let cut = text.slice(0, max);
+  const open = cut.lastIndexOf('<');
+  if (open >= 0 && cut.indexOf('>', open) < 0 && max - open <= 64) cut = cut.slice(0, open);
+  return cut.trimEnd();
+}
+
+const INVISIBLE_G = new RegExp(INVISIBLE_CHARS_SOURCE, 'g');
+/** Unicode tag characters (ASCII smuggling), U+E0000–U+E007F: decoded to ASCII for scanning. */
+const TAG_CHARS_G = /[\u{E0000}-\u{E007F}]/gu;
+
+/**
+ * L0 step 0 (PLAN §10): NFKC, invisible/bidi characters stripped, tag characters decoded.
+ * Envelopes NFKC-normalize what agents later read, so the screen must see the same text.
+ */
+export function normalizeForScreen(text: string): string {
+  return text
+    .normalize('NFKC')
+    .replace(TAG_CHARS_G, (ch) => {
+      const cp = (ch.codePointAt(0) ?? 0) - 0xe0000;
+      return cp >= 0x20 && cp < 0x7f ? String.fromCharCode(cp) : '';
+    })
+    .replace(INVISIBLE_G, '');
+}
+
+const LABEL_RANK: Record<string, number> = { clean: 0, warn: 1, sensitive: 2, suspicious: 3, malicious: 4 };
+
+/**
+ * L0 over every text, raw and normalized; the worst label wins (normalization only ever adds
+ * findings, and the raw scan keeps l0's own leftover-invisible-character signal).
+ */
+function screenAction(texts: string | string[], contentClass: 'card' | 'highlight'): { label: string; action: string } {
+  let label = 'clean';
+  for (const t of Array.isArray(texts) ? texts : [texts]) {
+    const norm = normalizeForScreen(t);
+    for (const variant of norm === t ? [t] : [t, norm]) {
+      const l = l0Scan(variant, contentClass).label;
+      if ((LABEL_RANK[l] ?? 4) > (LABEL_RANK[label] ?? 4)) label = l;
+    }
+  }
+  return { label, action: actionFor(contentClass, label as Label).action };
+}
+
+/** A highlight body's string fields as plain lines (real newlines, so line-anchored L0 rules fire). */
+export function highlightBodyLines(body: unknown): string[] {
+  const out: string[] = [];
+  const push = (v: unknown) => {
+    if (typeof v === 'string' && v) out.push(v);
+  };
+  const visit = (v: unknown, depth: number) => {
+    if (depth > 4) return;
+    if (typeof v === 'string') push(v);
+    else if (Array.isArray(v)) for (const x of v) visit(x, depth + 1);
+    else if (v && typeof v === 'object') for (const x of Object.values(v)) visit(x, depth + 1);
+  };
+  visit(body ?? {}, 0);
+  return out;
 }
 
 async function teamAudience(tx: Tx, teamId: string | null, ownerId: string): Promise<string[]> {
@@ -81,9 +156,9 @@ async function readSealed(deps: CoreDeps, tx: Tx, activityId: string): Promise<S
 
 const finalize: JobHandler = async (payload, deps) => {
   const id = str(payload, 'activityId');
-  const next = await deps.db.asService(async (tx) => {
+  await deps.db.asService(async (tx) => {
     const a = (await tx.query<Record<string, unknown>>('select * from public.activities where id = $1 for update', [id])).rows[0];
-    if (!a || a.status !== 'open') return null;
+    if (!a || a.status !== 'open') return;
     const chunks = await tx.query<{ stats_delta: unknown }>(
       'select stats_delta from public.activity_chunks where activity_id = $1 order by seq',
       [id],
@@ -138,11 +213,11 @@ const finalize: JobHandler = async (payload, deps) => {
         warmup ? 'archived' : 'distilling',
       ],
     );
-    return warmup ? null : id;
+    if (warmup) return;
+    // Same transaction as the status change: a retry after a crash here would see 'distilling' and skip.
+    await deps.jobs.enqueue('screen', { kind: 'activity', id }, { dedupeKey: `screen:a:${id}`, tx });
+    await deps.jobs.enqueue('distill_heuristic', { activityId: id }, { dedupeKey: `distill:${id}`, tx });
   });
-  if (!next) return;
-  await deps.jobs.enqueue('screen', { kind: 'activity', id: next }, { dedupeKey: `screen:a:${next}` });
-  await deps.jobs.enqueue('distill_heuristic', { activityId: next }, { dedupeKey: `distill:${next}` });
 };
 
 /* ================================================================== screen */
@@ -150,10 +225,10 @@ const finalize: JobHandler = async (payload, deps) => {
 const screen: JobHandler = async (payload, deps) => {
   const id = str(payload, 'id');
   const kind = payload.kind === 'highlight' ? 'highlight' : 'activity';
-  const after = await deps.db.asService(async (tx) => {
+  await deps.db.asService(async (tx) => {
     if (kind === 'activity') {
       const a = (await tx.query<Record<string, unknown>>('select * from public.activities where id = $1', [id])).rows[0];
-      if (!a || a.status !== 'distilling') return null;
+      if (!a || a.status !== 'distilling') return;
       const s = screenAction([a.title, a.summary].filter(Boolean).join('\n'), 'card');
       const allowed = s.action === 'allow' || s.action === 'label';
       await tx.query(
@@ -161,12 +236,18 @@ const screen: JobHandler = async (payload, deps) => {
            status = case when $4 then status else 'quarantined' end, updated_at = now() where id = $1`,
         [id, s.label, s.action, allowed],
       );
-      return allowed ? 'publish' : null;
+      if (allowed) await deps.jobs.enqueue('publish', { activityId: id }, { dedupeKey: `publish:${id}`, tx });
+      return;
     }
     const h = (await tx.query<Record<string, unknown>>('select * from public.highlights where id = $1', [id])).rows[0];
-    if (!h || h.status !== 'draft') return null;
-    const text = [h.title, h.summary, JSON.stringify(h.body ?? {})].join('\n');
-    const s = screenAction(text, 'highlight');
+    if (!h || h.status !== 'draft') return;
+    // The body is screened both as JSON (as before) and as plain lines: JSON encoding turns real
+    // newlines into `\n`, which hides line-anchored injection (fake pointers, role tags).
+    const head = [h.title, h.summary].map((x) => String(x ?? ''));
+    const s = screenAction(
+      [[...head, JSON.stringify(h.body ?? {})].join('\n'), [...head, ...highlightBodyLines(h.body)].join('\n')],
+      'highlight',
+    );
     const allowed = s.action === 'allow' || s.action === 'label';
     await tx.query(
       `update public.highlights set screen_label = $2, screen_layers = array['l0'], screen_action = $3,
@@ -182,46 +263,47 @@ const screen: JobHandler = async (payload, deps) => {
         [h.owner_user_id, `h_${id}`, h.author_agent_id, `Draft fix highlight (${steps} step${steps === 1 ? '' : 's'}) from a captured session`],
       );
     }
-    return null;
   });
-  if (after === 'publish') await deps.jobs.enqueue('publish', { activityId: id }, { dedupeKey: `publish:${id}` });
 };
 
 /* ================================================================= publish */
 
 const publish: JobHandler = async (payload, deps) => {
   const id = str(payload, 'activityId');
-  const done = await deps.db.asService(async (tx) => {
+  await deps.db.asService(async (tx) => {
+    // Team visibility only while the owner still belongs to the team the session was captured under.
     const r = await tx.query<{ owner_user_id: string; team_id: string | null; visibility: string }>(
-      `update public.activities set status = 'published', published_at = now(),
-          visibility = case when team_id is not null then 'team' else 'private' end, updated_at = now()
-        where id = $1 and status = 'distilling' and screen_action in ('allow', 'label')
-        returning owner_user_id, team_id, visibility::text as visibility`,
+      `update public.activities a set status = 'published', published_at = now(),
+          visibility = case when a.team_id is not null
+                             and exists (select 1 from public.team_members m where m.team_id = a.team_id and m.user_id = a.owner_user_id)
+                            then 'team' else 'private' end,
+          updated_at = now()
+        where a.id = $1 and a.status = 'distilling' and a.screen_action in ('allow', 'label')
+        returning a.owner_user_id, a.team_id, a.visibility::text as visibility`,
       [id],
     );
     const a = r.rows[0];
-    if (!a) return false;
+    if (!a) return;
+    const teamId = a.visibility === 'team' ? a.team_id : null;
     await deps.bus.publish(
-      { type: 'activity.published', audienceAgentIds: [], audienceUserIds: await teamAudience(tx, a.team_id, a.owner_user_id), payload: { activityId: `a_${id}` } },
+      { type: 'activity.published', audienceAgentIds: [], audienceUserIds: await teamAudience(tx, teamId, a.owner_user_id), payload: { activityId: `a_${id}` } },
       tx,
     );
     // Team feed channel in Slack (team visibility only; never private).
-    if (a.team_id && a.visibility === 'team') await enqueueFeedCard(tx, deps, id, a.team_id);
-    return true;
+    if (teamId) await enqueueFeedCard(tx, deps, id, teamId);
+    await deps.jobs.enqueue('embed', { kind: 'activity', id }, { dedupeKey: `embed:a:${id}`, tx });
   });
-  if (done) await deps.jobs.enqueue('embed', { kind: 'activity', id }, { dedupeKey: `embed:a:${id}` });
 };
 
 /* ======================================================= distill_heuristic */
 
 const distillHeuristic: JobHandler = async (payload, deps) => {
   const id = str(payload, 'activityId');
-  const created = await deps.db.asService(async (tx) => {
+  await deps.db.asService(async (tx) => {
     const a = (await tx.query<Record<string, unknown>>('select * from public.activities where id = $1', [id])).rows[0];
-    if (!a) return [];
+    if (!a) return;
     const already = await tx.query('select 1 from public.highlights where activity_id = $1 limit 1', [id]);
     const sealed = await readSealed(deps, tx, id);
-    const ids: string[] = [];
     if (already.rowCount === 0 && sealed.length > 0) {
       const local = [...sealed].reverse().find((s) => s.distilled)?.distilled;
       const drafts = local
@@ -238,16 +320,24 @@ const distillHeuristic: JobHandler = async (payload, deps) => {
             normalize: normalizeErrorSignature,
           });
       for (const d of drafts) {
-        // Pass 2 on every field; a step/pitfall the redactor drops is removed.
-        const steps = d.body.steps.map(pass2).filter(Boolean);
+        // Pass 2 on every field; a step/pitfall the redactor drops is removed. Clipped after pass 2:
+        // a redaction marker can be longer than what it replaced (the DB checks title/summary length).
+        const steps = d.body.steps.map((x) => fitRedacted(pass2(x), 300)).filter(Boolean);
         const pitfalls = d.body.pitfalls
-          .map((p) => ({ tried: pass2(p.tried), whyFailed: pass2(p.whyFailed) }))
+          .map((p) => ({ tried: fitRedacted(pass2(p.tried), 200), whyFailed: fitRedacted(pass2(p.whyFailed), 300) }))
           .filter((p) => p.tried && p.whyFailed);
-        const title = pass2(d.title);
-        const problem = pass2(d.body.problem);
+        const title = fitRedacted(pass2(d.title), HIGHLIGHT_TITLE_MAX);
+        const problem = fitRedacted(pass2(d.body.problem), 600);
         const sig = d.errorSignature ? pass2(d.errorSignature) : '';
         if (!title || title.length < 8 || !problem || steps.length === 0 || pitfalls.length === 0) continue;
-        const body = { ...d.body, problem, steps, pitfalls, verification: pass2(d.body.verification), appliesWhen: pass2(d.body.appliesWhen) };
+        const body = {
+          ...d.body,
+          problem,
+          steps,
+          pitfalls,
+          verification: fitRedacted(pass2(d.body.verification), 300),
+          appliesWhen: fitRedacted(pass2(d.body.appliesWhen), 300),
+        };
         const r = await tx.query<{ id: string }>(
           `insert into public.highlights (activity_id, author_agent_id, owner_user_id, team_id, repo_key, kind, title, summary,
              body, tags, search_queries, confidence, status, visibility)
@@ -260,7 +350,7 @@ const distillHeuristic: JobHandler = async (payload, deps) => {
             a.team_id,
             a.repo_key,
             title,
-            pass2(d.summary),
+            fitRedacted(pass2(d.summary), HIGHLIGHT_SUMMARY_MAX),
             JSON.stringify(body),
             [...new Set([sig, ...d.searchQueries].map((q) => pass2(q).slice(0, 200)).filter(Boolean))].slice(0, 6),
             d.confidence,
@@ -271,7 +361,8 @@ const distillHeuristic: JobHandler = async (payload, deps) => {
         for (const e of new Set([sig, ...d.errorSignatures.map(pass2)].filter(Boolean))) {
           await tx.query('insert into public.highlight_errors (highlight_id, sig) values ($1, $2) on conflict do nothing', [hid, e.slice(0, 300)]);
         }
-        ids.push(hid);
+        // Same transaction as the insert: a retry finds the highlights and would never screen them.
+        await deps.jobs.enqueue('screen', { kind: 'highlight', id: hid }, { dedupeKey: `screen:h:${hid}`, tx });
       }
     }
     // I6: digests are purged once distilled.
@@ -280,9 +371,7 @@ const distillHeuristic: JobHandler = async (payload, deps) => {
         where activity_id = $1`,
       [id],
     );
-    return ids;
   });
-  for (const hid of created) await deps.jobs.enqueue('screen', { kind: 'highlight', id: hid }, { dedupeKey: `screen:h:${hid}` });
 };
 
 /* ============================================================ review.draft */
@@ -290,45 +379,84 @@ const distillHeuristic: JobHandler = async (payload, deps) => {
 /** Runs after a human decided a draft review item (api.decide_review in the web route). */
 const reviewDraft: JobHandler = async (payload, deps) => {
   const reviewId = str(payload, 'reviewId');
-  const published = await deps.db.asService(async (tx) => {
+  await deps.db.asService(async (tx) => {
     const rv = (await tx.query<Record<string, unknown>>('select * from public.review_items where id = $1', [reviewId])).rows[0];
-    if (!rv || rv.kind !== 'draft' || !String(rv.ref_id).startsWith('h_')) return null;
-    const hid = String(rv.ref_id).slice(2);
+    if (!rv || rv.kind !== 'draft') return;
+    const ref = String(rv.ref_id);
+    if (ref.startsWith('a_')) return reviewActivityDraft(deps, tx, ref.slice(2), String(rv.state));
+    if (!ref.startsWith('h_')) return;
+    const hid = ref.slice(2);
     if (rv.state === 'rejected') {
       await tx.query(`update public.highlights set status = 'archived', updated_at = now() where id = $1 and status = 'draft'`, [hid]);
-      return null;
+      return;
     }
-    if (rv.state !== 'approved') return null;
-    const edits = (payload.edits ?? {}) as { title?: unknown; summary?: unknown };
-    const title = typeof edits.title === 'string' ? pass2(edits.title).slice(0, 90) : null;
-    const summary = typeof edits.summary === 'string' ? pass2(edits.summary).slice(0, 400) : null;
+    if (rv.state !== 'approved') return;
+    const edits = (payload.edits ?? {}) as { title?: unknown; summary?: unknown; fieldToggles?: unknown };
+    // The owner's field toggles (DraftReview.fieldToggles): a missing toggle means "on".
+    const toggles = (edits.fieldToggles && typeof edits.fieldToggles === 'object' ? edits.fieldToggles : {}) as Record<string, unknown>;
+    if (toggles.highlight === false) {
+      // The owner kept the highlight to themselves: nothing posts (the stats card is unaffected).
+      await tx.query(`update public.highlights set status = 'archived', updated_at = now() where id = $1 and status = 'draft'`, [hid]);
+      return;
+    }
+    let title = typeof edits.title === 'string' ? fitRedacted(pass2(edits.title), HIGHLIGHT_TITLE_MAX) : null;
+    let summary = typeof edits.summary === 'string' ? fitRedacted(pass2(edits.summary), HIGHLIGHT_SUMMARY_MAX) : null;
     if (title !== null || summary !== null) {
       const s = screenAction([title, summary].filter(Boolean).join('\n'), 'highlight');
       if (s.action !== 'allow' && s.action !== 'label') {
         await tx.query(`update public.highlights set status = 'quarantined', screen_label = $2, screen_action = $3 where id = $1`, [hid, s.label, s.action]);
-        return null;
+        return;
       }
     }
-    const r = await tx.query<{ owner_user_id: string; team_id: string | null; activity_id: string | null }>(
-      `update public.highlights set status = 'active', published_at = now(),
-          title = coalesce(nullif($2, ''), title), summary = coalesce($3, summary),
-          visibility = case when team_id is not null then 'team' else 'private' end, updated_at = now()
-        where id = $1 and status = 'draft' and screen_action in ('allow', 'label')
-        returning owner_user_id, team_id, activity_id`,
+    if (toggles.title === false) title = NEUTRAL_HIGHLIGHT_TITLE;
+    if (toggles.summary === false) summary = '';
+    // Team visibility only while the owner still belongs to the highlight's team.
+    const r = await tx.query<{ owner_user_id: string; team_id: string | null; activity_id: string | null; visibility: string }>(
+      `update public.highlights h set status = 'active', published_at = now(),
+          title = coalesce(nullif($2, ''), h.title), summary = coalesce($3, h.summary),
+          visibility = case when h.team_id is not null
+                             and exists (select 1 from public.team_members m where m.team_id = h.team_id and m.user_id = h.owner_user_id)
+                            then 'team' else 'private' end,
+          updated_at = now()
+        where h.id = $1 and h.status = 'draft' and h.screen_action in ('allow', 'label')
+        returning h.owner_user_id, h.team_id, h.activity_id, h.visibility::text as visibility`,
       [hid, title, summary],
     );
     const h = r.rows[0];
-    if (!h) return null;
+    if (!h) return;
     if (h.activity_id) {
+      const teamId = h.visibility === 'team' ? h.team_id : null;
       await deps.bus.publish(
-        { type: 'activity.updated', audienceAgentIds: [], audienceUserIds: await teamAudience(tx, h.team_id, h.owner_user_id), payload: { activityId: `a_${h.activity_id}` } },
+        { type: 'activity.updated', audienceAgentIds: [], audienceUserIds: await teamAudience(tx, teamId, h.owner_user_id), payload: { activityId: `a_${h.activity_id}` } },
         tx,
       );
     }
-    return hid;
+    await deps.jobs.enqueue('embed', { kind: 'highlight', id: hid }, { dedupeKey: `embed:h:${hid}`, tx });
   });
-  if (published) await deps.jobs.enqueue('embed', { kind: 'highlight', id: published }, { dedupeKey: `embed:h:${published}` });
 };
+
+/**
+ * An agent's post_activity draft (ref a_<id>): approving a 'draft' runs it through the card
+ * screen and the publish flow; a DLP-held ('held') post never publishes on a plain approve.
+ * Rejecting retires either.
+ */
+async function reviewActivityDraft(deps: CoreDeps, tx: Tx, activityId: string, state: string): Promise<void> {
+  if (state === 'rejected') {
+    await tx.query(
+      `update public.activities set status = 'rejected', updated_at = now()
+        where id = $1 and source = 'agent_reported' and status in ('draft', 'held')`,
+      [activityId],
+    );
+    return;
+  }
+  if (state !== 'approved') return;
+  const r = await tx.query<{ id: string }>(
+    `update public.activities set status = 'distilling', updated_at = now()
+      where id = $1 and source = 'agent_reported' and status = 'draft' returning id`,
+    [activityId],
+  );
+  if (r.rows[0]) await deps.jobs.enqueue('screen', { kind: 'activity', id: r.rows[0].id }, { dedupeKey: `screen:a:${r.rows[0].id}`, tx });
+}
 
 /* =================================================================== embed */
 
@@ -357,29 +485,47 @@ const embed: JobHandler = async (payload, deps) => {
 /* ============================================================== close_idle */
 
 const closeIdle: JobHandler = async (_payload, deps) => {
-  const toFinalize = await deps.db.asService(async (tx) => {
+  // Keyed by tick: a reopened activity (resumed session) must be finalizable again.
+  const tick = Math.floor(deps.now().getTime() / 60_000);
+  await deps.db.asService(async (tx) => {
     const s = await tx.query<{ id: string }>(
       `update public.sessions set status = 'closed', close_reason = 'idle_timeout', ended_at = now(), updated_at = now()
         where status = 'open' and last_event_at < now() - make_interval(mins => $1) returning id`,
       [IDLE_MINUTES],
     );
-    // I6 backstop: digests older than 24 h are purged even if distill never ran.
+    // I6 backstop: digests are purged within 24 h even if distill never ran (23 h leaves room for the tick).
     await tx.query(
       `update public.activity_chunks set digest_enc = null, digest_purged_at = now()
-        where digest_enc is not null and received_at < now() - interval '24 hours'`,
+        where digest_enc is not null and received_at < now() - $1::interval`,
+      [DIGEST_BACKSTOP],
     );
-    if (s.rows.length === 0) return [];
+    if (s.rows.length === 0) return;
     const a = await tx.query<{ id: string }>(
       `select id from public.activities where session_id = any($1::uuid[]) and status = 'open'`,
       [s.rows.map((r) => r.id)],
     );
-    return a.rows.map((r) => r.id);
+    // Same transaction as closing the sessions: the next close_idle only looks at open sessions.
+    for (const { id } of a.rows) await deps.jobs.enqueue('finalize', { activityId: id }, { dedupeKey: `finalize:${id}:idle:${tick}`, tx });
   });
-  // Keyed by tick: a reopened activity (resumed session) must be finalizable again.
-  const tick = Math.floor(deps.now().getTime() / 60_000);
-  for (const id of toFinalize) await deps.jobs.enqueue('finalize', { activityId: id }, { dedupeKey: `finalize:${id}:idle:${tick}` });
   await scheduleCloseIdle(deps);
 };
+
+/* =========================================================== purge_expired */
+
+/**
+ * Retention (api.purge_expired: events, digests, finished jobs, buckets, leases, ledger, link
+ * tokens, review expiry). Supabase runs it from pg_cron; server mode (plain Postgres, PGlite)
+ * has no pg_cron, so the worker runs it hourly. Idempotent, so running both is harmless.
+ */
+const purgeExpired: JobHandler = async (_payload, deps) => {
+  await deps.db.asService((tx) => tx.query('select api.purge_expired()'));
+  if (deps.config.mode === 'server') await schedulePurgeExpired(deps);
+};
+
+export async function schedulePurgeExpired(deps: CoreDeps): Promise<void> {
+  const { slot, runAfterMs } = recurringSlot(deps.now().getTime(), PURGE_EVERY_MS);
+  await deps.jobs.enqueue('purge_expired', {}, { dedupeKey: `purge_expired:${slot}`, runAfterMs });
+}
 
 export async function scheduleCloseIdle(deps: CoreDeps): Promise<void> {
   // Due just before a tick boundary: `now + period` would land after the cron tick and wait one more.
@@ -387,10 +533,11 @@ export async function scheduleCloseIdle(deps: CoreDeps): Promise<void> {
   await deps.jobs.enqueue('close_idle', {}, { dedupeKey: `close_idle:${slot}`, runAfterMs });
 }
 
-/** Arm every self-rescheduling job: close_idle and presence_sweep (deduped per bucket). */
+/** Arm every self-rescheduling job: close_idle, presence_sweep and (server mode) purge_expired, deduped per bucket. */
 export async function scheduleRecurring(deps: CoreDeps): Promise<void> {
   await scheduleCloseIdle(deps);
   await schedulePresenceSweep(deps);
+  if (deps.config.mode === 'server') await schedulePurgeExpired(deps);
 }
 
 export const PLATFORM_JOBS: Record<string, JobHandler> = {
@@ -402,4 +549,5 @@ export const PLATFORM_JOBS: Record<string, JobHandler> = {
   embed,
   close_idle: closeIdle,
   presence_sweep: presenceSweep,
+  purge_expired: purgeExpired,
 };
