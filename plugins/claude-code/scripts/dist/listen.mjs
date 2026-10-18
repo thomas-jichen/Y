@@ -60,7 +60,7 @@ function loadConfig(env) {
   const optOut = env.Y_ALLOW_INSECURE_URL === "1";
   const cleartextApiUrl = !optOut && isPrivateNetworkUrl(apiUrl);
   const insecureApiUrl = isInsecureUrl(apiUrl) && !optOut && !cleartextApiUrl;
-  const token = insecureApiUrl ? void 0 : env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
+  const token = env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
   const dataDir = env.CLAUDE_PLUGIN_DATA || env.Y_DATA_DIR || path.join(os.homedir(), ".y");
   const sm = env.CLAUDE_PLUGIN_OPTION_SHARE_MODE;
   const shareMode = sm === "off" || sm === "auto-team" ? sm : "stats";

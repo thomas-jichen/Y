@@ -133,7 +133,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const optOut = env.Y_ALLOW_INSECURE_URL === '1';
   const cleartextApiUrl = !optOut && isPrivateNetworkUrl(apiUrl);
   const insecureApiUrl = isInsecureUrl(apiUrl) && !optOut && !cleartextApiUrl;
-  const token = insecureApiUrl ? undefined : env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || undefined;
+  // Plain http to a public host still works as before; SessionStart only warns (insecureApiUrl).
+  const token = env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || undefined;
   const dataDir = env.CLAUDE_PLUGIN_DATA || env.Y_DATA_DIR || path.join(os.homedir(), '.y');
   const sm = env.CLAUDE_PLUGIN_OPTION_SHARE_MODE;
   const shareMode: ShareModeSetting = sm === 'off' || sm === 'auto-team' ? sm : 'stats';

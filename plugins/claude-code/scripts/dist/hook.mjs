@@ -83,7 +83,7 @@ function loadConfig(env) {
   const optOut = env.Y_ALLOW_INSECURE_URL === "1";
   const cleartextApiUrl = !optOut && isPrivateNetworkUrl(apiUrl);
   const insecureApiUrl = isInsecureUrl(apiUrl) && !optOut && !cleartextApiUrl;
-  const token = insecureApiUrl ? void 0 : env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
+  const token = env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
   const dataDir = env.CLAUDE_PLUGIN_DATA || env.Y_DATA_DIR || path.join(os.homedir(), ".y");
   const sm = env.CLAUDE_PLUGIN_OPTION_SHARE_MODE;
   const shareMode = sm === "off" || sm === "auto-team" ? sm : "stats";
@@ -23831,7 +23831,7 @@ function secretAssignName(name) {
   const n = name.replace(/^export\s+/, "");
   if (NOT_A_SECRET_NAME_RE.test(n)) return false;
   if (LONG_SECRET_NAME_RE.test(n)) return true;
-  return SHORT_PASS_NAME_RE.test(n) && n === n.toUpperCase();
+  return SHORT_PASS_NAME_RE.test(n) && (n === n.toUpperCase() || /(?:^|_)(?:pass|pw)$/i.test(n));
 }
 function shellSegments(cmd) {
   const out = [];
@@ -26140,7 +26140,7 @@ function safeNoticeUrl(raw, ctx) {
 function humanMessage(ctx, brief) {
   const lines = [];
   if (ctx.config.insecureApiUrl) {
-    lines.push("Y: api_url is plain http:// to another machine, so Y sends nothing (your agent token would travel unencrypted). Set an https:// api_url in the plugin settings; http:// works for localhost only.");
+    lines.push("Y: api_url is plain http:// to another machine, so your agent token and digests travel unencrypted. Set an https:// api_url in the plugin settings, or Y_ALLOW_INSECURE_URL=1 to accept this.");
   } else if (!ctx.config.token) lines.push("Y: no agent token configured. Set agent_token in the plugin settings.");
   else if (ctx.config.cleartextApiUrl) {
     lines.push("Y: api_url is plain http:// to another machine on your network, so your agent token and digests travel unencrypted on it. Use an https:// api_url, or set Y_ALLOW_INSECURE_URL=1 to accept this.");

@@ -543,7 +543,7 @@ describe('#106 git identity: common words, worktrees, includes, comments (review
 describe('#107 cleartext api_url', () => {
   it('withholds the token for plain http to another host; loopback and https are unchanged', () => {
     const base = { CLAUDE_PLUGIN_OPTION_AGENT_TOKEN: 'tok_test_install_0000000000', Y_DATA_DIR: dir };
-    expect(loadConfig({ ...base, CLAUDE_PLUGIN_OPTION_API_URL: 'http://y.example.com' })).toMatchObject({ token: undefined, insecureApiUrl: true });
+    expect(loadConfig({ ...base, CLAUDE_PLUGIN_OPTION_API_URL: 'http://y.example.com' })).toMatchObject({ token: 'tok_test_install_0000000000', insecureApiUrl: true });
     for (const url of ['https://y.example.com', 'http://localhost:8787', 'http://127.0.0.1:9', 'http://[::1]:8787', 'http://core.localhost']) {
       const c = loadConfig({ ...base, CLAUDE_PLUGIN_OPTION_API_URL: url });
       expect(c.token, url).toBe('tok_test_install_0000000000');

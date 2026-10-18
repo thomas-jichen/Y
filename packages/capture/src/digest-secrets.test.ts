@@ -139,3 +139,12 @@ describe('digest: partial config edits, hook scripts, more CLI shapes (review of
     expect(d).toContain('TOOL Bash: cat .mcp.json');
   });
 });
+
+describe('lower-case short password names (round-3 review)', () => {
+  it('masks db_pass= and pw= but not pass_through=', async () => {
+    const { maskCliSecrets } = await import('./digest.js');
+    expect(maskCliSecrets('db_pass=hunter2 ./run')).not.toContain('hunter2');
+    expect(maskCliSecrets('pw=s3cret ./run')).not.toContain('s3cret');
+    expect(maskCliSecrets('./tool --x pass_through=true')).toContain('pass_through=true');
+  });
+});

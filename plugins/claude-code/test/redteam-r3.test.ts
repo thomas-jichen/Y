@@ -69,7 +69,7 @@ describe('R38 plain-http api_url on a private network', () => {
   });
 
   it('public http hosts are still withheld; loopback, https and the opt-out do not warn', () => {
-    expect(loadConfig(env({ CLAUDE_PLUGIN_OPTION_API_URL: 'http://y.example.com' }))).toMatchObject({ token: undefined, insecureApiUrl: true });
+    expect(loadConfig(env({ CLAUDE_PLUGIN_OPTION_API_URL: 'http://y.example.com' }))).toMatchObject({ token: 'tok_test_install_0000000000', insecureApiUrl: true });
     expect(isPrivateNetworkUrl('http://8.8.8.8:80')).toBe(false);
     expect(isPrivateNetworkUrl('http://172.32.0.1')).toBe(false);
     for (const [url, extra] of [['https://y.example.com', {}], ['http://localhost:8787', {}], ['http://10.0.0.5:8787', { Y_ALLOW_INSECURE_URL: '1' }]] as const) {

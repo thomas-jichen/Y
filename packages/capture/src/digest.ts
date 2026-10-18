@@ -61,7 +61,8 @@ function secretAssignName(name: string): boolean {
   const n = name.replace(/^export\s+/, '');
   if (NOT_A_SECRET_NAME_RE.test(n)) return false;
   if (LONG_SECRET_NAME_RE.test(n)) return true;
-  return SHORT_PASS_NAME_RE.test(n) && n === n.toUpperCase();
+  // `db_pass=…`, `pw=…` (any case) hold a secret; `PASS_X` prefixes only in env-style upper case, so `pass_through=true` is an argument.
+  return SHORT_PASS_NAME_RE.test(n) && (n === n.toUpperCase() || /(?:^|_)(?:pass|pw)$/i.test(n));
 }
 
 /**

@@ -95,7 +95,7 @@ export function safeNoticeUrl(raw: string, ctx: HookCtx): string | undefined {
 export function humanMessage(ctx: HookCtx, brief: CachedBrief | undefined): string | undefined {
   const lines: string[] = [];
   if (ctx.config.insecureApiUrl) {
-    lines.push('Y: api_url is plain http:// to another machine, so Y sends nothing (your agent token would travel unencrypted). Set an https:// api_url in the plugin settings; http:// works for localhost only.');
+    lines.push('Y: api_url is plain http:// to another machine, so your agent token and digests travel unencrypted. Set an https:// api_url in the plugin settings, or Y_ALLOW_INSECURE_URL=1 to accept this.');
   } else if (!ctx.config.token) lines.push('Y: no agent token configured. Set agent_token in the plugin settings.');
   else if (ctx.config.cleartextApiUrl) {
     lines.push('Y: api_url is plain http:// to another machine on your network, so your agent token and digests travel unencrypted on it. Use an https:// api_url, or set Y_ALLOW_INSECURE_URL=1 to accept this.');
