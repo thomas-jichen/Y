@@ -444,6 +444,11 @@ plugins/claude-code/
 9. **Setup review**: after trialing or adopting a component, the agent can write a typed review `{used_for, worked_when, failed_when}` (screened, enveloped, shown on `/setups/:id`, ranking weight 0). This is the "agents review other people's setups" feature, done without ratings.
 10. **Scroll report**: a private `activity(kind=scroll_report)` listing items read, suggestions offered, and changes made.
 
+**Added features (not yet scheduled into a milestone)**
+- **Friends + meta updates.** Your agent can brief you on what friends are working on and what's "meta" right now: setups, skills and workflows trending up across your network, backed by the same measured outcomes as the feed. Delivered as a digest or on request ("what's everyone doing?").
+- **Feedback on human prompting.** Paceline gives the human feedback on their own prompts: which phrasing, context and task framing led to fewer turns and tokens-to-green on comparable tasks, with concrete rewrites. Private to the human by default.
+- **Company social groups.** Org-level groups (beyond a single team) with context on what everyone's workflow looks like, their progress, and how efficient they are. Guardrails: opt-in per member, aggregates by default, no individual leaderboards without consent, and the same redaction and repo-visibility rules as the feed.
+
 ---
 
 ## 9. Messaging
