@@ -47,8 +47,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
   if (production && mode === 'serverless' && !cronSecret) throw new Error('Y_CRON_SECRET is required in serverless production (pg_cron tick)');
 
   const llm = env.Y_LLM?.trim() === 'anthropic' ? 'anthropic' : 'mock';
-  const emb = env.Y_EMBEDDINGS?.trim();
+  const emb = env.Y_EMBEDDINGS?.trim().toLowerCase();
   const embeddings = emb === 'gateway' ? 'gateway' : emb === 'gte' || emb === 'supabase' ? 'gte' : 'mock';
+  if (production && embeddings === 'mock' && emb !== 'mock') {
+    console.warn(
+      `[y core] Y_EMBEDDINGS is ${emb ? `'${emb}' (unknown)` : 'unset'} in production; using the mock embedder. Set Y_EMBEDDINGS=supabase (or mock explicitly).`,
+    );
+  }
   const embed = { url: str(env.Y_EMBED_URL) ?? supabaseUrl, secret: str(env.Y_EMBED_SECRET) };
   if (embeddings === 'gte' && (!embed.url || !embed.secret)) {
     throw new Error('Y_EMBEDDINGS=gte needs Y_EMBED_URL (or SUPABASE_URL) and Y_EMBED_SECRET');
@@ -77,6 +82,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
     teamId: slackTeam,
     webUrl: (str(env.Y_WEB_URL) ?? 'https://y-web-beta.vercel.app').replace(/\/+$/, ''),
   };
+  const pv1 = str(env.Y_PULSE_V1_UNTIL);
+  let pulseV1Until: number | undefined;
+  if (pv1) {
+    const n = pv1 === 'off' ? 0 : /^\d+$/.test(pv1) ? Number(pv1) : Math.floor(Date.parse(pv1) / 1000);
+    if (!Number.isFinite(n)) throw new Error('Y_PULSE_V1_UNTIL must be unix seconds, an ISO date, or off');
+    pulseV1Until = n;
+  }
   const rt = env.Y_REALTIME_REST?.trim();
   const realtimeRest = rt === 'on' || rt === 'off' ? rt : 'auto';
 
@@ -96,6 +108,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
     cronSecret,
     demoSecret,
     demoAccount: str(env.Y_DEMO_ACCOUNT),
+    ...(pulseV1Until !== undefined ? { pulseV1Until } : {}),
     webOrigins,
     embed,
     realtimeRest,
@@ -103,4 +116,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
     pluginMarketplace: str(env.Y_PLUGIN_MARKETPLACE) ?? 'thomas-jichen/Y',
     slack,
   };
+}
+
+/**
+ * Addresses for the long-running server (main.ts) to listen on. HOST wins (e.g.
+ * `0.0.0.0` in a container or for a phone on the LAN). Otherwise, while dev login
+ * is on outside production, only loopback (IPv4 and IPv6): anyone who can reach a
+ * dev core can sign in as any dev user. Null = all interfaces (the previous default).
+ */
+export function listenHosts(config: Pick<CoreConfig, 'devAuth' | 'production'>, env: NodeJS.ProcessEnv = process.env): string[] | null {
+  const host = str(env.HOST);
+  if (host) return [host];
+  return config.devAuth && !config.production ? ['127.0.0.1', '::1'] : null;
 }

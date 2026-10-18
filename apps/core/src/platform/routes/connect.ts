@@ -56,6 +56,7 @@ export function registerConnectRoutes(app: Hono, deps: CoreDeps): void {
       agentId = randomUUID();
     }
     const finalAgentId = agentId;
+    const installId = randomUUID();
     await deps.db.asUser(caller.claims, async (tx) => {
       if (newHandle) {
         await tx.query('insert into public.agents (id, owner_user_id, handle, harness, variant) values ($1, $2, $3, $4, 1)', [
@@ -67,9 +68,16 @@ export function registerConnectRoutes(app: Hono, deps: CoreDeps): void {
       }
       await tx.query(
         `insert into public.installs (id, agent_id, token_hash, machine_label_hash) values ($1, $2, $3, $4)`,
-        [randomUUID(), finalAgentId, sha256Hex(token), body.data.machineLabel ? hmacHex(deps.config.hmacKey, `machine:${body.data.machineLabel}`) : null],
+        [installId, finalAgentId, sha256Hex(token), body.data.machineLabel ? hmacHex(deps.config.hmacKey, `machine:${body.data.machineLabel}`) : null],
       );
     });
+    if (caller.demoAccount) {
+      // Minted from a /dev/demo session: the token ends with that demo account, like the session (#44).
+      const tag = caller.demoAccount;
+      await deps.db.asService((tx) =>
+        tx.query('insert into y_private.install_demo_accounts (install_id, demo_account) values ($1, $2)', [installId, tag]),
+      );
+    }
     const res: ConnectToken = { token, shownOnce: true, installCommands: installCommands(deps.config, harness, token) };
     return c.json(res);
   });

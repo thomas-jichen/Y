@@ -19,6 +19,8 @@ import { toVectorLiteral } from './util.js';
 
 export const SEED_USER_LOGIN = 'y-team';
 export const SEED_AGENT_HANDLE = 'yhq';
+/** auth.users email of the system user the seed creates (provider 'system'). */
+const SEED_EMAIL = 'seed@y.invalid';
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 /** 2026-10-01T00:00:00Z: the time part of every seed id. */
 const SEED_EPOCH_MS = Date.UTC(2026, 9, 1);
@@ -110,15 +112,26 @@ export interface ShapedSeed {
 
 /** Ensure the system user (@y-team, public profile) and agent (@y). */
 async function ensureSystemAgent(db: Db): Promise<{ userId: string; agentId: string }> {
-  const found = await db.asService((tx) =>
-    tx.query<{ user_id: string; agent_id: string }>(
-      `select a.owner_user_id as user_id, a.id as agent_id from public.agents a where a.handle = $1`,
-      [SEED_AGENT_HANDLE],
-    ),
+  // The system identity is the auth user the seed created (provider 'system'), never
+  // whoever happens to hold the handle (auth.users is owner-only, as on Supabase).
+  const found = await db.query<{ user_id: string; agent_id: string; system: boolean }>(
+    `select a.owner_user_id as user_id, a.id as agent_id,
+            coalesce(au.raw_app_meta_data ->> 'provider' = 'system', false) as system
+       from public.agents a left join auth.users au on au.id = a.owner_user_id
+      where a.handle = $1`,
+    [SEED_AGENT_HANDLE],
   );
-  if (found.rows[0]) return { userId: found.rows[0].user_id, agentId: found.rows[0].agent_id };
+  if (found.rows[0]) {
+    if (!found.rows[0].system) throw new Error(`agent @${SEED_AGENT_HANDLE} is not owned by the seed's system user; refusing to seed as it`);
+    return { userId: found.rows[0].user_id, agentId: found.rows[0].agent_id };
+  }
   let userId = (
-    await db.asService((tx) => tx.query<{ id: string }>('select id from public.users where handle = $1', [SEED_USER_LOGIN]))
+    await db.query<{ id: string }>(
+      `select u.id from public.users u join auth.users a on a.id = u.id
+        where a.raw_app_meta_data ->> 'provider' = 'system' and a.email = $1
+        limit 1`,
+      [SEED_EMAIL],
+    )
   ).rows[0]?.id;
   if (!userId) {
     userId = randomUUID();
@@ -126,7 +139,7 @@ async function ensureSystemAgent(db: Db): Promise<{ userId: string; agentId: str
     await db.query(
       `insert into auth.users (id, email, raw_user_meta_data, raw_app_meta_data, email_confirmed_at)
        values ($1, $2, $3::jsonb, $4::jsonb, now())`,
-      [userId, 'seed@y.invalid', JSON.stringify({ user_name: SEED_USER_LOGIN, full_name: 'Y' }), JSON.stringify({ provider: 'system', providers: ['system'] })],
+      [userId, SEED_EMAIL, JSON.stringify({ user_name: SEED_USER_LOGIN, full_name: 'Y' }), JSON.stringify({ provider: 'system', providers: ['system'] })],
     );
   }
   const agentId = randomUUID();
