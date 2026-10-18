@@ -135,47 +135,6 @@ export async function addReview(tx: Tx, ownerUserId: string, kind: 'dm_request' 
   );
 }
 
-export type CommentReach = { agentId: string; ownerId: string; kind: 'trusted' | 'allowed' | 'skipped' };
-
-/**
- * Per recipient agent, how a human comment reaches it (I4): 'trusted' (the commenter's own or a
- * teammate's agent), 'allowed' (a stranger already in the conversation with the commenter: the
- * thread's creator, either side of an accepted intro in this thread, or an explicit allow row)
- * or 'skipped' (an explicit deny row, or any other stranger: not pushed the comment).
- */
-export async function humanCommentReach(
-  tx: Tx, deps: CoreDeps, m: Pick<MsgRow, 'thread_id' | 'sender_owner_id' | 'thread_creator'>,
-  parts: readonly { p_id: string; owner_user_id: string }[],
-): Promise<CommentReach[]> {
-  const senderOwner = m.sender_owner_id ?? '';
-  const out: CommentReach[] = [];
-  for (const p of parts) {
-    const rel = await relationshipBetween(tx, senderOwner, p.owner_user_id);
-    if (rel === 'self' || rel === 'teammate') { out.push({ agentId: p.p_id, ownerId: p.owner_user_id, kind: 'trusted' }); continue; }
-    const explicit = await loadDmPermissions(tx, p.owner_user_id, null, senderOwner, rel);
-    if (explicit[0]?.policy === 'deny') { out.push({ agentId: p.p_id, ownerId: p.owner_user_id, kind: 'skipped' }); continue; }
-    const d = dmDecision(rel, {
-      explicit, urgency: 'normal', recipientWakeOnDm: 'off',
-      senderGithubAgeOk: await senderGithubAgeOk(tx, senderOwner, deps.now()),
-    });
-    let allowed = d.outcome === 'deliver' || p.owner_user_id === m.thread_creator;
-    if (!allowed) {
-      // A human accepted a stranger message between these two owners in this thread (an intro
-      // accepted on the web or in Slack, or an explicit allow): both sides are in the conversation.
-      const acc = await tx.query<{ n: number }>(
-        `select count(*)::int as n from public.messages x
-           join public.message_deliveries d on d.message_id = x.id
-           join public.agents a on a.id = d.recipient_agent_id
-          where x.thread_id = $1 and x.trust = 'stranger' and x.delivered_at is not null
-            and ((x.sender_owner_id = $2 and a.owner_user_id = $3) or (x.sender_owner_id = $3 and a.owner_user_id = $2))`,
-        [m.thread_id, senderOwner, p.owner_user_id]);
-      allowed = (acc.rows[0]?.n ?? 0) > 0;
-    }
-    out.push({ agentId: p.p_id, ownerId: p.owner_user_id, kind: allowed ? 'allowed' : 'skipped' });
-  }
-  return out;
-}
-
 /**
  * Route one queued message. Returns the resulting state and delivery path.
  * Events to publish are returned (published by the caller after commit).
@@ -244,41 +203,14 @@ export async function routeMessageTx(tx: Tx, deps: CoreDeps, messageId: string, 
       await setState(tx, m.id, state, { trust: 'human_comment' });
       return { state, path: null, note: 'blocked', relationship: null };
     }
-    // Which agents a human comment reaches (I4). As before: the commenter's own and teammates'
-    // agents, and every agent whose owner is already in the conversation with the commenter: the
-    // owner opened it (created the thread), a human accepted an intro between the two owners in
-    // this thread (a stranger message was delivered, either direction), or the owner explicitly
-    // allowed the commenter. Comments are not limited to the cross-owner length (as before).
-    // Never past an explicit deny. Any other stranger's agent (a former teammate's DM nobody ever
-    // accepted across teams) is not pushed the comment: its human still reads it in the thread.
-    const hr = await humanCommentReach(tx, deps, m, parts.rows);
-    const reach = hr.filter((x) => x.kind === 'trusted' || x.kind === 'allowed');
-    if (hr.length > 0 && reach.length === 0) {
-      // No agent here may be reached: like a stranger agent's denied DM (never reported delivered).
-      state = step(state, { type: 'submit', permitted: false });
-      state = step(state, { type: 'request_declined' });
-      await setState(tx, m.id, state, { trust: 'human_comment' });
-      return { state, path: null, note: 'blocked', relationship: 'stranger' };
-    }
-
     if (startedHere) await openThread(tx, m.thread_id);
     state = step(state, { type: 'submit', permitted: true });
     const out = await screen({ contentClass: 'comment', contentId: wire('message', m.id), text: m.body }, {});
     await storeVerdict(tx, m.id, out);
     state = step(state, { type: 'verdict', action: actionFor('comment', out.screen.label).action });
     await setState(tx, m.id, state, { trust: 'human_comment', delivered: state === 'delivered' });
-    if (state === 'quarantined') {
-      // A stranger owner already in the conversation decides on a held comment to their own
-      // agents (per-owner release, as for a quarantined room message).
-      const owners = new Set(reach.filter((x) => x.kind === 'allowed').map((x) => x.ownerId));
-      for (const o of owners) {
-        const agent = reach.find((x) => x.ownerId === o)!.agentId;
-        await addReview(tx, o, 'quarantined_message', wire('message', m.id), agent, 'A comment in your agent\'s thread was quarantined by screening');
-      }
-      return { state, path: null, note: 'quarantined', relationship: null };
-    }
     if (state === 'delivered') {
-      await deliver(tx, deps, m, reach.map((x) => ({ agentId: x.agentId, ownerId: x.ownerId, wake: false })), events);
+      await deliver(tx, deps, m, parts.rows.map((p) => ({ agentId: p.p_id, ownerId: p.owner_user_id, wake: false })), events);
       await adoptSubject(tx, m.thread_id, 'comment');
     }
     return { state, path: state === 'delivered' ? 'inbox' : null, note: noteFor(state, 'inbox'), relationship: null };
