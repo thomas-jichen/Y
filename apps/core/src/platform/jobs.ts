@@ -43,27 +43,50 @@ export class PgJobQueue implements JobQueue {
     return (await this.drainDetailed(n)).claimed;
   }
 
-  /** drain() with per-outcome counts (the jobs tick reports them). */
-  async drainDetailed(n = 10): Promise<{ claimed: number; completed: number; failed: number }> {
+  /**
+   * drain() with per-outcome counts (the jobs tick reports them). Runs up to `n` of the jobs
+   * that are due when it starts. Each job is claimed only right before it runs, so a worker
+   * killed mid-drain (serverless maxDuration) strands at most the job it was running, never an
+   * unstarted tail whose attempts would be burned by lease expiry. `deadlineMs` (epoch ms) stops
+   * claiming new jobs once passed; unclaimed jobs stay queued and untouched.
+   */
+  async drainDetailed(n = 10, opts: { deadlineMs?: number } = {}): Promise<{ claimed: number; completed: number; failed: number }> {
     const topics = Object.keys(this.handlers);
     if (topics.length === 0 || this.draining || !this.deps) return { claimed: 0, completed: 0, failed: 0 };
+    let claimed = 0;
     let completed = 0;
     let failed = 0;
     this.draining = true;
     try {
-      const claimed = await this.db.asService((tx) =>
-        tx.query<JobRow>('select id, topic, payload, attempts from api.claim_jobs($1::text[], $2, $3::interval)', [
-          topics,
-          n,
-          LEASE,
-        ]),
-      );
-      for (const job of claimed.rows) {
+      const due = await this.db.asService(async (tx) => {
+        // As api.claim_jobs: an expired lease on the last attempt is dead.
+        await tx.query(
+          `update public.jobs j set state = 'dead', locked_until = null, finished_at = now(),
+               last_error = coalesce(j.last_error, 'lease expired on the last attempt')
+            where j.state = 'running' and j.locked_until < now() and j.attempts >= j.max_attempts and j.topic = any ($1::text[])`,
+          [topics],
+        );
+        return tx.query<{ id: string | number }>(
+          `select j.id from public.jobs j
+            where j.topic = any ($1::text[]) and j.attempts < j.max_attempts
+              and ((j.state = 'queued' and j.run_after <= now()) or (j.state = 'running' and j.locked_until < now()))
+            order by j.run_after, j.id
+            limit $2`,
+          [topics, Math.max(1, Math.min(n, 100))],
+        );
+      });
+      for (const { id } of due.rows) {
+        if (opts.deadlineMs !== undefined && Date.now() >= opts.deadlineMs) break;
+        const job = await this.claimOne(id);
+        if (!job) continue; // another worker took it, or it is no longer due
+        claimed++;
         const handler = this.handlers[job.topic];
         try {
           if (!handler) throw new Error(`no handler for ${job.topic}`);
           await handler(job.payload ?? {}, this.deps);
-          await this.db.asService((tx) => tx.query('select api.complete_job($1, $2)', [job.id, job.attempts]));
+          const ok = await this.db.asService((tx) => tx.query<{ ok: boolean }>('select api.complete_job($1, $2) as ok', [job.id, job.attempts]));
+          // Fencing: the lease expired and another worker reclaimed the job while this one ran it.
+          if (ok.rows[0]?.ok === false) this.deps.log('warn', 'job completed after its lease was reclaimed', { topic: job.topic, id: String(job.id), attempts: job.attempts });
           completed++;
         } catch (e) {
           // Error class + message only; handlers never put user content in errors.
@@ -73,9 +96,27 @@ export class PgJobQueue implements JobQueue {
           failed++;
         }
       }
-      return { claimed: claimed.rows.length, completed, failed };
+      return { claimed, completed, failed };
     } finally {
       this.draining = false;
     }
+  }
+
+  /** Claim one job if it is still due (the same rule as api.claim_jobs; SKIP LOCKED). Each claim counts an attempt. */
+  private async claimOne(id: string | number): Promise<JobRow | null> {
+    const r = await this.db.asService((tx) =>
+      tx.query<JobRow>(
+        `update public.jobs j
+            set state = 'running', attempts = j.attempts + 1, locked_until = now() + $2::interval, started_at = now()
+          where j.id = (
+            select x.id from public.jobs x
+             where x.id = $1 and x.attempts < x.max_attempts
+               and ((x.state = 'queued' and x.run_after <= now()) or (x.state = 'running' and x.locked_until < now()))
+             for update skip locked)
+          returning j.id, j.topic, j.payload, j.attempts`,
+        [id, LEASE],
+      ),
+    );
+    return r.rows[0] ?? null;
   }
 }

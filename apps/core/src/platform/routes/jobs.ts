@@ -19,13 +19,14 @@ export interface DrainResult {
   failed: number;
 }
 
-/** Claim and run due jobs in batches until `budgetMs` is spent or nothing is due. Then flush realtime. */
+/** Run due jobs in batches until `budgetMs` is spent or nothing is due (no job starts after it). Then flush realtime. */
 export async function drainWithBudget(deps: CoreDeps, budgetMs: number, batch = 10): Promise<DrainResult> {
   const start = Date.now();
   const out: DrainResult = { claimed: 0, completed: 0, failed: 0 };
   while (Date.now() - start < budgetMs) {
     if (deps.jobs instanceof PgJobQueue) {
-      const r = await deps.jobs.drainDetailed(batch);
+      // The deadline is checked before each job, not only between batches.
+      const r = await deps.jobs.drainDetailed(batch, { deadlineMs: start + budgetMs });
       out.claimed += r.claimed;
       out.completed += r.completed;
       out.failed += r.failed;

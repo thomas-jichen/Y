@@ -14,6 +14,18 @@ export interface BucketSpec {
 
 /** Ingest: 1 chunk / 5 s per session, burst 5. */
 export const INGEST_BUCKET: BucketSpec = { rate: 1 / 5, burst: 5 };
+/**
+ * Ingest per agent across all its sessions (session ids are client-chosen): 5 chunks / s,
+ * burst 300. Sized for one install driving many concurrent sessions (headless or CI fleets
+ * sharing an install, at the per-session 1 chunk / 5 s that is 25 busy sessions at once with
+ * room to spare) and an outbox flush after being offline; it only bounds abuse.
+ */
+export const INGEST_AGENT_BUCKET: BucketSpec = { rate: 5, burst: 300 };
+/**
+ * New harness sessions per agent: 600 / hour, burst 300 (each one creates session and
+ * activity rows). Generous for CI fleets that start a session per job.
+ */
+export const INGEST_NEW_SESSION_BUCKET: BucketSpec = { rate: 600 / 3600, burst: 300 };
 /** send_message: 30 / hour per agent. */
 export const SEND_BUCKET: BucketSpec = { rate: 30 / 3600, burst: 30 };
 
@@ -48,4 +60,33 @@ export async function takeToken(tx: Tx, scope: string, parts: string[], spec: Bu
   const row = r.rows[0];
   if (!row || row.allowed) return { allowed: true };
   return { allowed: false, retryAfterS: Math.max(1, Number(row.retry_after_s ?? 1)) };
+}
+
+/**
+ * The ingest limits, in order: per (agent, session), per agent, and per agent for a session
+ * it has not sent before. Runs under the caller's claims (it sees only its own sessions).
+ * All or nothing: a chunk refused by a later bucket gives back the tokens it took from the
+ * earlier ones (savepoint), so a client retrying after a 429 is not charged for the refusal.
+ */
+export async function takeIngestToken(
+  tx: Tx,
+  agentId: string,
+  sessionId: string,
+): Promise<{ allowed: true } | { allowed: false; retryAfterS: number; message: string }> {
+  await tx.query('savepoint ingest_rate_limit');
+  const refuse = async (r: { retryAfterS: number }, message: string) => {
+    await tx.query('rollback to savepoint ingest_rate_limit');
+    return { allowed: false as const, retryAfterS: r.retryAfterS, message };
+  };
+  const session = await takeToken(tx, 'ingest', [agentId, sessionId], INGEST_BUCKET);
+  if (!session.allowed) return refuse(session, 'too many chunks for this session');
+  const agent = await takeToken(tx, 'ingest_agent', [agentId], INGEST_AGENT_BUCKET);
+  if (!agent.allowed) return refuse(agent, 'too many chunks from this agent');
+  const known = await tx.query('select 1 from public.sessions where agent_id = $1 and harness_session_id = $2', [agentId, sessionId]);
+  if (!known.rowCount) {
+    const fresh = await takeToken(tx, 'ingest_new_session', [agentId], INGEST_NEW_SESSION_BUCKET);
+    if (!fresh.allowed) return refuse(fresh, 'too many new sessions from this agent');
+  }
+  await tx.query('release savepoint ingest_rate_limit');
+  return { allowed: true };
 }
