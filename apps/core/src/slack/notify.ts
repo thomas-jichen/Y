@@ -92,7 +92,9 @@ function notifyMessage(ctx: SlackCtx): JobHandler {
     if (!/^[0-9]{1,12}\.[0-9]{1,8}$/.test(posted.ts)) return;
     await deps.db.asService((tx) => tx.query(
       `insert into public.thread_bridges (thread_id, slack_team_id, channel_id, thread_ts, for_user_id)
-       values ($1, $2, $3, $4, $5) on conflict do nothing`,
+       values ($1, $2, $3, $4, $5)
+       on conflict (thread_id, slack_team_id, channel_id) do update set thread_ts = excluded.thread_ts, for_user_id = excluded.for_user_id
+         where public.thread_bridges.for_user_id is not null and public.thread_bridges.for_user_id <> excluded.for_user_id`,
       [threadId, plan.link.slackTeamId, posted.channel || channel, posted.ts, userId]));
   });
 }

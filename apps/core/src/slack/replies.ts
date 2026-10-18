@@ -32,15 +32,15 @@ export function replyJobs(ctx: SlackCtx): Record<string, JobHandler> {
         await tx.query(`delete from public.slack_pending_instructions where created_at < $1::timestamptz - interval '1 day'`, [now.toISOString()]);
         await tx.query(`update public.slack_pending_instructions set state = 'expired', body = null, decided_at = $1
                          where state = 'pending' and expires_at < $1`, [now.toISOString()]);
-        const b = await tx.query<{ thread_id: string }>(
-          `select thread_id from public.thread_bridges where slack_team_id = $1 and channel_id = $2 and thread_ts = $3`,
+        const b = await tx.query<{ thread_id: string; for_user_id: string | null }>(
+          `select thread_id, for_user_id from public.thread_bridges where slack_team_id = $1 and channel_id = $2 and thread_ts = $3`,
           [ev.teamId, ev.channel, ev.threadTs]);
         const uid = await linkedUserFor(tx, ev.teamId, ev.user);
-        return b.rows[0] ? { threadId: b.rows[0].thread_id, uid } : null;
+        return b.rows[0] ? { threadId: b.rows[0].thread_id, forUserId: b.rows[0].for_user_id, uid } : null;
       });
       if (!bridge) return;
       if (ev.tooLong) { await ephemeral(R.E3); return; }
-      const { threadId, uid } = bridge;
+      const { threadId, forUserId, uid } = bridge;
       if (!uid) { await ephemeral(R.E1); return; }
 
       let body = R.slackToPlain(ev.text);
@@ -64,6 +64,9 @@ export function replyJobs(ctx: SlackCtx): Record<string, JobHandler> {
         return { isParticipant: isHuman || ownAgents.length > 0, ownAgents: ownAgents.length, others: others.length, targets };
       });
       if (!view || !view.isParticipant) { await ephemeral(R.E2); return; }
+      // A bridge written for another Y account (the Slack user was relinked since):
+      // never post as the newly linked user. Pre-9005 bridges (null) still match.
+      if (forUserId && forUserId !== uid) { await ephemeral(R.E7); return; }
 
       const instructMode = view.ownAgents > 0 && (view.others === 0 || explicit);
       if (!instructMode) {
@@ -87,7 +90,15 @@ export function replyJobs(ctx: SlackCtx): Record<string, JobHandler> {
            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
            on conflict (source_event_id) do nothing returning id`,
           [uid, threadId, ev.teamId, ev.user, ev.channel, ev.threadTs, ev.eventId, body, now.toISOString(), new Date(now.getTime() + PENDING_TTL_MS).toISOString()]);
-        return r.rows[0]?.id ?? null;
+        if (r.rows[0]) return r.rows[0].id;
+        // A retry of this event (e.g. the prompt post failed): re-prompt only a
+        // still-pending, unexpired row of this user whose prompt never went out.
+        const again = await tx.query<{ id: string }>(
+          `select id from public.slack_pending_instructions
+            where source_event_id = $1 and user_id = $2 and slack_user_id = $3 and state = 'pending'
+              and prompted_at is null and expires_at > $4::timestamptz`,
+          [ev.eventId, uid, ev.user, now.toISOString()]);
+        return again.rows[0]?.id ?? null;
       });
       if (!pendingId) return;
       // Nothing reaches the agent until Confirm is clicked.
@@ -96,6 +107,8 @@ export function replyJobs(ctx: SlackCtx): Record<string, JobHandler> {
         channel: ev.channel, threadTs: ev.threadTs,
         ...R.p1({ pendingId, targets: on.slice(0, 5).map((t) => ({ agentId: t.agentId, handle: t.handle })), body, unattended }),
       });
+      await deps.db.asService((tx) => tx.query(
+        `update public.slack_pending_instructions set prompted_at = $2 where id = $1 and prompted_at is null`, [pendingId, deps.now().toISOString()]));
     }),
   };
 }

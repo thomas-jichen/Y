@@ -111,7 +111,13 @@ export async function handleBlockActions(deps: CoreDeps, client: SlackClient, p:
         `update public.slack_pending_instructions set owner_instruction_id = $2 where id = $1`, [pendingId, out.id.replace(/^oi_/, '')]));
       await update(R.pDone('sent', out.handle), { kind: 'pending', id: pendingId });
     } catch (e) {
-      if (!(e instanceof HttpError)) throw e;
+      if (!(e instanceof HttpError)) {
+        // The row is already 'confirmed' with its body gone: never leave it claiming "sent" for nothing.
+        await recoverConfirm(deps, { pendingId, uid, threadId: taken.threadId, agentId: agentId!, body: taken.body, decidedAt: nowIso })
+          .then(async (r) => { await safeCall(deps, () => client.updateMessage({ channel, ts, ...(r.sent ? R.pDone('sent', r.handle) : R.pDone('failed')) }, INLINE)); })
+          .catch(() => deps.log('warn', 'slack confirm recovery failed'));
+        throw e;
+      }
       await deps.db.asService((tx) => tx.query(
         `update public.slack_pending_instructions set state = 'cancelled' where id = $1 and owner_instruction_id is null`, [pendingId]));
       // Re-checked under the linked user's RLS: not their agent any more, or remote instructions turned off.
@@ -120,6 +126,33 @@ export async function handleBlockActions(deps: CoreDeps, client: SlackClient, p:
       await safeCall(deps, () => client.updateMessage({ channel, ts, ...R.pDone('remote_off', handle, web) }, INLINE));
     }
   }
+}
+
+/**
+ * After an unexpected error between the Confirm CAS and the end of
+ * issueOwnerInstruction: if the instruction was stored anyway, link it to the
+ * pending row (it was sent); otherwise mark the row cancelled so nothing
+ * (message re-render, second click) reports it as sent.
+ */
+async function recoverConfirm(
+  deps: CoreDeps,
+  a: { pendingId: string; uid: string; threadId: string; agentId: string; body: string; decidedAt: string },
+): Promise<{ sent: boolean; handle: string | null }> {
+  return deps.db.asService(async (tx) => {
+    const oi = (await tx.query<{ id: string; handle: string | null }>(
+      `select o.id, a.handle::text as handle from public.owner_instructions o left join public.agents a on a.id = o.agent_id
+        where o.thread_id = $1 and o.agent_id = $2 and o.created_by_user_id = $3 and o.verified_via = 'slack'
+          and o.body = $4 and o.created_at >= $5::timestamptz
+          and not exists (select 1 from public.slack_pending_instructions p where p.owner_instruction_id = o.id)
+        order by o.created_at desc limit 1`,
+      [a.threadId, a.agentId, a.uid, a.body, a.decidedAt])).rows[0];
+    if (oi) {
+      await tx.query(`update public.slack_pending_instructions set owner_instruction_id = $2 where id = $1 and owner_instruction_id is null`, [a.pendingId, oi.id]);
+      return { sent: true, handle: oi.handle };
+    }
+    await tx.query(`update public.slack_pending_instructions set state = 'cancelled' where id = $1 and owner_instruction_id is null`, [a.pendingId]);
+    return { sent: false, handle: null };
+  });
 }
 
 /** Run a Slack call; false (logged by method/code only) on failure. */
