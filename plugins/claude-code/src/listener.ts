@@ -26,6 +26,18 @@
  * exiting, so the turn shows at once. A listener whose session ended
  * (`ended-<sid>.json`) exits.
  *
+ * Cursor: each session's listener keeps its own event cursor
+ * (`state/pulse-cursor-<sid>.json`), advanced only by its own pulses. The
+ * shared `state/pulse.json` cursor (also written by the uploader from ingest
+ * responses and by sibling sessions) is only the starting point for a session
+ * that has none yet, so another writer can't skip or replay this session's
+ * wakes.
+ *
+ * Settings: `wake_on_dm=owner-only` wakes only for owner instructions (P4); a
+ * DM wake is parked for the next prompt instead. A long poll that returns
+ * early with no new events is spaced by {@link MIN_IDLE_POLL_MS} (doubling
+ * while it repeats), so a misbehaving server can't turn it into a hot loop.
+ *
  * Transport: in server mode `GET /api/v1/pulse?cursor&wait` long-polls. When
  * the cached brief carries a Supabase realtime channel (serverless core), the
  * listener waits on the broadcast doorbell and calls `/pulse?wait=0` when it
@@ -40,7 +52,7 @@ import { PULSE_ACTIVE_EVERY_S, PULSE_MAX_WAIT_S, UnreadCounts } from '@y/schema/
 import { failOpen, OK, type HookCtx, type HookResult } from './context.js';
 import { Doorbell, globalWebSocket, type SupabaseChannel, type WsCtor } from './realtime.js';
 import { httpJson, logLine, pidAlive, readJson, safeSid, sleep, writeJsonAtomic } from './runtime.js';
-import { fallbackText, readBrief, readPulse, renderOne, updatePulse } from './state.js';
+import { fallbackText, mergeKillSwitches, readBrief, readPulse, renderOne, updatePulse } from './state.js';
 import { clearSessionEnded, endTurn, sessionEnded, startTurn, turnActive } from './turn.js';
 import { parkPendingWake, takeWake } from './wake-budget.js';
 
@@ -57,6 +69,10 @@ export const SLOW_POLL_MS = 60_000;
 export const ACTIVE_POLL_MS = PULSE_ACTIVE_EVERY_S * 1000;
 /** Doorbell waits are sliced this fine so a turn that starts mid-wait is reported promptly. */
 const TURN_CHECK_MS = 15_000;
+/** Long poll: minimum spacing after a 2xx that came back early without moving the cursor. */
+export const MIN_IDLE_POLL_MS = 2_000;
+const MAX_IDLE_POLL_MS = 30_000;
+const CURSOR_RE = /^[A-Za-z0-9_\-.~=]{1,512}$/;
 
 const SID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 
@@ -82,6 +98,17 @@ interface ListenerFile {
 
 function listenerFile(ctx: HookCtx, sid: string): string {
   return path.join(ctx.paths.state, `listener-${safeSid(sid)}.json`);
+}
+
+function cursorFile(ctx: HookCtx, sid: string): string {
+  return path.join(ctx.paths.state, `pulse-cursor-${safeSid(sid)}.json`);
+}
+
+/** This session's event cursor; falls back to the shared one for a session that has none yet. */
+function sessionCursor(ctx: HookCtx, sid: string): string | undefined {
+  const own = readJson<{ cursor?: unknown }>(cursorFile(ctx, sid))?.cursor;
+  if (typeof own === 'string' && CURSOR_RE.test(own)) return own;
+  return readPulse(ctx.paths).cursor;
 }
 
 function needsListenerFile(ctx: HookCtx, sid: string): string {
@@ -223,6 +250,7 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
     openBell();
     let backoff = backoffMin;
     let bellBackoff = backoffMin;
+    let idleFloor = MIN_IDLE_POLL_MS;
     try {
       while (ctx.now() < endAt) {
         if (superseded(ctx, sid, mine)) return OK; // a newer listener for this session → step aside
@@ -236,7 +264,7 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
         const active = isTurnActive(ctx, sid);
         const polledAt = ctx.now();
         const q = new URLSearchParams({ wait: String(waitS), sessionId: sid, active: active ? '1' : '0' });
-        const cursor = readPulse(ctx.paths).cursor;
+        const cursor = sessionCursor(ctx, sid);
         if (cursor) q.set('cursor', cursor);
         let delay = 0;
         let ok = false;
@@ -252,8 +280,10 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
             const r = res.body as Record<string, unknown>;
             const unread = UnreadCounts.safeParse(r.unread);
             const ks = KillSwitches.safeParse(r.killSwitches);
-            const newCursor = typeof r.cursor === 'string' && /^[A-Za-z0-9_\-.~=]{1,512}$/.test(r.cursor) ? r.cursor : undefined;
+            const newCursor = typeof r.cursor === 'string' && CURSOR_RE.test(r.cursor) ? r.cursor : undefined;
             updatePulse(ctx.paths, { ...(newCursor ? { cursor: newCursor } : {}), ...(unread.success ? { unread: unread.data } : {}) }, ctx.now());
+            if (newCursor) writeJsonAtomic(cursorFile(ctx, sid), { cursor: newCursor });
+            if (ks.success) mergeKillSwitches(ctx.paths, ks.data);
             const wake = r.wake as { targetSessionId?: unknown; pointer?: unknown } | undefined;
             const pushOk = ks.success && !ks.data.pushPaths;
             // A newer listener took the slot while this poll was in flight: it owns the wake.
@@ -261,7 +291,10 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
             if (wake && wake.targetSessionId === sid && pushOk) {
               const valid = Pointer.safeParse(wake.pointer);
               const pointer = valid.success ? valid.data : undefined;
-              if (isRealNews(pointer, unread.success ? unread.data : undefined)) {
+              if (isRealNews(pointer, unread.success ? unread.data : undefined) && ctx.config.wakeOnDm === 'owner-only' && pointer?.template_id !== 'P4') {
+                // owner-only: only the human's own instructions may wake the session; DMs wait for the next prompt.
+                if (pointer) parkPendingWake(ctx.paths, sid, pointer, ctx.now());
+              } else if (isRealNews(pointer, unread.success ? unread.data : undefined)) {
                 const budget = takeWake(ctx.paths, ctx.now());
                 if (!budget.allow) {
                   if (pointer) parkPendingWake(ctx.paths, sid, pointer, ctx.now());
@@ -274,6 +307,15 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
             }
             const ra = typeof r.retryAfterS === 'number' && r.retryAfterS > 0 ? Math.min(3600, r.retryAfterS) : 0;
             delay = ra * 1000;
+            if (mode.kind === 'longpoll') {
+              const early = waitS > 0 && ctx.now() - polledAt < Math.min(waitS * 1000, MIN_IDLE_POLL_MS);
+              if (early && (newCursor === undefined || newCursor === cursor)) {
+                delay = Math.max(delay, idleFloor);
+                idleFloor = Math.min(MAX_IDLE_POLL_MS, idleFloor * 2);
+              } else {
+                idleFloor = MIN_IDLE_POLL_MS;
+              }
+            }
           } else if (res.status === 401 || res.status === 403) {
             return OK; // token revoked: SessionStart reports it to the human
           } else {

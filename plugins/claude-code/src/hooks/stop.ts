@@ -26,7 +26,7 @@ import { failOpen, OK, type HookCtx, type HookResult } from '../context.js';
 import { writeChunk } from '../outbox.js';
 import { gitRemote, redactText } from '../redaction.js';
 import { allocSeq, ensureDir, logLine, PLUGIN_VERSION, readJson, safeSid, sha256Hex, writeJsonAtomic } from '../runtime.js';
-import { captureOn, readBrief } from '../state.js';
+import { captureOn, readBrief, setupSentFile } from '../state.js';
 import { episodesFile } from './post-tool-use-failure.js';
 
 /** `cursors/<sid>.json`. */
@@ -103,10 +103,10 @@ async function setupRef(ctx: HookCtx, cwd: string | undefined): Promise<IngestCh
       redactText: (t) => redactText(t, cwd).text,
     });
     const hash = sha256Hex(canonicalJson(setupHashInput(snapshot)));
-    const sentFile = path.join(ctx.paths.state, 'setup-sent.json');
-    const sent = readJson<{ hash?: string }>(sentFile);
+    // The uploader records the hash once core accepted a chunk carrying this snapshot;
+    // until then every chunk carries it (core de-dupes by hash).
+    const sent = readJson<{ hash?: string }>(setupSentFile(ctx.paths));
     if (sent?.hash === hash) return { hash };
-    writeJsonAtomic(sentFile, { hash });
     return { hash, snapshot };
   } catch {
     return undefined;

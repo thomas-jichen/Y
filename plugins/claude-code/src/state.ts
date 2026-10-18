@@ -10,6 +10,7 @@ import { RealtimeChannel } from '@y/schema/hosting';
 import { Pointer } from '@y/schema/pointers';
 import { UnreadCounts } from '@y/schema/pulse';
 import { FALLBACK_POINTER_TEXT, isRenderedPointer, renderPointer, type PointerLocals } from '@y/pointers';
+import * as path from 'node:path';
 import { readJson, writeJsonAtomic, type Paths } from './runtime.js';
 
 /** The brief as cached in `state/brief.json` (only validated fields). */
@@ -98,6 +99,25 @@ export function readBrief(p: Paths): CachedBrief | undefined {
 
 export function writeBrief(p: Paths, b: CachedBrief): void {
   writeJsonAtomic(p.brief, b);
+}
+
+/**
+ * The listener's pulses carry the current kill switches: merge them into the
+ * cached brief, so hooks and the uploader honour a switch within one pulse,
+ * not only from the next SessionStart. Only the switches change; written only
+ * when they differ. No brief cached → nothing to update.
+ */
+export function mergeKillSwitches(p: Paths, ks: KillSwitches): void {
+  const b = readBrief(p);
+  if (!b) return;
+  const cur = b.killSwitches;
+  if (cur.pushPaths === ks.pushPaths && cur.networkContent === ks.networkContent && cur.apply === ks.apply && cur.ingest === ks.ingest) return;
+  writeBrief(p, { ...b, killSwitches: { pushPaths: ks.pushPaths, networkContent: ks.networkContent, apply: ks.apply, ingest: ks.ingest } });
+}
+
+/** `state/setup-sent.json`: the hash of the last setup snapshot core accepted (Stop sends only the hash while it matches). */
+export function setupSentFile(p: Paths): string {
+  return path.join(p.state, 'setup-sent.json');
 }
 
 /** Capture is on only when a brief said so (no brief = stats only, nothing else leaves). */

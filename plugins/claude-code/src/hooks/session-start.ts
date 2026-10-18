@@ -94,7 +94,9 @@ export function safeNoticeUrl(raw: string, ctx: HookCtx): string | undefined {
 
 export function humanMessage(ctx: HookCtx, brief: CachedBrief | undefined): string | undefined {
   const lines: string[] = [];
-  if (!ctx.config.token) lines.push('Y: no agent token configured. Set agent_token in the plugin settings.');
+  if (ctx.config.insecureApiUrl) {
+    lines.push('Y: api_url is plain http:// to another machine, so Y sends nothing (your agent token would travel unencrypted). Set an https:// api_url in the plugin settings; http:// works for localhost only.');
+  } else if (!ctx.config.token) lines.push('Y: no agent token configured. Set agent_token in the plugin settings.');
   if (brief) {
     for (const n of brief.humanNotices) {
       const url = safeNoticeUrl(n.url, ctx);

@@ -27,16 +27,28 @@ function readPluginVersion(env) {
   }
   return void 0;
 }
+var LOOPBACK_HOSTS = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+function isInsecureUrl(raw) {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:") return false;
+    const host = u.hostname.toLowerCase();
+    return !(LOOPBACK_HOSTS.has(host) || host.endsWith(".localhost") || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host));
+  } catch {
+    return false;
+  }
+}
 function loadConfig(env) {
-  const token = env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
   const apiUrl = (env.CLAUDE_PLUGIN_OPTION_API_URL?.trim() || "http://localhost:8787").replace(/\/+$/, "");
+  const insecureApiUrl = isInsecureUrl(apiUrl) && env.Y_ALLOW_INSECURE_URL !== "1";
+  const token = insecureApiUrl ? void 0 : env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
   const dataDir = env.CLAUDE_PLUGIN_DATA || env.Y_DATA_DIR || path.join(os.homedir(), ".y");
   const sm = env.CLAUDE_PLUGIN_OPTION_SHARE_MODE;
   const shareMode = sm === "off" || sm === "auto-team" ? sm : "stats";
   const wk = env.CLAUDE_PLUGIN_OPTION_WAKE_ON_DM;
   const wakeOnDm = wk === "off" || wk === "owner-only" ? wk : "teammates";
   const headless = env.Y_MODE === "ci" || env.CI === "true" || env.CI === "1";
-  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT };
+  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT, ...insecureApiUrl ? { insecureApiUrl } : {} };
 }
 function isChild(env) {
   return env.Y_CHILD === "1";
@@ -216,7 +228,7 @@ async function failOpen(ctx, name, fn) {
 }
 
 // src/listener.ts
-import * as fs3 from "node:fs";
+import * as fs4 from "node:fs";
 import * as path4 from "node:path";
 
 // ../../node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/classic/external.js
@@ -23317,6 +23329,16 @@ function readBrief(p) {
   const again = sanitizeBrief({ ...b, v: 1 }, b.fetchedAt);
   return again;
 }
+function writeBrief(p, b) {
+  writeJsonAtomic(p.brief, b);
+}
+function mergeKillSwitches(p, ks) {
+  const b = readBrief(p);
+  if (!b) return;
+  const cur = b.killSwitches;
+  if (cur.pushPaths === ks.pushPaths && cur.networkContent === ks.networkContent && cur.apply === ks.apply && cur.ingest === ks.ingest) return;
+  writeBrief(p, { ...b, killSwitches: { pushPaths: ks.pushPaths, networkContent: ks.networkContent, apply: ks.apply, ingest: ks.ingest } });
+}
 function readPulse(p) {
   const s = readJson(p.pulse);
   if (!s || typeof s !== "object") return { updatedAt: 0 };
@@ -23386,11 +23408,13 @@ function clearSessionEnded(p, sid) {
 
 // src/wake-budget.ts
 import * as path3 from "node:path";
+import * as fs3 from "node:fs";
 var WAKE_MIN_INTERVAL_MS = 6e4;
 var WAKE_MAX_PER_HOUR = 6;
 var WAKE_MAX_PER_DAY = 30;
 var HOUR_MS = 36e5;
 var DAY_MS = 24 * HOUR_MS;
+var WAKE_LOCK_STALE_MS = 5e3;
 function budgetFile(p) {
   return path3.join(p.state, "wake-budget.json");
 }
@@ -23407,11 +23431,36 @@ function checkBudget(wakes, now) {
   if (recent.length >= WAKE_MAX_PER_DAY) return { allow: false, reason: "day" };
   return { allow: true };
 }
+function lockDir(p) {
+  return path3.join(p.state, "wake-budget.lock");
+}
+function acquireWakeLock(p) {
+  const dir = lockDir(p);
+  fs3.mkdirSync(p.state, { recursive: true, mode: 448 });
+  try {
+    fs3.mkdirSync(dir);
+    return true;
+  } catch {
+    try {
+      if (Date.now() - fs3.statSync(dir).mtimeMs < WAKE_LOCK_STALE_MS) return false;
+      fs3.rmSync(dir, { recursive: true, force: true });
+      fs3.mkdirSync(dir);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
 function takeWake(p, now) {
-  const wakes = readWakes(p, now);
-  const v = checkBudget(wakes, now);
-  if (v.allow) writeJsonAtomic(budgetFile(p), { wakes: [...wakes, now] });
-  return v;
+  if (!acquireWakeLock(p)) return { allow: false, reason: "busy" };
+  try {
+    const wakes = readWakes(p, now);
+    const v = checkBudget(wakes, now);
+    if (v.allow) writeJsonAtomic(budgetFile(p), { wakes: [...wakes, now] });
+    return v;
+  } finally {
+    fs3.rmSync(lockDir(p), { recursive: true, force: true });
+  }
 }
 function pendingFile(p, sid) {
   return path3.join(p.state, `pending-wake-${safeSid(sid)}.json`);
@@ -23431,9 +23480,20 @@ var SAFETY_POLL_MS = 3e5;
 var SLOW_POLL_MS = 6e4;
 var ACTIVE_POLL_MS = PULSE_ACTIVE_EVERY_S * 1e3;
 var TURN_CHECK_MS = 15e3;
+var MIN_IDLE_POLL_MS = 2e3;
+var MAX_IDLE_POLL_MS = 3e4;
+var CURSOR_RE = /^[A-Za-z0-9_\-.~=]{1,512}$/;
 var SID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 function listenerFile(ctx, sid) {
   return path4.join(ctx.paths.state, `listener-${safeSid(sid)}.json`);
+}
+function cursorFile(ctx, sid) {
+  return path4.join(ctx.paths.state, `pulse-cursor-${safeSid(sid)}.json`);
+}
+function sessionCursor(ctx, sid) {
+  const own2 = readJson(cursorFile(ctx, sid))?.cursor;
+  if (typeof own2 === "string" && CURSOR_RE.test(own2)) return own2;
+  return readPulse(ctx.paths).cursor;
 }
 function needsListenerFile(ctx, sid) {
   return path4.join(ctx.paths.state, `needs-listener-${safeSid(sid)}.json`);
@@ -23458,7 +23518,7 @@ function claimListener(ctx, sid) {
 function release(ctx, sid, mine) {
   const file2 = listenerFile(ctx, sid);
   const cur = readJson(file2);
-  if (cur && cur.pid === mine.pid && cur.generation === mine.generation) fs3.rmSync(file2, { force: true });
+  if (cur && cur.pid === mine.pid && cur.generation === mine.generation) fs4.rmSync(file2, { force: true });
 }
 function superseded(ctx, sid, mine) {
   const cur = readJson(listenerFile(ctx, sid));
@@ -23499,7 +23559,7 @@ function markNeedsListener(ctx) {
     if (!listeningEnabled(ctx)) return OK;
     const file2 = needsListenerFile(ctx, sid);
     if (liveListener(ctx, sid)) {
-      fs3.rmSync(file2, { force: true });
+      fs4.rmSync(file2, { force: true });
       return OK;
     }
     if (!readJson(file2)) writeJsonAtomic(file2, { since: ctx.now() });
@@ -23529,7 +23589,7 @@ function listen(ctx, o = {}) {
       if (isTurnActive(ctx, sid)) await reportTurn(ctx, sid);
       return OK;
     }
-    fs3.rmSync(needsListenerFile(ctx, sid), { force: true });
+    fs4.rmSync(needsListenerFile(ctx, sid), { force: true });
     const wait = o.sleep ?? sleep;
     const endAt = ctx.now() + (o.runMs ?? LISTEN_TIMEOUT_MS - EXIT_MARGIN_MS);
     const backoffMin = o.backoffMinMs ?? BACKOFF_MIN_MS;
@@ -23546,6 +23606,7 @@ function listen(ctx, o = {}) {
     openBell();
     let backoff = backoffMin;
     let bellBackoff = backoffMin;
+    let idleFloor = MIN_IDLE_POLL_MS;
     try {
       while (ctx.now() < endAt) {
         if (superseded(ctx, sid, mine)) return OK;
@@ -23559,7 +23620,7 @@ function listen(ctx, o = {}) {
         const active = isTurnActive(ctx, sid);
         const polledAt = ctx.now();
         const q = new URLSearchParams({ wait: String(waitS), sessionId: sid, active: active ? "1" : "0" });
-        const cursor = readPulse(ctx.paths).cursor;
+        const cursor = sessionCursor(ctx, sid);
         if (cursor) q.set("cursor", cursor);
         let delay = 0;
         let ok = false;
@@ -23575,15 +23636,19 @@ function listen(ctx, o = {}) {
             const r = res.body;
             const unread = UnreadCounts.safeParse(r.unread);
             const ks = KillSwitches.safeParse(r.killSwitches);
-            const newCursor = typeof r.cursor === "string" && /^[A-Za-z0-9_\-.~=]{1,512}$/.test(r.cursor) ? r.cursor : void 0;
+            const newCursor = typeof r.cursor === "string" && CURSOR_RE.test(r.cursor) ? r.cursor : void 0;
             updatePulse(ctx.paths, { ...newCursor ? { cursor: newCursor } : {}, ...unread.success ? { unread: unread.data } : {} }, ctx.now());
+            if (newCursor) writeJsonAtomic(cursorFile(ctx, sid), { cursor: newCursor });
+            if (ks.success) mergeKillSwitches(ctx.paths, ks.data);
             const wake = r.wake;
             const pushOk = ks.success && !ks.data.pushPaths;
             if (superseded(ctx, sid, mine)) return OK;
             if (wake && wake.targetSessionId === sid && pushOk) {
               const valid = Pointer.safeParse(wake.pointer);
               const pointer = valid.success ? valid.data : void 0;
-              if (isRealNews(pointer, unread.success ? unread.data : void 0)) {
+              if (isRealNews(pointer, unread.success ? unread.data : void 0) && ctx.config.wakeOnDm === "owner-only" && pointer?.template_id !== "P4") {
+                if (pointer) parkPendingWake(ctx.paths, sid, pointer, ctx.now());
+              } else if (isRealNews(pointer, unread.success ? unread.data : void 0)) {
                 const budget = takeWake(ctx.paths, ctx.now());
                 if (!budget.allow) {
                   if (pointer) parkPendingWake(ctx.paths, sid, pointer, ctx.now());
@@ -23596,6 +23661,15 @@ function listen(ctx, o = {}) {
             }
             const ra = typeof r.retryAfterS === "number" && r.retryAfterS > 0 ? Math.min(3600, r.retryAfterS) : 0;
             delay = ra * 1e3;
+            if (mode.kind === "longpoll") {
+              const early = waitS > 0 && ctx.now() - polledAt < Math.min(waitS * 1e3, MIN_IDLE_POLL_MS);
+              if (early && (newCursor === void 0 || newCursor === cursor)) {
+                delay = Math.max(delay, idleFloor);
+                idleFloor = Math.min(MAX_IDLE_POLL_MS, idleFloor * 2);
+              } else {
+                idleFloor = MIN_IDLE_POLL_MS;
+              }
+            }
           } else if (res.status === 401 || res.status === 403) {
             return OK;
           } else {

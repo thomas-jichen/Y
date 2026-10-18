@@ -3,6 +3,14 @@
  * `POST /api/v1/ingest` per chunk, deletes on 2xx, retries with backoff,
  * moves a chunk to `outbox/dead` after 10 failed attempts, and stores the
  * pulse summary from each response in `state/pulse.json`.
+ *
+ * - Network errors (offline, DNS, refused, timeout) never count toward
+ *   dead-lettering: the run backs off and, after a few in a row, stops; the
+ *   next Stop or SessionStart tries again.
+ * - With the `ingest` kill switch engaged (cached brief, refreshed by the
+ *   listener's pulses) chunks stay in the outbox and nothing is sent.
+ * - `state/setup-sent.json` records a setup snapshot's hash only once a chunk
+ *   carrying that snapshot was accepted (2xx).
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -21,9 +29,11 @@ import {
   type Paths,
 } from './runtime.js';
 import { listChunks } from './outbox.js';
-import { updatePulse } from './state.js';
+import { readBrief, setupSentFile, updatePulse } from './state.js';
 
 export const MAX_ATTEMPTS = 10;
+/** Consecutive network errors after which a run gives up (without dead-lettering anything). */
+export const MAX_NETWORK_ERRORS_PER_RUN = 6;
 const LOCK_STALE_MS = 5 * 60_000;
 
 export interface UploaderOpts {
@@ -88,6 +98,16 @@ function moveToDead(p: Paths, chunk: string): void {
   fs.rmSync(attemptsFile(chunk), { force: true });
 }
 
+function recordSetupSent(p: Paths, body: unknown): void {
+  const setup = (body as { setup?: { hash?: unknown; snapshot?: unknown } } | null)?.setup;
+  if (!setup || typeof setup.hash !== 'string' || !setup.snapshot) return;
+  try {
+    writeJsonAtomic(setupSentFile(p), { hash: setup.hash });
+  } catch {
+    /* best effort: the next Stop sends the snapshot again */
+  }
+}
+
 export async function drainOutbox(o: UploaderOpts): Promise<UploadSummary> {
   const now = o.now ?? Date.now;
   const wait = o.sleep ?? sleep;
@@ -96,9 +116,12 @@ export async function drainOutbox(o: UploaderOpts): Promise<UploadSummary> {
   const budget = o.budgetMs ?? 90_000;
   const summary: UploadSummary = { sent: 0, dead: 0, remaining: 0, locked: false };
   if (!o.config.token) return { ...summary, remaining: listChunks(o.paths).length };
+  // Kill switch: "clients keep chunks in the outbox and don't upload" (KillSwitches.ingest).
+  if (readBrief(o.paths)?.killSwitches.ingest) return { ...summary, remaining: listChunks(o.paths).length };
   if (!acquireLock(o.paths, start)) return { ...summary, locked: true, remaining: listChunks(o.paths).length };
   let token = o.config.token;
   let refreshed = false;
+  let netErrors = 0;
   try {
     for (;;) {
       const next = listChunks(o.paths)[0];
@@ -115,6 +138,7 @@ export async function drainOutbox(o: UploaderOpts): Promise<UploadSummary> {
       let status = 0;
       let retryAfterS: number | undefined;
       let resBody: unknown;
+      let networkError = false;
       try {
         const res = await httpJson(o.fetch, 'POST', `${o.config.apiUrl}/api/v1/ingest`, {
           token,
@@ -125,12 +149,24 @@ export async function drainOutbox(o: UploaderOpts): Promise<UploadSummary> {
         retryAfterS = res.retryAfterS;
         resBody = res.body;
       } catch (e) {
+        networkError = true;
         logLine(o.config.dataDir, 'uploader', `network error: ${(e as Error)?.message ?? e}`.slice(0, 300));
       }
+      if (networkError) {
+        // Offline is not the chunk's fault: back off without counting an attempt.
+        netErrors++;
+        if (netErrors >= MAX_NETWORK_ERRORS_PER_RUN) break;
+        const delay = Math.min(30_000, backoff * 2 ** (netErrors - 1));
+        if (now() - start + delay > budget) break;
+        await wait(delay);
+        continue;
+      }
+      netErrors = 0;
       if (status >= 200 && status < 300) {
         fs.rmSync(next, { force: true });
         fs.rmSync(attemptsFile(next), { force: true });
         summary.sent++;
+        recordSetupSent(o.paths, body);
         const r = IngestResponse.safeParse(resBody);
         if (r.success) updatePulse(o.paths, { cursor: r.data.pulse.cursor, unreadTotal: r.data.pulse.unread }, now());
         continue;

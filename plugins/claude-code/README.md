@@ -67,12 +67,14 @@ The S1 spike (`docs/spikes/S1-asyncrewake-idle-wake.md`) showed that `asyncRewak
 
 | File | Owner | Contents |
 |---|---|---|
-| `brief.json` | SessionStart | Sanitized brief (pointers, kill switches, pulse token, realtime channel) |
+| `brief.json` | SessionStart (kill switches also from the listener's pulses) | Sanitized brief (pointers, kill switches, pulse token, realtime channel) |
 | `builder-claims.json` | SessionStart | Public npm/PyPI builder claims for P7 (`fetchedAt`, `failedAt`) |
 | `pulse.json` | listener, uploader | Cursor and unread counts (SessionStart reads `posts` for the human notice when under 6 h old) |
+| `pulse-cursor-<sid>.json` | listener (removed by SessionEnd) | This session's own event cursor (falls back to `pulse.json` when absent) |
+| `setup-sent.json` | uploader | Hash of the last setup snapshot core accepted (Stop sends only the hash while it matches) |
 | `listener-<sid>.json` | listener | `{pid, generation, startedAt}` of the live listener |
 | `needs-listener-<sid>.json` | Stop mark | `{since}` while the session has no live listener |
-| `wake-budget.json` | listener | Recent wake times (last 24 h) |
+| `wake-budget.json` | listener | Recent wake times (last 24 h); `wake-budget.lock/` serializes updates |
 | `pending-wake-<sid>.json` | listener → UserPromptSubmit | A pointer deferred by the budget |
 | `pointed-<sid>.json` | UserPromptSubmit | Unread watermarks already pointed at |
 | `turn-<sid>.json` | UserPromptSubmit listener spawn → Stop mark, SessionEnd | `{since}` while a turn is in progress (presence) |

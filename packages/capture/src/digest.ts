@@ -44,12 +44,34 @@ type Input = Record<string, unknown>;
 const asInput = (v: unknown): Input => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Input) : {});
 const s = (v: unknown): string => (typeof v === 'string' ? v : '');
 
+/** A marker in `@y/redact`'s grammar, so pass-1 redaction keeps it as is. */
+const CLI_SECRET = '<REDACTED:cli_password>';
+const SECRET_NAME = '[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?)[A-Za-z0-9_]*';
+const ENV_ASSIGN_RE = new RegExp(`(^|[\\s;&|(])((?:export\\s+)?${SECRET_NAME})=("[^"]*"|'[^']*'|\\S+)`, 'gi');
+const MYSQL_RE = /\b(?:mysql\w*|mariadb\w*)\b/;
+
+/**
+ * Mask passwords that command-line tools take as arguments: `sshpass -p X`,
+ * `--password X` / `--password=X`, `mysql -pX`, `curl -u user:X` and
+ * `PGPASSWORD=X`-style assignments. Generic secret shapes are `@y/redact`'s job;
+ * these have no shape of their own, only a position. Exported for tests.
+ */
+export function maskCliSecrets(cmd: string): string {
+  let out = cmd
+    .replace(/(\bsshpass\s+-p\s*)("[^"]*"|'[^']*'|\S+)/g, `$1${CLI_SECRET}`)
+    .replace(/(\s--(?:password|passwd)(?:=|\s+))(?!-)("[^"]*"|'[^']*'|\S+)/gi, `$1${CLI_SECRET}`)
+    .replace(ENV_ASSIGN_RE, (_m, pre: string, name: string) => `${pre}${name}=${CLI_SECRET}`);
+  if (/\b(?:curl|wget|http)\b/.test(out)) out = out.replace(/(\s(?:-u|--user)(?:=|\s+)["']?[^\s:"']+:)([^\s"']+)/g, `$1${CLI_SECRET}`);
+  if (MYSQL_RE.test(out)) out = out.replace(/(\s-p)(?![\s-])("[^"]*"|'[^']*'|\S+)/g, `$1${CLI_SECRET}`);
+  return out;
+}
+
 function toolArg(name: string, input: Input, projectDir?: string): string {
   switch (name) {
     case 'Bash': {
       const root = projectDir?.replace(/\/+$/, '');
       const cmd = root ? s(input.command).split(root).join('.') : s(input.command);
-      return oneLine(cmd, 300);
+      return oneLine(maskCliSecrets(cmd), 300);
     }
     case 'Edit':
     case 'MultiEdit':
@@ -93,7 +115,27 @@ function toolArg(name: string, input: Input, projectDir?: string): string {
   }
 }
 
-function configDiff(name: string, input: Input): string[] {
+const CONFIG_VALUE = '<REDACTED:config_value>';
+/** JSON keys whose string values are enums or tool names, kept so the distiller still sees the shape. */
+const SAFE_JSON_KEYS = new Set(['type', 'matcher', 'defaultMode', 'outputStyle', 'model', 'theme', 'source']);
+
+/**
+ * JSON agent config (`.mcp.json`, `.claude/settings*.json`, hooks.json) holds
+ * MCP env blocks, headers, args (connection strings) and hook commands, which
+ * the setup snapshot never sends (setup.ts). Keep keys, numbers, booleans and
+ * structure; replace string values with a marker, except a few enum keys.
+ */
+function maskJsonConfigLine(line: string): string {
+  return line.replace(/"((?:[^"\\]|\\.)*)"(\s*:\s*)?/g, (m, str: string, colon: string | undefined, offset: number, whole: string) => {
+    if (colon) return m; // a key
+    const before = whole.slice(0, offset);
+    const key = /"((?:[^"\\]|\\.)*)"\s*:\s*$/.exec(before)?.[1];
+    if (key !== undefined && SAFE_JSON_KEYS.has(key) && /^[A-Za-z0-9_.:|*() -]{0,60}$/.test(str)) return m;
+    return `"${CONFIG_VALUE}"`;
+  });
+}
+
+function configDiff(name: string, input: Input, isJson = false): string[] {
   const out: string[] = [];
   const pairs: [string, string][] = [];
   if (name === 'Write') pairs.push(['', s(input.content)]);
@@ -107,7 +149,10 @@ function configDiff(name: string, input: Input): string[] {
     for (const l of al) if (!common.has(l)) out.push(`-${l}`);
     for (const l of bl) if (!common.has(l)) out.push(`+${l}`);
   }
-  return out.slice(0, 40).map((l) => (l.length > 200 ? `${l.slice(0, 199)}…` : l));
+  return out
+    .slice(0, 40)
+    .map((l) => (isJson ? maskJsonConfigLine(l) : l))
+    .map((l) => (l.length > 200 ? `${l.slice(0, 199)}…` : l));
 }
 
 const approx = (entries: readonly Entry[]) => Math.ceil(entries.reduce((n, e) => n + e.text.length + 1, 0) / 4);
@@ -148,7 +193,7 @@ export function buildDigest(records: readonly ClaudeRecord[], opts?: DigestOptio
         entries.push({ kind: 'TOOL', text: line, window: false });
         const path = s(input.file_path) || s(input.notebook_path);
         if (!mcp && /^(?:Edit|MultiEdit|Write)$/.test(b.name) && CONFIG_PATH_RE.test(path.replace(/\\/g, '/'))) {
-          const diff = configDiff(b.name, input);
+          const diff = configDiff(b.name, input, /\.json$/i.test(path));
           entries.push({ kind: 'CONFIG', text: `CONFIG ${relPath(path, opts?.projectDir)}:\n${diff.join('\n')}`, window: false });
         }
       } else if (b.type === 'tool_result') {
