@@ -1,42 +1,52 @@
 import { AnimatePresence, motion } from 'motion/react'
 import type { StoryGroup } from '@/api/types'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
-import { Skeleton } from '@/components/primitives/Skeleton'
 import { cn } from '@/lib/cn'
 
-export function StoriesRail({ groups, onOpen, myIds }: { groups?: StoryGroup[]; onOpen: (index: number) => void; myIds: Set<string> }) {
+/**
+ * Only sessions you haven't watched. When there are none, the row is gone,
+ * so every face here means "something new happened".
+ */
+export function StoriesRail({ groups, onOpen, myIds }: { groups?: StoryGroup[]; onOpen: (handle: string) => void; myIds: Set<string> }) {
+  const unseen = groups?.filter((g) => !g.allSeen) ?? []
   return (
-    <div className="no-scrollbar -mx-4 flex gap-1 overflow-x-auto px-4 pb-1 pt-1 md:mx-0 md:px-1">
-      {!groups &&
-        Array.from({ length: 6 }, (_, i) => (
-          <div key={i} className="flex w-[78px] shrink-0 flex-col items-center gap-2">
-            <Skeleton className="size-16 rounded-full" />
-            <Skeleton className="h-2.5 w-14" />
+    <AnimatePresence initial={false}>
+      {unseen.length > 0 && (
+        <motion.section
+          aria-label="New sessions"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="mb-10"
+        >
+          <div className="mb-4 text-caption">New sessions</div>
+          <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 md:mx-0 md:px-0">
+            <AnimatePresence initial={false}>
+              {unseen.map((g) => {
+                const mine = myIds.has(g.agent.id)
+                return (
+                  <motion.button
+                    key={g.agent.id}
+                    layout="position"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    onClick={() => onOpen(g.agent.handle)}
+                    className="flex w-[84px] shrink-0 flex-col items-center gap-2"
+                  >
+                    <AgentAvatar agent={g.agent} size={56} story="unseen" presence={false} />
+                    <span className={cn('w-full truncate text-center text-caption', mine && 'font-medium')}>
+                      {mine ? g.agent.displayName.replace(/^.*'s /, 'Your ') : g.agent.displayName}
+                    </span>
+                  </motion.button>
+                )
+              })}
+            </AnimatePresence>
           </div>
-        ))}
-      <AnimatePresence initial={false}>
-        {groups?.map((g, i) => {
-          const mine = myIds.has(g.agent.id)
-          return (
-            <motion.button
-              key={g.agent.id}
-              layout
-              initial={{ opacity: 0, scale: 0.8, filter: 'blur(8px)' }}
-              animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
-              transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-              onClick={() => onOpen(i)}
-              className="group flex w-[78px] shrink-0 flex-col items-center gap-1.5 rounded-[14px] py-1.5 outline-none"
-            >
-              <span className="transition-transform duration-200 group-hover:scale-[1.04] group-active:scale-95">
-                <AgentAvatar agent={g.agent} size={64} story={g.allSeen ? 'seen' : 'unseen'} />
-              </span>
-              <span className={cn('w-full truncate text-center text-[11px] leading-[14px]', g.allSeen ? 'text-fg-3' : 'text-fg-2', mine && 'font-medium text-fg')}>
-                {mine ? g.agent.displayName.replace(/^.*'s /, 'Your ') : g.agent.displayName}
-              </span>
-            </motion.button>
-          )
-        })}
-      </AnimatePresence>
-    </div>
+        </motion.section>
+      )}
+    </AnimatePresence>
   )
 }
