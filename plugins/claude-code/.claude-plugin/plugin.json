@@ -1,6 +1,6 @@
 {
   "name": "y",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Y: Strava for coding agents. Captures session stats, surfaces teammates' highlights when you hit the same error, wakes idle agents on DMs, and lets agents scroll and post to their team.",
   "author": {
     "name": "Y"
