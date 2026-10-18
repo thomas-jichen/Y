@@ -1,6 +1,6 @@
 // Real mode: routes the web's request paths to core's /api/v1 endpoints and adapts the
 // JSON (see adapt.ts). Paths core doesn't serve yet resolve to empty values where an empty
-// state is honest (stories, posts, trending) and to a NOT_IMPLEMENTED error otherwise.
+// state is honest (stories, trending) and to a NOT_IMPLEMENTED error otherwise.
 import { API_BASE } from '@/lib/env'
 import * as A from './adapt'
 import { auth } from './auth'
@@ -38,13 +38,18 @@ export async function core<T = any>(method: Method, path: string, body?: unknown
 const notImplemented = (what: string) =>
   new HttpError(404, { error: { code: 'NOT_IMPLEMENTED', message: `${what} is not available on this server yet`, retryable: false } })
 
-let lastMe: Me | null = null
+/** /me as last fetched, with the token it was fetched under: a later sign-in in this tab never inherits it. */
+let lastMe: { token: string | undefined; me: Me } | null = null
+const cachedMe = (): Me | null => (lastMe && lastMe.token === auth.token() ? lastMe.me : null)
+/** The signed-in user's /me: the cached one for this session, else a fresh fetch. */
+const currentMe = async (): Promise<Me> => cachedMe() ?? ((await realRequest('GET', 'me', undefined, {})) as Me)
 /** Review item kinds seen in /review, for mapping web decisions onto core's per-kind decisions. */
 const reviewKinds = new Map<string, string>()
 
 /** The signed-in user's id (threads name the other side of a DM from it). */
 async function viewerId(): Promise<string | undefined> {
-  if (lastMe) return lastMe.user.id
+  const cached = cachedMe()
+  if (cached) return cached.user.id
   const m = await core('GET', '/me').catch(() => null)
   return m?.user?.id ? String(m.user.id) : undefined
 }
@@ -57,7 +62,7 @@ const DAY = 86_400_000
  * numbers summed from their sessions. No traits or beacons: core doesn't send them.
  */
 async function teamFromFeed(): Promise<Team> {
-  const me = lastMe ?? ((await realRequest('GET', 'me', undefined, {})) as Me)
+  const me = await currentMe()
   const page = A.feed(await core('GET', '/feed?tab=all').catch(() => ({ items: [] })))
   const now = Date.now()
   const agents = new Map<string, AgentRef>(me.agents.map((a) => [a.id, a]))
@@ -94,15 +99,20 @@ async function teamFromFeed(): Promise<Team> {
 
 /**
  * Core has no agent profile endpoint yet either. A profile is derived the same way as Team:
- * the agent comes from /me or the team feed, its sessions are its feed cards, and the week and
- * habits are summed from them. No bio, traits, follows or stories: core doesn't send them.
+ * the agent comes from /me, the team feed or its posts, its sessions are its feed cards, and the
+ * week and habits are summed from them. No bio, traits or stories: core doesn't send them.
+ * Follow status is merged in by the GET agents/:h route (core's /agents/:h/follow).
  */
 async function profileFromFeed(handle: string): Promise<{ profile: AgentProfile; activities: Activity[] }> {
-  const me = lastMe ?? ((await realRequest('GET', 'me', undefined, {})) as Me)
+  const me = await currentMe()
   const page = A.feed(await core('GET', '/feed?tab=all').catch(() => ({ items: [] })))
   const mine = me.agents.find((a) => a.handle === handle)
   const activities = page.items.filter((x) => x.agent.handle === handle)
-  const agent = mine ?? activities[0]?.agent
+  // An agent that posted but has no sessions in the feed yet is still a teammate: take it from its posts.
+  const agent =
+    mine ??
+    activities[0]?.agent ??
+    A.postPage(await core('GET', `/agents/${encodeURIComponent(handle)}/posts`).catch(() => ({ items: [] }))).items[0]?.author
   if (!agent) throw new HttpError(404, { error: { code: 'NOT_FOUND', message: `No agent @${handle} on your team`, retryable: false } })
   const now = Date.now()
   const at = (x: Activity) => Date.parse(x.endedAt ?? x.startedAt)
@@ -161,14 +171,16 @@ export async function realRequest(method: Method, path: string, body: unknown, h
 
   // ---- identity
   if (is('GET', 'me')) {
+    const token = auth.token()
     const [m, review] = await Promise.all([core('GET', '/me'), core('GET', '/review').catch(() => [])])
     // Remote instructions are per agent on core; the web shows one switch (on if any agent has it on).
     const agentIds: string[] = (m?.agents ?? []).map((a: { id: string }) => a.id)
     const remote = await Promise.all(
       agentIds.map((id) => core<{ on?: boolean }>('GET', `/settings/remote-instructions?agentId=${encodeURIComponent(id)}`).catch(() => null)),
     )
-    lastMe = A.me({ ...m, remoteInstructionsOn: remote.some((r) => r?.on === true) }, A.reviewList(review).items.filter((r) => r.state === 'pending').length)
-    return lastMe
+    const me = A.me({ ...m, remoteInstructionsOn: remote.some((r) => r?.on === true) }, A.reviewList(review).items.filter((r) => r.state === 'pending').length)
+    lastMe = { token, me }
+    return me
   }
 
   // ---- feed (stats cards): core's default tab is highlights-only, so the web asks for tab=all
@@ -223,7 +235,7 @@ export async function realRequest(method: Method, path: string, body: unknown, h
   }
   if (is('POST', 'settings', 'remote-instructions')) {
     const on = Boolean((body as { on?: boolean } | undefined)?.on)
-    for (const a of lastMe?.agents ?? []) await core('PUT', '/settings/remote-instructions', { agentId: a.id, on }, headers)
+    for (const a of (await currentMe()).agents) await core('PUT', '/settings/remote-instructions', { agentId: a.id, on }, headers)
     return { remoteInstructionsOn: on }
   }
 
@@ -233,16 +245,51 @@ export async function realRequest(method: Method, path: string, body: unknown, h
   if (is('POST', 'slack', 'link')) return core('POST', '/slack/link', body, headers)
   if (is('POST', 'slack', 'unlink')) return core('POST', '/slack/unlink', {}, headers)
 
-  // ---- Y extensions core doesn't serve yet (README "Contract extensions")
+  // ---- posts (core: packages/schema posts.ts). Tab names pass through unchanged; FEED_TAB is only for /feed.
+  if (is('GET', 'posts')) {
+    const p = new URLSearchParams({ tab: q.get('tab') ?? 'for_you' })
+    const cursor = q.get('cursor')
+    if (cursor) p.set('cursor', cursor)
+    return A.postPage(await core('GET', `/posts?${p}`))
+  }
+  if (is('GET', 'posts', null)) return A.postDetail(await core('GET', pathname))
+  if (is('POST', 'posts', null, 'react')) return A.reactResponse(await core('POST', pathname, body, headers))
+  if (is('POST', 'posts', null, 'comment')) return A.comment(await core('POST', pathname, body, headers))
+  if (is('POST', 'posts', null, 'ask')) {
+    // The composer names me.agents[0]; send its id so the agent that replies is the one the label promised.
+    const b = (body ?? {}) as { body?: string; agentId?: string }
+    const agentId = b.agentId ?? (await currentMe().catch(() => null))?.agents[0]?.id
+    return core('POST', pathname, { body: b.body, ...(agentId ? { agentId } : {}) }, headers)
+  }
+  if (is('POST', 'posts', null, 'remove')) return core('POST', pathname, {}, headers)
+
+  // ---- agents. Handles in these URLs are bare; core adds the '@'.
+  if (is('GET', 'agents', null)) {
+    const [{ profile }, follow] = await Promise.all([
+      profileFromFeed(seg[1]!),
+      core<{ following?: boolean; followers?: number }>('GET', `${pathname}/follow`).catch(() => null),
+    ])
+    return follow ? { ...profile, viewerFollows: Boolean(follow.following), followers: Number(follow.followers ?? 0) } : profile
+  }
+  if (is('GET', 'agents', null, 'activities')) return { items: (await profileFromFeed(seg[1]!)).activities }
+  if (is('GET', 'agents', null, 'posts')) return A.postPage(await core('GET', pathname))
+  if (is('GET', 'agents', null, 'scrolls')) return A.scrollPage(await core('GET', pathname))
+  if (is('POST', 'agents', null, 'scroll')) return A.startScroll(await core('POST', pathname, {}, headers))
+  if (is('GET', 'agents', null, 'follow')) return core('GET', pathname)
+  if (is('POST', 'agents', null, 'follow')) return core('POST', pathname, {}, headers)
+
+  // ---- scrolls ('active' before ':id')
+  if (is('GET', 'scrolls', 'active')) {
+    const s = await core('GET', '/scrolls/active')
+    return s ? A.scroll(s) : null
+  }
+  if (is('GET', 'scrolls', null)) return A.scroll(await core('GET', pathname))
+
+  // ---- Y extensions core doesn't serve yet (README "Contract extensions"): stories and trending setups
   if (is('GET', 'stories')) return []
-  if (is('GET', 'posts')) return { items: [] }
-  if (is('GET', 'scrolls', 'active')) return null
   if (is('GET', 'trending')) return []
   if (is('GET', 'team')) return teamFromFeed()
-  if (is('GET', 'agents', null)) return (await profileFromFeed(seg[1]!)).profile
-  if (is('GET', 'agents', null, 'activities')) return { items: (await profileFromFeed(seg[1]!)).activities }
-  if (is('GET', 'agents', null, 'posts') || is('GET', 'agents', null, 'scrolls')) return { items: [] }
-  if (seg[0] === 'posts' || seg[0] === 'stories' || seg[0] === 'scrolls' || seg[0] === 'agents') throw notImplemented(`/${seg[0]}`)
+  if (seg[0] === 'stories') throw notImplemented('/stories')
 
   return core(method, path, method === 'GET' ? undefined : body, headers)
 }

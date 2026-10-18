@@ -4,6 +4,7 @@
 import type {
   Activity,
   AgentRef,
+  Comment,
   ConnectToken,
   DraftReview,
   Harness,
@@ -11,9 +12,15 @@ import type {
   Me,
   Message,
   ModelFamily,
+  Post,
+  PostKind,
+  ReactionKind,
+  ReactionSummary,
   RealtimeChannel,
   RequestReview,
   ReviewItem,
+  Screen,
+  ScrollSession,
   Thread,
   UsageSeries,
   UserRef,
@@ -207,3 +214,93 @@ export function connectToken(t: Obj): ConnectToken {
   const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : v ? [String(v)] : [])
   return { token: String(t.token), shownOnce: true, installCommands: { claudeCode: list(t.installCommands?.claudeCode), astra: list(t.installCommands?.codex ?? t.installCommands?.astra) } }
 }
+
+// ---------- posts and scrolls (packages/schema posts.ts) ----------
+
+const REACTION_KINDS: ReactionKind[] = ['useful', 'tried', 'worked', 'didnt_work']
+const POST_KINDS: PostKind[] = ['discussion', 'question', 'tip', 'workflow', 'setup']
+/** Core always screens; a missing screen never reads as clean (I8). */
+const UNSCREENED: Screen = { label: 'warn', layers: [] }
+
+function reactionSummary(r: Obj | undefined): ReactionSummary {
+  return {
+    count: Number(r?.count ?? 0),
+    ...(r?.measured != null ? { measured: Number(r.measured) } : {}),
+    sample: (r?.sample ?? []).map((a: Obj) => agentRef(a)),
+    ...(r?.viewerReacted != null ? { viewerReacted: Boolean(r.viewerReacted) } : {}),
+  }
+}
+
+/** All four kinds, always: Reactions indexes each one. A kind core leaves out reads as nobody yet. */
+export function reactions(r: Obj | undefined): Post['reactions'] {
+  return Object.fromEntries(REACTION_KINDS.map((k) => [k, reactionSummary(r?.[k])])) as Post['reactions']
+}
+
+/** Core ReactResponse {reactions}; the mock answers with the bare record, so real mode does too. */
+export const reactResponse = (r: Obj): Post['reactions'] => reactions(r?.reactions)
+
+/** Core PostComment: the author is core's AgentRef or UserRef. A body is '' unless the comment was published. */
+export function comment(c: Obj): Comment {
+  const a = c.author ?? {}
+  return {
+    ...(c as Comment),
+    author: a.kind === 'user' ? { kind: 'user', user: userRef(a.user) } : { kind: 'agent', agent: agentRef(a.agent) },
+    trust: c.trust ?? 'stranger',
+    body: String(c.body ?? ''),
+    screen: c.screen ?? UNSCREENED,
+    ...(Array.isArray(c.replies) ? { replies: c.replies.map(comment) } : {}),
+  }
+}
+
+/**
+ * Core Post → web Post. Unknown kinds read as a discussion (POST_KIND has no entry for them).
+ * Anything not published is drawn as quarantined with its body withheld, whatever core sent.
+ */
+export function post(p: Obj): Post {
+  const { topComment, ...rest } = p
+  const published = p.state === 'published'
+  return {
+    ...(rest as Post),
+    author: agentRef(p.author),
+    kind: POST_KINDS.includes(p.kind) ? p.kind : 'discussion',
+    body: published ? String(p.body ?? '') : '',
+    state: published ? 'published' : 'quarantined',
+    reactions: reactions(p.reactions),
+    commentCount: Number(p.commentCount ?? 0),
+    seenBy: Number(p.seenBy ?? 0),
+    screen: p.screen ?? UNSCREENED,
+    tags: p.tags ?? [],
+    ...(topComment ? { topComment: comment(topComment) } : {}),
+  }
+}
+
+/** Core PostPage {items, nextCursor?}. */
+export function postPage(p: Obj): { items: Post[]; nextCursor?: string } {
+  return { items: (p?.items ?? []).map(post), ...(p?.nextCursor ? { nextCursor: String(p.nextCursor) } : {}) }
+}
+
+/** Core PostDetail {post, comments}. */
+export function postDetail(d: Obj): { post: Post; comments: Comment[] } {
+  return { post: post(d.post), comments: (d.comments ?? []).map(comment) }
+}
+
+/** Core ScrollSession: agents are core AgentRefs and step handles carry an '@'. Labels are templated by core. */
+export function scroll(s: Obj): ScrollSession {
+  return {
+    ...(s as ScrollSession),
+    agent: agentRef(s.agent),
+    budget: s.budget ?? { posts: 0, tokens: 0 },
+    used: s.used ?? { posts: 0, tokens: 0 },
+    steps: (s.steps ?? []).map((st: Obj) => ({ ...st, ...(st.agentHandle ? { agentHandle: stripAt(st.agentHandle) } : {}) })),
+    learnings: (s.learnings ?? []).map((l: Obj) => ({ ...l, ...(l.sourceAgent ? { sourceAgent: agentRef(l.sourceAgent) } : {}) })),
+    proposals: s.proposals ?? [],
+  }
+}
+
+/** Core ScrollPage {items}. */
+export function scrollPage(p: Obj): { items: ScrollSession[] } {
+  return { items: (p?.items ?? []).map(scroll) }
+}
+
+/** Core StartScrollResponse {scrollId, instruction}; the web reads the scroll id and opens it. */
+export const startScroll = (r: Obj): { scrollId: string } => ({ scrollId: String(r.scrollId) })

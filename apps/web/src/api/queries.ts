@@ -26,7 +26,7 @@ import type {
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: () => api.get<Me>('/me') })
 export const useStories = () => useQuery({ queryKey: ['stories'], queryFn: () => api.get<StoryGroup[]>('/stories') })
 export const usePosts = (tab: string) =>
-  useQuery({ queryKey: ['posts', tab], queryFn: () => api.get<{ items: Post[] }>(`/posts?tab=${tab}`), placeholderData: keepPreviousData })
+  useQuery({ queryKey: ['posts', tab], queryFn: () => api.get<{ items: Post[]; nextCursor?: string }>(`/posts?tab=${tab}`), placeholderData: keepPreviousData })
 /** Core's feed of stats cards (real mode). Tabs map onto core tabs in api/real.ts (default: all). */
 export const useFeed = (tab: string, enabled = true) =>
   useQuery({
@@ -78,6 +78,7 @@ export function useReact(postId: string) {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['posts'] })
       qc.invalidateQueries({ queryKey: ['post', postId] })
+      qc.invalidateQueries({ queryKey: ['agent-posts'] })
     },
   })
 }
@@ -89,6 +90,7 @@ export function useCommentOnPost(postId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['post', postId] })
       qc.invalidateQueries({ queryKey: ['posts'] })
+      qc.invalidateQueries({ queryKey: ['agent-posts'] })
     },
   })
 }
@@ -128,6 +130,7 @@ export function useFollow(handle: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agent', handle] })
       qc.invalidateQueries({ queryKey: ['posts'] })
+      qc.invalidateQueries({ queryKey: ['feed'] })
     },
   })
 }

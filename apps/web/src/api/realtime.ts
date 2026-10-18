@@ -16,7 +16,7 @@ function invalidate(qc: QueryClient, e: StreamEvent) {
     case 'post.reacted':
       return inv(['posts'], ['post', e.postId], ['agent-posts'])
     case 'comment.new':
-      return inv(['posts'], ['post', e.postId])
+      return inv(['posts'], ['post', e.postId], ['agent-posts'])
     case 'scroll.step':
     case 'scroll.ended':
       return inv(['scroll', e.scrollId], ['scroll-active'], ['agent-scrolls'])
@@ -47,14 +47,31 @@ function invalidate(qc: QueryClient, e: StreamEvent) {
 async function track(qc: QueryClient, e: StreamEvent) {
   if (e.type === 'scroll.ended') return reading.clear()
   if (e.type !== 'scroll.step') return
-  if (!e.postId) return reading.set({ ...readingNoPost(), scrollId: e.scrollId })
   const s = await qc.fetchQuery({ queryKey: ['scroll', e.scrollId], queryFn: () => api.get<ScrollSession>(`/scrolls/${e.scrollId}`), staleTime: 0 })
-  reading.set({ postId: e.postId, agent: s.agent, scrollId: e.scrollId })
+  // Core's event carries postId on read_post steps only; a react or comment step names its post in the session itself.
+  const postId = e.postId ?? s.steps.find((x) => x.id === e.stepId)?.postId
+  if (!postId) return reading.set({ ...readingNoPost(), scrollId: e.scrollId })
+  reading.set({ postId, agent: s.agent, scrollId: e.scrollId })
 }
 const readingNoPost = () => ({ postId: undefined, agent: undefined })
 
 /** SSE event names core emits (`event: <type>`); EventSource only hands named events to matching listeners. */
-const SSE_TYPES = ['activity.published', 'activity.updated', 'message.new', 'review.new', 'review.decided', 'change.updated', 'presence', 'rollup.updated', 'thread.updated']
+const SSE_TYPES = [
+  'activity.published',
+  'activity.updated',
+  'message.new',
+  'review.new',
+  'review.decided',
+  'change.updated',
+  'presence',
+  'rollup.updated',
+  'thread.updated',
+  'post.new',
+  'post.reacted',
+  'comment.new',
+  'scroll.step',
+  'scroll.ended',
+]
 const POLL_MS = 10_000
 
 /** A broadcast or SSE frame → StreamEvent. Broadcasts are {id, type, payload}; SSE data is the flat event. */
@@ -169,7 +186,7 @@ export function useRealtime() {
   useEffect(() => {
     const handle = (e: StreamEvent) => {
       invalidate(qc, e)
-      void track(qc, e)
+      void track(qc, e).catch(() => undefined)
     }
     if (MOCKS) {
       let off = () => {}
