@@ -7,6 +7,7 @@ vi.mock('@y/retrieval', () => import('../messaging/test-fakes.js').then((m) => m
 
 import { seedTeam } from '../messaging/test-support.js';
 import { SlackApiError } from './fake-client.js';
+import { renderForUpdate } from './notify.js';
 import { SU, callTool, makeSlackEnv, seedPerson, type Person, type SlackEnv } from './test-support.js';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 120_000 });
@@ -168,6 +169,71 @@ describe('#93 an unexpected error after the Confirm CAS', () => {
     expect(all).toHaveLength(1);
     expect((await pendings())[0]).toMatchObject({ state: 'confirmed', owner_instruction_id: all[0]!.id });
     expect(s.fake.of('updateMessage').at(-1)!.args.text).toBe('Sent');
+  });
+});
+
+describe('#93 review follow-ups', () => {
+  it('stored and linked, then the message update fallback throws: never says not sent', async () => {
+    await setup();
+    const { bridge } = await ownThread();
+    await reply(SU.alice, bridge, 'start with the users table');
+    const [p] = await pendings();
+    const jobs = s.env.deps.jobs;
+    const orig = jobs.enqueue;
+    jobs.enqueue = (async () => { jobs.enqueue = orig; throw new Error('transient'); }) as typeof jobs.enqueue;
+    s.fake.reset();
+    s.fake.failNext.updateMessage = new SlackApiError('chat.update', 'ratelimited');
+    await s.action(SU.alice, 'y_oi_confirm', `${p!.id}|${alice.agentId}`, { channel: bridge.channel_id, ts: '1700000000.000778' });
+    jobs.enqueue = orig;
+    const all = await ois();
+    expect(all).toHaveLength(1);
+    expect((await pendings())[0]).toMatchObject({ state: 'confirmed', owner_instruction_id: all[0]!.id });
+    const texts = s.fake.of('updateMessage').map((c) => c.args.text);
+    expect(texts).not.toContain('Not sent');
+    // A second click still reports it as handled, and issues nothing more.
+    await s.action(SU.alice, 'y_oi_confirm', `${p!.id}|${alice.agentId}`, { channel: bridge.channel_id, ts: '1700000000.000778' });
+    expect(await ois()).toHaveLength(1);
+  });
+
+  it('the fallback re-render never claims sent for a confirmed row with no stored instruction', async () => {
+    await setup();
+    const { bridge } = await ownThread();
+    await reply(SU.alice, bridge, 'start with the users table');
+    const [p] = await pendings();
+    // A crash between the Confirm CAS and the owner instruction insert leaves exactly this row.
+    await s.env.db.query(`update public.slack_pending_instructions set state = 'confirmed', body = null, decided_at = now() where id = $1`, [p!.id]);
+    const msg = await s.env.deps.db.asService((tx) => renderForUpdate(tx, 'https://y.test', 'pending', p!.id));
+    expect(msg).not.toBeNull();
+    expect(JSON.stringify(msg!.blocks)).not.toContain('Sent to');
+    expect(JSON.stringify(msg!.blocks)).toContain('Already handled');
+  });
+});
+
+describe('#70 legacy bridges with no for_user_id', () => {
+  it('a new notice claims the legacy bridge so replies to it are delivered', async () => {
+    await setup([[() => bob, SU.bob]]);
+    const sent = await send(alice, bob.agentHandle, 'can you review my PR?');
+    await s.drain();
+    const threadId = sent.body.output.thread_id.slice(2) as string;
+    await s.env.db.query(`update public.thread_bridges set for_user_id = null`);
+    const [legacy] = await bridges();
+    s.fake.reset();
+
+    await send(alice, `t_${threadId}`, 'one more thing: the tests');
+    await s.drain();
+    const top = s.fake.of('postMessage').filter((c) => c.args.channel === 'D0BOB0001' && !c.args.threadTs);
+    expect(top).toHaveLength(1);
+    const now = await bridges();
+    expect(now).toHaveLength(1);
+    expect(now[0]).toMatchObject({ thread_id: threadId, channel_id: 'D0BOB0001', for_user_id: bob.userId });
+    expect(now[0]!.thread_ts).not.toBe(legacy!.thread_ts);
+
+    s.fake.reset();
+    const eventId = await reply(SU.bob, now[0]!, 'looking now');
+    expect(ephemerals()).toEqual([]);
+    const rows = (await s.env.db.query<Record<string, any>>(
+      `select sender_id, idempotency_key from public.messages where thread_id = $1 and sender_kind = 'user'`, [threadId])).rows;
+    expect(rows).toEqual([{ sender_id: bob.userId, idempotency_key: `slack:${eventId}` }]);
   });
 });
 

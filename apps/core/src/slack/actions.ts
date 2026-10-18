@@ -105,11 +105,11 @@ export async function handleBlockActions(deps: CoreDeps, client: SlackClient, p:
     if (taken.outcome === 'missing') { await ephemeral("This request isn't yours."); return; }
     if (taken.outcome !== 'taken') { await update(R.pDone(taken.outcome), { kind: 'pending', id: pendingId }); return; }
     if (want === 'cancelled') { await update(R.pDone('cancelled'), { kind: 'pending', id: pendingId }); return; }
+    let out: Awaited<ReturnType<typeof issueOwnerInstruction>>;
     try {
-      const out = await issueOwnerInstruction(deps, { userId: uid, claims, threadId: taken.threadId, agentId: agentId!, body: taken.body, via: 'slack', confirmNow: true });
+      out = await issueOwnerInstruction(deps, { userId: uid, claims, threadId: taken.threadId, agentId: agentId!, body: taken.body, via: 'slack', confirmNow: true });
       await deps.db.asService((tx) => tx.query(
         `update public.slack_pending_instructions set owner_instruction_id = $2 where id = $1`, [pendingId, out.id.replace(/^oi_/, '')]));
-      await update(R.pDone('sent', out.handle), { kind: 'pending', id: pendingId });
     } catch (e) {
       if (!(e instanceof HttpError)) {
         // The row is already 'confirmed' with its body gone: never leave it claiming "sent" for nothing.
@@ -124,7 +124,10 @@ export async function handleBlockActions(deps: CoreDeps, client: SlackClient, p:
       const handle = await deps.db.asService(async (tx) =>
         (await tx.query<{ handle: string }>(`select handle::text as handle from public.agents where id = $1`, [agentId])).rows[0]?.handle ?? null);
       await safeCall(deps, () => client.updateMessage({ channel, ts, ...R.pDone('remote_off', handle, web) }, INLINE));
+      return;
     }
+    // Stored and linked: a failure past this point (the message update) is not a send failure.
+    await update(R.pDone('sent', out.handle), { kind: 'pending', id: pendingId });
   }
 }
 
@@ -139,13 +142,19 @@ async function recoverConfirm(
   a: { pendingId: string; uid: string; threadId: string; agentId: string; body: string; decidedAt: string },
 ): Promise<{ sent: boolean; handle: string | null }> {
   return deps.db.asService(async (tx) => {
+    // Already linked (by this click or a concurrent path): it was sent.
+    const linked = (await tx.query<{ handle: string | null }>(
+      `select a.handle::text as handle from public.slack_pending_instructions p
+         join public.owner_instructions o on o.id = p.owner_instruction_id left join public.agents a on a.id = o.agent_id
+        where p.id = $1`, [a.pendingId])).rows[0];
+    if (linked) return { sent: true, handle: linked.handle };
     const oi = (await tx.query<{ id: string; handle: string | null }>(
       `select o.id, a.handle::text as handle from public.owner_instructions o left join public.agents a on a.id = o.agent_id
         where o.thread_id = $1 and o.agent_id = $2 and o.created_by_user_id = $3 and o.verified_via = 'slack'
           and o.body = $4 and o.created_at >= $5::timestamptz
-          and not exists (select 1 from public.slack_pending_instructions p where p.owner_instruction_id = o.id)
+          and not exists (select 1 from public.slack_pending_instructions p where p.owner_instruction_id = o.id and p.id <> $6)
         order by o.created_at desc limit 1`,
-      [a.threadId, a.agentId, a.uid, a.body, a.decidedAt])).rows[0];
+      [a.threadId, a.agentId, a.uid, a.body, a.decidedAt, a.pendingId])).rows[0];
     if (oi) {
       await tx.query(`update public.slack_pending_instructions set owner_instruction_id = $2 where id = $1 and owner_instruction_id is null`, [a.pendingId, oi.id]);
       return { sent: true, handle: oi.handle };
