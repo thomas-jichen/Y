@@ -1,5 +1,5 @@
 import { animate, motion, useMotionTemplate, useMotionValue, useTransform } from 'motion/react'
-import { Check, Loader2, ShieldCheck } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { cn } from '@/lib/cn'
 import { uid } from '@/lib/hash'
@@ -31,7 +31,7 @@ export function HoldButton({
   const [phase, setPhase] = useState<Phase>(done ? 'done' : 'idle')
   const key = useRef<string | null>(null)
   const anim = useRef<ReturnType<typeof animate> | null>(null)
-  const clip = useMotionTemplate`inset(0 ${useTransform(progress, (p) => `${(1 - p) * 100}%`)} 0 0 round 12px)`
+  const clip = useMotionTemplate`inset(0 ${useTransform(progress, (p) => `${(1 - p) * 100}%`)} 0 0 round 999px)`
   const shown: Phase = done ? 'done' : phase
 
   const start = () => {
@@ -65,14 +65,8 @@ export function HoldButton({
   }
 
   const content = (inverse: boolean) => (
-    <span className={cn('flex items-center justify-center gap-2 text-[15px] font-semibold', inverse ? 'text-ice-fg' : 'text-fg')}>
-      {shown === 'done' ? (
-        <Check size={17} strokeWidth={2.25} />
-      ) : shown === 'working' ? (
-        <Loader2 size={17} strokeWidth={2} className="animate-[spin-slow_0.9s_linear_infinite]" />
-      ) : (
-        <ShieldCheck size={17} strokeWidth={1.9} />
-      )}
+    <span className={cn('flex items-center justify-center gap-2 text-body font-medium', inverse ? 'text-page' : 'text-text')}>
+      {shown === 'working' && <Loader2 size={16} strokeWidth={2} className="animate-[spin-slow_0.9s_linear_infinite]" />}
       {shown === 'done' ? doneLabel : shown === 'working' ? 'Approving' : shown === 'holding' ? 'Keep holding' : label}
     </span>
   )
@@ -103,16 +97,15 @@ export function HoldButton({
       onContextMenu={(e) => e.preventDefault()}
       aria-label={label}
       className={cn(
-        'relative h-12 w-full select-none touch-none overflow-hidden rounded-[12px] border border-line-strong bg-raised transition-transform duration-150 disabled:opacity-40',
-        shown === 'holding' && 'scale-[0.99]',
+        'relative h-12 w-full select-none touch-none overflow-hidden rounded-full bg-fill disabled:opacity-40',
         className,
       )}
     >
       {content(false)}
       <motion.span
         aria-hidden
-        className="absolute inset-0 flex items-center justify-center bg-ice"
-        style={{ clipPath: shown === 'done' || shown === 'working' ? 'inset(0 0 0 0 round 12px)' : clip }}
+        className="absolute inset-0 flex items-center justify-center bg-text"
+        style={{ clipPath: shown === 'done' || shown === 'working' ? 'inset(0 0 0 0 round 999px)' : clip }}
       >
         {content(true)}
       </motion.span>
