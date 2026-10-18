@@ -86,7 +86,12 @@ Each run: fresh session, say "hi", then idle. "Fired at" is the `queue-operation
 | C | 900 | 3300 | 02:06:35 | 02:21:35.410 | **900.0 s** | woke |
 | D | 1800 | 3300 | 02:06:37 | 02:36:37.278 | **1800.0 s** | woke |
 | E | 3200 | 3300 | 02:06:39 | 02:59:59.793 | **3200.0 s** | woke |
-| F | 5000 | 7200 | 02:06:40 | — | — | PENDING_F |
+| F | 5000 | 7200 | 02:06:40 | — | — | **still in flight when this was pushed — see note** |
+
+**Run F is still running at the time of this commit** (5000 s delay, due ~03:31Z). It is the only cell testing a
+`timeout` above 3300, i.e. whether a window larger than the doc's suggested ceiling is actually honoured. Nothing
+in the decision below depends on it: re-arming after each delivery is the pattern we are shipping, and 3200 s is
+already far beyond any poll interval we would use. This row will be filled in when it lands.
 
 No drift at any delay — the timer is the hook's own `setTimeout`, and the harness honours the full `timeout`
 window without reaping the process early. The doc's suggested 120 s case was not run as its own cell; 20 s,
