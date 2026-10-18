@@ -1,0 +1,51 @@
+# Claude Code only updates an installed plugin when its version changes, so
+# every plugin change that reaches main gets a patch bump in plugin.json (the
+# hooks read their version from that file; no rebuild needed). A push that
+# already changed the version is left alone. Pushes made with GITHUB_TOKEN
+# don't trigger workflows, so the bump commit doesn't loop.
+name: plugin-version
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/claude-code/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plugin-version
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump the patch version unless this push already changed it
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          f=plugins/claude-code/.claude-plugin/plugin.json
+          now=$(jq -r .version "$f")
+          if git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            was=$(git show "$BEFORE:$f" | jq -r .version)
+          else
+            was=""
+          fi
+          if [ -n "$was" ] && [ "$was" != "$now" ]; then
+            echo "version already changed ($was -> $now)"; exit 0
+          fi
+          IFS=. read -r major minor patch <<< "$now"
+          next="$major.$minor.$((patch + 1))"
+          jq --arg v "$next" '.version = $v' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Plugin $next (auto-bump for plugin changes in ${GITHUB_SHA::7})"
+          git pull --rebase origin main
+          git push origin HEAD:main

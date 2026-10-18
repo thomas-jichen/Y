@@ -10,7 +10,62 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const PLUGIN_VERSION = '0.1.2';
+/** Fallback when plugin.json can't be read (tests, odd installs). */
+const BUILT_VERSION = '0.1.2';
+
+/**
+ * The installed version, from the plugin's own .claude-plugin/plugin.json, so a
+ * release only has to bump that file (CI does it on every plugin change to
+ * main; Claude Code updates when the version changes).
+ */
+export const PLUGIN_VERSION: string = readPluginVersion(process.env) ?? BUILT_VERSION;
+
+export function readPluginVersion(env: NodeJS.ProcessEnv): string | undefined {
+  const roots: string[] = [];
+  if (env.CLAUDE_PLUGIN_ROOT) roots.push(env.CLAUDE_PLUGIN_ROOT);
+  // The bundles live in scripts/dist, the sources in src: walk up to the plugin root.
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 3; i++, dir = path.dirname(dir)) roots.push(dir);
+  for (const root of roots) {
+    try {
+      const v = (JSON.parse(fs.readFileSync(path.join(root, '.claude-plugin', 'plugin.json'), 'utf8')) as { version?: unknown }).version;
+      if (typeof v === 'string' && /^\d{1,4}\.\d{1,4}\.\d{1,6}$/.test(v)) return v;
+    } catch {
+      /* try the next candidate */
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Whether Claude Code auto-updates the marketplace this plugin came from.
+ * Off by default for third-party marketplaces; the user turns it on in
+ * /plugin. Returns the marketplace name when it is off, or undefined when
+ * it is on or unknown (a dev checkout, an unexpected layout).
+ */
+export function autoUpdateOffFor(env: NodeJS.ProcessEnv): string | undefined {
+  const root = env.CLAUDE_PLUGIN_ROOT;
+  if (!root) return undefined;
+  const parts = path.resolve(root).split(path.sep);
+  const i = parts.lastIndexOf('cache');
+  const name = i >= 0 ? parts[i + 1] : undefined;
+  if (!name || !/^[A-Za-z0-9._-]{1,64}$/.test(name)) return undefined;
+  const base = env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  const read = (f: string): Record<string, unknown> | undefined => {
+    try {
+      const v = JSON.parse(fs.readFileSync(f, 'utf8')) as unknown;
+      return v && typeof v === 'object' ? (v as Record<string, unknown>) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  // A settings entry wins over the /plugin toggle (Claude Code docs, plugin loading).
+  const extra = read(path.join(base, 'settings.json'))?.extraKnownMarketplaces as Record<string, { autoUpdate?: unknown }> | undefined;
+  if (typeof extra?.[name]?.autoUpdate === 'boolean') return extra[name]!.autoUpdate ? undefined : name;
+  const known = read(path.join(base, 'plugins', 'known_marketplaces.json'))?.[name] as { autoUpdate?: unknown } | undefined;
+  if (!known) return undefined;
+  return known.autoUpdate === true ? undefined : name;
+}
 
 export type ShareModeSetting = 'stats' | 'auto-team' | 'off';
 export type WakeSetting = 'teammates' | 'owner-only' | 'off';

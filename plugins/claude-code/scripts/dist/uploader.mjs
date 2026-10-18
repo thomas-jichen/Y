@@ -5076,7 +5076,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve) {
+function isRecursive(inst, stack, resolve2) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -5086,7 +5086,7 @@ function isRecursive(inst, stack, resolve) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve);
+      const answer = isRecursive(child, stack, resolve2);
       if (answer > result)
         result = answer;
     }
@@ -5097,7 +5097,7 @@ function isRecursive(inst, stack, resolve) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve2) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -5161,7 +5161,7 @@ function isRecursive(inst, stack, resolve) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve2 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -20463,6 +20463,23 @@ import { execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+var BUILT_VERSION = "0.1.2";
+var PLUGIN_VERSION = readPluginVersion(process.env) ?? BUILT_VERSION;
+function readPluginVersion(env) {
+  const roots = [];
+  if (env.CLAUDE_PLUGIN_ROOT) roots.push(env.CLAUDE_PLUGIN_ROOT);
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 3; i++, dir = path.dirname(dir)) roots.push(dir);
+  for (const root of roots) {
+    try {
+      const v = JSON.parse(fs.readFileSync(path.join(root, ".claude-plugin", "plugin.json"), "utf8")).version;
+      if (typeof v === "string" && /^\d{1,4}\.\d{1,4}\.\d{1,6}$/.test(v)) return v;
+    } catch {
+    }
+  }
+  return void 0;
+}
 function loadConfig(env) {
   const token = env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
   const apiUrl = (env.CLAUDE_PLUGIN_OPTION_API_URL?.trim() || "http://localhost:8787").replace(/\/+$/, "");
@@ -22435,6 +22452,23 @@ var UsageSeries = external_exports.object({
   prior: UsageTotals,
   streak: Count
 });
+
+// ../../packages/schema/src/slack.ts
+var SlackUserId = external_exports.string().regex(/^[A-Z0-9]{5,20}$/);
+var SlackLinkToken = external_exports.string().regex(/^ysl_[A-Za-z0-9_-]{43}$/);
+var SlackStatus = external_exports.object({
+  /** Core has SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET. */
+  available: external_exports.boolean(),
+  linked: external_exports.boolean(),
+  slackUserId: SlackUserId.optional(),
+  workspaceName: singleLine(80).optional(),
+  linkedAt: IsoTimestamp.optional(),
+  /** notification_prefs.channels.slack */
+  notifications: external_exports.boolean(),
+  /** Team feed channels for the caller's teams (`/y feed`). */
+  feedChannels: external_exports.array(external_exports.object({ teamSlug: external_exports.string().max(64), channelId: external_exports.string().regex(/^[CG][A-Z0-9]{4,19}$/) })).max(20)
+});
+var SlackLinkRequest = external_exports.object({ token: SlackLinkToken });
 
 // ../../packages/pointers/src/templates.ts
 var src = (re) => re.source.replace(/^\^/, "").replace(/\$$/, "");
