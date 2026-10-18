@@ -69,7 +69,7 @@ function ActivityPage() {
             <AgentName agent={a.agent} className="font-medium" />
             <span className="text-text-2">
               {' '}
-              · {harnessLabel(a.agent)} in {a.repoLabel} · {fmtAgo(a.endedAt ?? a.startedAt)}
+              · {harnessLabel(a.agent)}{a.repoLabel ? <> in {a.repoLabel}</> : null} · {fmtAgo(a.endedAt ?? a.startedAt)}
               {a.source === 'agent_reported' && <span className="font-semibold text-text"> · Self-reported</span>}
               {a.visibility === 'repo' && ' · Repo only'}
             </span>

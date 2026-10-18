@@ -1,0 +1,43 @@
+{
+  "name": "@y/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./serverless": "./src/serverless.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "migrate": "tsx scripts/migrate.ts",
+    "seed": "tsx scripts/seed.ts",
+    "smoke:serverless": "tsx scripts/smoke-serverless.ts",
+    "build:vercel": "tsx scripts/build-vercel.ts"
+  },
+  "dependencies": {
+    "hono": "^4.13.13",
+    "@hono/node-server": "^2.1.5",
+    "zod": "^4.6.7",
+    "@anthropic-ai/sdk": "^0.135.0",
+    "jose": "^6.2.12",
+    "ulid": "^3.0.2",
+    "@y/schema": "workspace:*",
+    "@y/db": "workspace:*",
+    "@y/redact": "workspace:*",
+    "@y/safety": "workspace:*",
+    "@y/pointers": "workspace:*",
+    "@y/retrieval": "workspace:*",
+    "@y/domain": "workspace:*",
+    "@y/capture": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.5",
+    "typescript": "^7.0.2",
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "esbuild": "^0.28.2"
+  }
+}

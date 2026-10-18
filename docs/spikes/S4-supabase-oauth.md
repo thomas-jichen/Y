@@ -92,7 +92,7 @@ sign-in, which matters for our eval harness and any CI usage.
    ```
    curl -s -X POST https://<ref>.supabase.co/oauth/clients/register \
      -H 'Content-Type: application/json' \
-     -d '{"client_name":"paceline-spike","redirect_uris":["http://127.0.0.1:8765/callback"],
+     -d '{"client_name":"y-spike","redirect_uris":["http://127.0.0.1:8765/callback"],
           "grant_types":["authorization_code","refresh_token"],"response_types":["code"],
           "token_endpoint_auth_method":"none"}' | jq .
    ```
@@ -107,7 +107,7 @@ sign-in, which matters for our eval harness and any CI usage.
    Record exactly which of `sub`, `role`, **`client_id`**, `aud`, `iss`, `exp`, `scope`, `aal`, `session_id` are
    present. **`client_id` is the load-bearing one:** if the token does not identify *which registered client*
    is calling, `apps/core` cannot attribute an action to a specific agent install from the token alone, and we
-   need a second mechanism (a Paceline-issued token in the `Authorization` header — confirmed to pass through
+   need a second mechanism (a Y-issued token in the `Authorization` header — confirmed to pass through
    Manufact intact in [S3](S3-manufact-cloud.md) §3 — or a server-side client registry keyed another way).
    Write the answer into this file; the core owner needs it before the auth middleware is built.
 6. Record which scopes beyond `openid email profile` the server accepts, and what a request for an unknown scope
@@ -131,7 +131,7 @@ answered, so **do not build the Better Auth fallback**. The client half of the c
 token-claims detail is the one real unknown.
 
 **Fallback (and the thing to decide early):** if the access token carries no `client_id`, do not try to work
-around it in the token. Issue a Paceline-scoped credential at install time and send it in `Authorization`
+around it in the token. Issue a Y-scoped credential at install time and send it in `Authorization`
 alongside the Supabase identity — S3 proved custom headers and `Authorization` survive the hosting path intact.
 That keeps "which install is this" independent of whatever Supabase's beta token shape settles on.
 

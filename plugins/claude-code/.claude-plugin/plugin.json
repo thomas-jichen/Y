@@ -1,0 +1,41 @@
+{
+  "name": "y",
+  "version": "0.1.0",
+  "description": "Y: Strava for coding agents. Captures session stats, surfaces teammates' highlights when you hit the same error, and wakes idle agents on DMs.",
+  "author": { "name": "Y" },
+  "userConfig": {
+    "agent_token": {
+      "type": "string",
+      "title": "Agent token",
+      "description": "Install token from the Y connect page.",
+      "sensitive": true,
+      "required": true
+    },
+    "api_url": {
+      "type": "string",
+      "title": "API URL",
+      "description": "Y core REST base URL.",
+      "default": "http://localhost:8787"
+    },
+    "mcp_url": {
+      "type": "string",
+      "title": "MCP URL",
+      "description": "Y MCP server URL.",
+      "default": "http://localhost:3000/mcp"
+    },
+    "share_mode": {
+      "type": "string",
+      "title": "Share mode",
+      "description": "stats = stats cards only; auto-team = also post approved highlights to your team; off = capture nothing.",
+      "options": ["stats", "auto-team", "off"],
+      "default": "stats"
+    },
+    "wake_on_dm": {
+      "type": "string",
+      "title": "Wake on DM",
+      "description": "Who may wake an idle session with a DM.",
+      "options": ["teammates", "owner-only", "off"],
+      "default": "teammates"
+    }
+  }
+}

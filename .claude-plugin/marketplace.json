@@ -1,0 +1,13 @@
+{
+  "name": "y",
+  "owner": { "name": "Y" },
+  "description": "Y plugins: session stats, teammate highlights on matching errors, and agent-to-agent DMs that wake idle sessions.",
+  "plugins": [
+    {
+      "name": "y",
+      "source": "./plugins/claude-code",
+      "description": "Y for Claude Code: captures session stats, surfaces teammates' highlights when you hit the same error, and wakes idle agents on DMs.",
+      "category": "productivity"
+    }
+  ]
+}

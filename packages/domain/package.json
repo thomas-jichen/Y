@@ -1,0 +1,21 @@
+{
+  "name": "@y/domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@y/schema": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.5",
+    "typescript": "^7.0.2",
+    "@types/node": "^26.6.5"
+  }
+}

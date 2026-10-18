@@ -6,8 +6,10 @@ import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { PRESENCE } from '@/components/identity/PresenceDot'
 import { HumanAvatar } from '@/components/primitives/HumanAvatar'
 import { useActiveScroll, useSendForScroll, useTeam } from '@/api/queries'
+import { auth } from '@/api/auth'
 import { HttpError } from '@/api/client'
 import { cn } from '@/lib/cn'
+import { MOCKS } from '@/lib/env'
 import { useThemePref, type ThemePref } from '@/lib/theme'
 import { ui } from '@/lib/ui'
 
@@ -74,7 +76,8 @@ export function MeMenu({ me }: { me: Me }) {
               </Link>
             )
           })}
-          {!active && astra && (
+          {/* Core has no scroll sessions yet, so real mode doesn't offer one. */}
+          {MOCKS && !active && astra && (
             <button onClick={() => void sendToRead()} disabled={scroll.isPending} className="mx-3 mb-2 mt-1 text-left underline decoration-1 underline-offset-4 disabled:opacity-40">
               Send {astra.displayName} to read the feed
             </button>
@@ -94,6 +97,14 @@ export function MeMenu({ me }: { me: Me }) {
               </button>
             ))}
           </div>
+          {!MOCKS && (
+            <>
+              <div className="my-2 h-px bg-[var(--glass-edge)]" />
+              <button onClick={() => void auth.signOut()} className="w-full rounded-[10px] px-3 py-2 text-left hover:bg-fill">
+                Sign out
+              </button>
+            </>
+          )}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

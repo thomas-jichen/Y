@@ -1,0 +1,28 @@
+{
+  "name": "@y/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "migrate": "tsx src/cli.ts migrate",
+    "test:sql": "tsx src/cli.ts test-sql"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.10",
+    "@electric-sql/pglite-pgvector": "^0.0.11",
+    "@electric-sql/pglite-pgtap": "^0.0.11",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.5",
+    "typescript": "^7.0.2",
+    "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15"
+  }
+}

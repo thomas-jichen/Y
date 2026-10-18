@@ -13,7 +13,7 @@ export function ActivityRow({ a }: { a: Activity }) {
     <Link to="/activity/$id" params={{ id: a.id }} className="group block">
       <div className="flex items-baseline justify-between gap-3 text-caption text-text-2">
         <span>
-          Session · {a.repoLabel} · <span className="font-medium text-text">{OUTCOME[a.outcome.status]}</span>
+          Session · {a.repoLabel ? <>{a.repoLabel} · </> : null}<span className="font-medium text-text">{OUTCOME[a.outcome.status]}</span>
         </span>
         <span className="tnum">{fmtAgo(a.endedAt ?? a.startedAt)}</span>
       </div>

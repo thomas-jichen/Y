@@ -1,19 +1,8 @@
-import type { ApiError } from './types'
-import { MOCKS } from '@/mocks/enabled'
+import { MOCKS } from '@/lib/env'
 import { uid } from '@/lib/hash'
+import { HttpError } from './errors'
 
-export class HttpError extends Error {
-  status: number
-  body: ApiError
-  constructor(status: number, body: ApiError) {
-    super(body.error.message)
-    this.status = status
-    this.body = body
-  }
-  get code() {
-    return this.body.error.code
-  }
-}
+export { HttpError }
 
 // One shared promise: every early request waits until the handlers are registered.
 let ready: Promise<typeof import('@/mocks/router')> | null = null
@@ -39,17 +28,9 @@ async function request<T>(method: 'GET' | 'POST' | 'PUT', path: string, body?: u
       throw e
     }
   }
-  const res = await fetch(`/api/v1${path}`, {
-    method,
-    headers: { ...headers, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    credentials: 'same-origin',
-  })
-  if (!res.ok) {
-    const err = (await res.json().catch(() => null)) as ApiError | null
-    throw new HttpError(res.status, err ?? { error: { code: 'HTTP_' + res.status, message: res.statusText, retryable: res.status >= 500 } })
-  }
-  return (await res.json()) as T
+  // Real mode: core at VITE_API_URL (or same-origin /api/v1), bearer auth, JSON adapted to the web types.
+  const { realRequest } = await import('./real')
+  return (await realRequest(method, path, body, headers)) as T
 }
 
 export const api = {

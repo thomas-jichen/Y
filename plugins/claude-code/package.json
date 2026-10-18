@@ -1,0 +1,27 @@
+{
+  "name": "@y/plugin-claude-code",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "build": "tsx scripts/build.ts"
+  },
+  "dependencies": {
+    "@y/schema": "workspace:*",
+    "@y/capture": "workspace:*",
+    "@y/redact": "workspace:*",
+    "@y/pointers": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.5",
+    "typescript": "^7.0.2",
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15"
+  }
+}

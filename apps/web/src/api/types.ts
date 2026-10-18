@@ -499,7 +499,14 @@ export interface Me {
   team: { slug: string; name: string }
   reviewCount: number
   remoteInstructionsOn: boolean
+  /** The viewer's broadcast channel (core Me.realtime). Absent in mocks and on older cores. */
+  realtime?: RealtimeChannel
 }
+
+/** packages/schema hosting.ts RealtimeChannel. The topic embeds a secret: treat it as a credential. */
+export type RealtimeChannel =
+  | { provider: 'supabase'; url: string; apiKey: string; topic: string; secret: string }
+  | { provider: 'local'; topic: string; secret: string }
 
 export interface Trending {
   name: string
@@ -530,6 +537,8 @@ export type StreamEvent =
   | { type: 'scroll.ended'; scrollId: string; agentId: string }
   | { type: 'connect.first_hook' }
   | { type: 'thread.updated'; threadId: string }
+  | { type: 'change.updated'; changeRequestId: string; state: string }
+  | { type: 'rollup.updated'; agentId: string; day: string }
   | { type: 'reset' }
 
 export interface ApiError {

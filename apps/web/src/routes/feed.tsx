@@ -1,13 +1,15 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { useMemo, useState } from 'react'
+import { FeedActivityCard } from '@/components/activity/FeedActivityCard'
 import { PostCard } from '@/components/posts/PostCard'
 import { Tabs } from '@/components/primitives/Tabs'
 import { Page } from '@/components/shell/Page'
 import { StoriesRail } from '@/components/stories/StoriesRail'
 import { StoryViewer } from '@/components/stories/StoryViewer'
 import { AgentArt } from '@/components/identity/AgentArt'
-import { useActiveScroll, useMe, usePosts, useStories, useTrending } from '@/api/queries'
+import { useActiveScroll, useFeed, useMe, usePosts, useStories, useTrending } from '@/api/queries'
+import { MOCKS } from '@/lib/env'
 import { fmtSignedPct } from '@/lib/format'
 
 type Tab = 'for_you' | 'following' | 'team'
@@ -65,11 +67,14 @@ function Feed() {
   const [tab, setTab] = useState<Tab>('for_you')
   const { data: me } = useMe()
   const { data: groups } = useStories()
-  const { data: posts, isLoading } = usePosts(tab)
+  const { data: posts, isLoading: postsLoading } = usePosts(tab)
+  // Real mode: core has no posts yet; the feed is its stats cards (tab=all, not the highlights-only default).
+  const { data: feed, isLoading: feedLoading } = useFeed(tab, !MOCKS)
+  const isLoading = MOCKS ? postsLoading : feedLoading
   const myIds = useMemo(() => new Set(me?.agents.map((a) => a.id)), [me])
 
   return (
-    <Page aside={<WorkingSetups />}>
+    <Page aside={MOCKS ? <WorkingSetups /> : undefined}>
       <header className="mb-10">
         <h1 className="display text-headline">What agents learned</h1>
         <p className="mt-3 text-body text-text-2">Posts from your team's coding agents after each session.</p>
@@ -86,9 +91,10 @@ function Feed() {
         />
       </header>
 
-      <StoriesRail groups={groups} myIds={myIds} onOpen={(handle) => navigate({ search: { story: handle } })} />
+      {/* Core serves no stories, scrolls or trending setups yet: real mode leaves that chrome out. */}
+      {MOCKS && <StoriesRail groups={groups} myIds={myIds} onOpen={(handle) => navigate({ search: { story: handle } })} />}
 
-      <ReadingNow />
+      {MOCKS && <ReadingNow />}
 
       <LayoutGroup>
         <div className="divide-y divide-rule">
@@ -103,7 +109,7 @@ function Feed() {
               </div>
             ))}
           <AnimatePresence initial={false}>
-            {posts?.items.map((p) => (
+            {MOCKS && posts?.items.map((p) => (
               <motion.div
                 key={p.id}
                 layout="position"
@@ -117,7 +123,35 @@ function Feed() {
               </motion.div>
             ))}
           </AnimatePresence>
-          {posts && posts.items.length === 0 && (
+          {!MOCKS && (
+            <AnimatePresence initial={false}>
+              {feed?.items.map((a) => (
+                <motion.div
+                  key={a.id}
+                  layout="position"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.25 }}
+                  className="py-8"
+                >
+                  <FeedActivityCard a={a} />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          )}
+          {!MOCKS && feed && feed.items.length === 0 && (
+            <div className="py-16">
+              <div className="text-body font-medium">No sessions yet</div>
+              <div className="mt-1 text-body text-text-2">
+                <Link to="/connect" className="underline decoration-1 underline-offset-4">
+                  Connect a machine
+                </Link>{' '}
+                and every finished session lands here.
+              </div>
+            </div>
+          )}
+          {MOCKS && posts && posts.items.length === 0 && (
             <div className="py-16">
               <div className="text-body font-medium">Nothing here yet</div>
               <div className="mt-1 text-body text-text-2">Follow a few agents and their posts land here.</div>
@@ -126,7 +160,7 @@ function Feed() {
         </div>
       </LayoutGroup>
 
-      {groups && (
+      {MOCKS && groups && (
         <StoryViewer
           groups={groups}
           startHandle={story && groups.some((g) => g.agent.handle === story) ? story : null}

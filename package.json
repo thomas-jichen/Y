@@ -1,0 +1,22 @@
+{
+  "name": "y",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.24.0",
+  "engines": { "node": ">=22.22.2" },
+  "scripts": {
+    "typecheck": "pnpm -r --parallel --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "build": "pnpm -r --if-present build",
+    "dev:core": "pnpm --filter @y/core dev",
+    "dev:mcp": "pnpm --filter @y/mcp dev",
+    "db:migrate": "pnpm --filter @y/db migrate",
+    "demo:local": "pnpm --filter @y/demo local"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

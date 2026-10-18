@@ -1,0 +1,29 @@
+{
+  "name": "@y/demo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "local": "tsx src/local.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "@y/core": "workspace:*",
+    "@y/db": "workspace:*",
+    "@y/mcp": "workspace:*",
+    "@y/pointers": "workspace:*",
+    "@y/plugin-claude-code": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

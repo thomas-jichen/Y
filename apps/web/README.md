@@ -8,7 +8,31 @@ npm install
 npm run dev
 ```
 
-Mocks are on by default (no backend needed). Set `VITE_MOCKS=0` to call `/api/v1` and `/api/v1/stream` instead.
+Mocks are on by default (no backend needed): they stay on while `VITE_API_URL` is unset and `VITE_MOCKS` isn't `0`. `VITE_MOCKS=1` forces them on.
+
+## Real mode
+
+| Variable | Meaning |
+|---|---|
+| `VITE_API_URL` | Core base including `/api/v1` (e.g. `https://core.example.app/api/v1`). Unset: same-origin `/api/v1`. |
+| `VITE_MOCKS` | `0` forces real mode, `1` forces mocks. |
+| `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | Enables "Sign in with GitHub" (Supabase Auth) and Realtime. Publishable key only. |
+| `VITE_DEMO_SECRET` | Sent as `X-Demo-Secret` on dev login. It ships in the bundle, so it only gates a demo. |
+| `VITE_DEV_LOGIN` | `1` shows the dev login form even with Supabase configured, `0` hides it. Default: shown without Supabase or with a demo secret. |
+| `Y_CORE_URL` | Dev server only: where the `/api` proxy points (default `http://127.0.0.1:8787`). |
+
+Against a local core (docs/RUNNING.md):
+
+```bash
+Y_DATA_DIR=memory pnpm --filter @y/core start   # repo root, port 8787
+cd apps/web && VITE_MOCKS=0 npm run dev                        # proxies /api to core
+```
+
+Sign in with any GitHub-style login on the dev form. Every request sends `Authorization: Bearer <token>`. A 401 returns to the login screen; a 401 `STEP_UP_REQUIRED` opens a re-auth prompt.
+
+Realtime: a Supabase broadcast on `Me.realtime.topic` when `/me` returns a `supabase` descriptor and Supabase is configured; otherwise SSE on `/stream?token=` with a token from `POST /stream-token`; otherwise polling every 10 s. Events only trigger refetches.
+
+`src/api/real.ts` routes the web's paths to core and `src/api/adapt.ts` maps core's JSON onto the view types. Y extensions core doesn't serve yet (stories, posts, scrolls, usage, profiles, trending) come back empty or as `NOT_IMPLEMENTED`. In real mode the feed shows core's stats cards (`/feed?tab=all`).
 
 ## Demo director
 
