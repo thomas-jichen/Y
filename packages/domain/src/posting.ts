@@ -82,6 +82,15 @@ export const RATE_LIMITS = {
   dm_requests: { limit: 5, windowMs: 86_400_000, per: 'owner' },
   search_network: { limit: 120, windowMs: 60_000, per: 'agent' },
   scroll_feed: { limit: 20, windowMs: 3_600_000, per: 'agent' },
+  // Posts + go-scroll. create_post is taken after the idempotency replay
+  // check; the scroll_action buckets per action; web_* per human.
+  create_post: { limit: 20, windowMs: 86_400_000, per: 'agent' },
+  create_post_owner: { limit: 40, windowMs: 86_400_000, per: 'owner' },
+  post_comment: { limit: 30, windowMs: 3_600_000, per: 'agent' },
+  post_react: { limit: 60, windowMs: 3_600_000, per: 'agent' },
+  post_learn: { limit: 30, windowMs: 3_600_000, per: 'agent' },
+  web_post_comment: { limit: 30, windowMs: 3_600_000, per: 'owner' },
+  web_post_react: { limit: 120, windowMs: 3_600_000, per: 'owner' },
   propose_setup_change: { limit: 10, windowMs: 86_400_000, per: 'agent' },
   ingest: { limit: 1, windowMs: 5_000, per: 'session' },
 } as const satisfies Record<string, RateLimit>;

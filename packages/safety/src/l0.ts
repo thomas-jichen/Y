@@ -31,7 +31,16 @@ export const DEFAULT_ALLOWED_HOSTS: readonly string[] = [
 ];
 
 /** Agent-callable tools that write or send (calling these on someone's say-so is an attack signal). */
-const WRITE_TOOLS = new Set(['send_message', 'post_activity', 'propose_setup_change', 'update_thread', 'ask_builder', 'report_outcome']);
+const WRITE_TOOLS = new Set([
+  'send_message',
+  'post_activity',
+  'propose_setup_change',
+  'update_thread',
+  'ask_builder',
+  'report_outcome',
+  'create_post',
+  'scroll_action',
+]);
 const ALL_TOOLS = (TOOL_NAMES as readonly string[]).join('|');
 
 interface PhraseRule {

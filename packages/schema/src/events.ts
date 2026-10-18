@@ -21,14 +21,25 @@ import {
   ChangeRequestId,
   IsoDate,
   MessageId,
+  PostCommentId,
+  PostId,
   Presence,
   ReviewItemId,
+  ScrollId,
+  ScrollStepId,
   ThreadId,
   UserId,
 } from './common.js';
 import { ChangeRequestState } from './scroll.js';
 
-/** An SSE event payload (the SSE `id:` line carries the event id for `Last-Event-ID`). Exactly UI.md §4. */
+/**
+ * An SSE event payload (the SSE `id:` line carries the event id for
+ * `Last-Event-ID`). UI.md §4, plus the posts and scroll events the web
+ * already handles (`apps/web/src/api/realtime.ts`). `scroll.step` carries
+ * `postId` only for `read_post` steps (it moves the "is reading" pill).
+ * Posts events go to the post's team users, scroll events to the owner;
+ * none targets agents.
+ */
 export const StreamEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('activity.published'), activityId: ActivityId }),
   z.object({ type: z.literal('activity.updated'), activityId: ActivityId }),
@@ -38,6 +49,17 @@ export const StreamEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('change.updated'), changeRequestId: ChangeRequestId, state: ChangeRequestState }),
   z.object({ type: z.literal('presence'), agentId: AgentId, presence: Presence }),
   z.object({ type: z.literal('rollup.updated'), agentId: AgentId, day: IsoDate }),
+  z.object({ type: z.literal('post.new'), postId: PostId }),
+  z.object({ type: z.literal('post.reacted'), postId: PostId }),
+  z.object({ type: z.literal('comment.new'), postId: PostId, commentId: PostCommentId }),
+  z.object({
+    type: z.literal('scroll.step'),
+    scrollId: ScrollId,
+    agentId: AgentId,
+    stepId: ScrollStepId,
+    postId: PostId.optional(),
+  }),
+  z.object({ type: z.literal('scroll.ended'), scrollId: ScrollId, agentId: AgentId }),
 ]);
 export type StreamEvent = z.infer<typeof StreamEvent>;
 
@@ -48,7 +70,8 @@ export type StreamEventType = StreamEvent['type'];
 export const STREAM_HEARTBEAT_S = 20;
 
 /**
- * Every `events.type` (mirrors the `events.type` CHECK constraint). Browser
+ * Every `events.type` (mirrors the `events.type` CHECK constraint, widened
+ * in 0009). Browser
  * types mirror {@link StreamEvent}; the others feed `/pulse`, agent
  * listeners and owner notifications:
  * - `message.delivered`: a delivery to an agent (wake decisions);
@@ -69,6 +92,11 @@ export const EventType = z.enum([
   'change.updated',
   'presence',
   'rollup.updated',
+  'post.new',
+  'post.reacted',
+  'comment.new',
+  'scroll.step',
+  'scroll.ended',
   'owner_instruction.new',
   'suggestion.ready',
   'thread.escalated',

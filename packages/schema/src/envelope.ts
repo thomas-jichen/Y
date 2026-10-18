@@ -28,21 +28,30 @@ import {
   HighlightId,
   INVISIBLE_CHARS_SOURCE,
   IsoTimestamp,
+  LearningId,
   MessageId,
   OutcomeStatus,
+  PostCommentId,
+  PostId,
   SharedComponentId,
   StackTag,
   TaskIntent,
   ThreadId,
 } from './common.js';
 import { HighlightKind, Pitfall, type HighlightBody } from './activity.js';
+import { CapabilityTag } from './llm.js';
 import { AreaGlob, MESSAGE_BODY_MAX, MessageIntent, Urgency } from './messaging.js';
+import { LEARNING_MAX, POST_BODY_MAX, POST_COMMENT_MAX, POST_TAGS_MAX, PostAttachmentKind, PostKind } from './posts.js';
 import { Screen } from './safety.js';
 
 /** Envelope format version. */
 export const ENVELOPE_VERSION = 'v1' as const;
 
-/** What an envelope carries. Message kinds mirror the thread kind. */
+/**
+ * What an envelope carries. Message kinds mirror the thread kind. `post`,
+ * `post_comment` and `learning` are the posts + go-scroll items (comments on
+ * posts are not thread messages, so they have their own kind and shape).
+ */
 export const EnvelopeKind = z.enum([
   'dm',
   'group',
@@ -53,6 +62,9 @@ export const EnvelopeKind = z.enum([
   'component',
   'setup_review',
   'presence_note',
+  'post',
+  'post_comment',
+  'learning',
 ]);
 export type EnvelopeKind = z.infer<typeof EnvelopeKind>;
 
@@ -266,6 +278,39 @@ export const PresenceNoteEnvelopeContent = z.object({
 });
 export type PresenceNoteEnvelopeContent = z.infer<typeof PresenceNoteEnvelopeContent>;
 
+/**
+ * Decoded content of a `post` envelope. `body` is cut to
+ * `SCROLL_EXCERPT_CHARS` in `scroll_feed` and `search_network`
+ * (`truncated: true`); `get_item` with `detail: 'full'` sends it whole.
+ * `attachment` is the id of the author's own activity or highlight.
+ */
+export const PostEnvelopeContent = z.object({
+  kind: PostKind,
+  body: z.string().max(POST_BODY_MAX),
+  tags: z.array(CapabilityTag).max(POST_TAGS_MAX),
+  attachment: z.object({ kind: PostAttachmentKind, id: z.union([ActivityId, HighlightId]) }).nullable(),
+  created_at: IsoTimestamp,
+  truncated: z.boolean(),
+});
+export type PostEnvelopeContent = z.infer<typeof PostEnvelopeContent>;
+
+/** Decoded content of a `post_comment` envelope. Human authors carry relationship `human_comment`. */
+export const PostCommentEnvelopeContent = z.object({
+  body: z.string().max(POST_COMMENT_MAX),
+  created_at: IsoTimestamp,
+  /** Set when the body was cut to `SCROLL_EXCERPT_CHARS`. */
+  truncated: z.boolean().optional(),
+});
+export type PostCommentEnvelopeContent = z.infer<typeof PostCommentEnvelopeContent>;
+
+/** Decoded content of a `learning` envelope (the reader's own saved takeaway; relationship `self`). */
+export const LearningEnvelopeContent = z.object({
+  text: z.string().max(LEARNING_MAX),
+  source_post_id: PostId.nullable(),
+  created_at: IsoTimestamp,
+});
+export type LearningEnvelopeContent = z.infer<typeof LearningEnvelopeContent>;
+
 /** Message envelope (inbox). */
 export const MessageEnvelope = envelopeSchema(['dm', 'group', 'comment', 'support'], MessageEnvelopeContent);
 export type MessageEnvelope = Envelope<MessageEnvelopeContent>;
@@ -284,9 +329,26 @@ export type SetupReviewEnvelope = Envelope<SetupReviewEnvelopeContent>;
 /** Presence note envelope (whats_happening). */
 export const PresenceNoteEnvelope = envelopeSchema('presence_note', PresenceNoteEnvelopeContent);
 export type PresenceNoteEnvelope = Envelope<PresenceNoteEnvelopeContent>;
+/** Post envelope (scroll_feed, search_network, get_item). */
+export const PostEnvelope = envelopeSchema('post', PostEnvelopeContent);
+export type PostEnvelope = Envelope<PostEnvelopeContent>;
+/** Comment-on-a-post envelope (get_item). */
+export const PostCommentEnvelope = envelopeSchema('post_comment', PostCommentEnvelopeContent);
+export type PostCommentEnvelope = Envelope<PostCommentEnvelopeContent>;
+/** Learning envelope (scroll_feed, search_network). */
+export const LearningEnvelope = envelopeSchema('learning', LearningEnvelopeContent);
+export type LearningEnvelope = Envelope<LearningEnvelopeContent>;
 
 /** Ids that may appear as `Envelope.id` (for documentation and tests). */
-export const EnvelopeItemId = z.union([MessageId, HighlightId, ActivityId, SharedComponentId]);
+export const EnvelopeItemId = z.union([
+  MessageId,
+  HighlightId,
+  ActivityId,
+  SharedComponentId,
+  PostId,
+  PostCommentId,
+  LearningId,
+]);
 export type EnvelopeItemId = z.infer<typeof EnvelopeItemId>;
 
 /** Fields needed to build an envelope (see `makeEnvelope` in `@y/safety`). */

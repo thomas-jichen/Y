@@ -19,6 +19,7 @@ export * from './activity.js';
 export * from './messaging.js';
 export * from './envelope.js';
 export * from './llm.js';
+export * from './posts.js';
 export * from './scroll.js';
 export * from './segments.js';
 export * from './review.js';

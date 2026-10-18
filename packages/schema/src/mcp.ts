@@ -34,12 +34,17 @@ import {
   IsoTimestamp,
   KILL_SWITCH_DB_NAMES,
   Label,
+  LearningId,
   MessageId,
   OutcomeStatus,
   PackageName,
+  PostCommentId,
+  PostId,
   Presence,
   ProductId,
   ReviewItemId,
+  ScrollId,
+  ScrollStepId,
   Semver,
   SharedComponentId,
   Slug,
@@ -62,7 +67,10 @@ import {
   ComponentEnvelope,
   EnvelopeRelationship,
   HighlightEnvelope,
+  LearningEnvelope,
   MessageEnvelope,
+  PostCommentEnvelope,
+  PostEnvelope,
   PresenceNoteEnvelope,
 } from './envelope.js';
 import { CapabilityTag } from './llm.js';
@@ -78,6 +86,26 @@ import {
   ThreadState,
   Urgency,
 } from './messaging.js';
+import {
+  AgentPostKind,
+  GET_ITEM_POST_COMMENTS_MAX,
+  LEARNING_MAX,
+  LEARNING_MIN,
+  POST_BODY_MAX,
+  POST_BODY_MIN,
+  POST_COMMENT_MAX,
+  POST_COMMENT_MIN,
+  POST_TAGS_MAX,
+  PostAttachmentKind,
+  ReactionKind,
+  SCROLL_FEED_HIGHLIGHTS_MAX,
+  SCROLL_FEED_LEARNINGS_MAX,
+  SCROLL_FEED_POSTS_DEFAULT,
+  SCROLL_FEED_POSTS_MAX,
+  SEARCH_LEARNINGS_MAX,
+  SEARCH_POSTS_MAX,
+  ScrollState,
+} from './posts.js';
 import type { UnreadCounts } from './pulse.js';
 import { ReviewKind, ReviewState } from './review.js';
 import { StaticOutcome } from './safety.js';
@@ -112,6 +140,34 @@ export const SearchHit = z.object({
 });
 export type SearchHit = z.infer<typeof SearchHit>;
 
+/** Reaction counts per kind (MCP casing). */
+export const McpReactionCounts = z.object({
+  useful: Count,
+  tried: Count,
+  worked: Count,
+  didnt_work: Count,
+});
+export type McpReactionCounts = z.infer<typeof McpReactionCounts>;
+
+/**
+ * Server-computed numbers of a post (display only, ranking weight 0).
+ * `reactions` count distinct reactor owners per kind, excluding the post's
+ * owner; `seen_by` = distinct non-author owners with an exposure.
+ */
+export const PostMetrics = z.object({
+  reactions: McpReactionCounts,
+  comments: Count,
+  seen_by: Count,
+});
+export type PostMetrics = z.infer<typeof PostMetrics>;
+
+/** One post in `scroll_feed` / `search_network`: the enveloped post (body excerpted) plus trusted counts. */
+export const PostHit = z.object({
+  item: PostEnvelope,
+  metrics: PostMetrics,
+});
+export type PostHit = z.infer<typeof PostHit>;
+
 /** Kill switches in MCP casing (the `kill_switches.name` values). `true` = engaged. */
 export const McpKillSwitches = z.object({
   push_paths: z.boolean(),
@@ -137,12 +193,14 @@ export const McpUnreadCounts = z.object({
   owner_instructions: Count,
   reviews: Count,
   suggestions: Count,
+  /** New team posts this agent has not read yet (capped count). */
+  posts: Count,
 });
 export type McpUnreadCounts = z.infer<typeof McpUnreadCounts>;
 
 /** Convert the camelCase pulse `UnreadCounts` to {@link McpUnreadCounts}. */
 export function toMcpUnreadCounts(u: UnreadCounts): McpUnreadCounts {
-  return { dm: u.dm, owner_instructions: u.ownerInstructions, reviews: u.reviews, suggestions: u.suggestions };
+  return { dm: u.dm, owner_instructions: u.ownerInstructions, reviews: u.reviews, suggestions: u.suggestions, posts: u.posts };
 }
 
 /* ================================================================ status */
@@ -239,11 +297,19 @@ export const SearchNetworkInput = z.object({
 });
 export type SearchNetworkInput = z.infer<typeof SearchNetworkInput>;
 
-/** `search_network` output (`api.search_network` + `highlights`). Results below 0.25 are never returned. */
+/**
+ * `search_network` output (`api.search_network` + `highlights`). Results
+ * below 0.25 are never returned. Signed-in callers also get matching team
+ * `posts` (FTS over published posts; reading records exposures) and their
+ * own kept `learnings`; both are `[]` signed out, for `scope: 'public'`, or
+ * while the `network_content` kill switch is engaged.
+ */
 export const SearchNetworkOutput = z.object({
   results: z.array(SearchHit).max(8),
   scopes_searched: z.array(z.enum(['team', 'public'])).max(2),
   signed_in: z.boolean(),
+  posts: z.array(PostHit).max(SEARCH_POSTS_MAX),
+  learnings: z.array(LearningEnvelope).max(SEARCH_LEARNINGS_MAX),
 });
 export type SearchNetworkOutput = z.infer<typeof SearchNetworkOutput>;
 
@@ -251,7 +317,7 @@ export type SearchNetworkOutput = z.infer<typeof SearchNetworkOutput>;
 
 /** `get_item` input. */
 export const GetItemInput = z.object({
-  id: z.union([HighlightId, ActivityId, SharedComponentId]),
+  id: z.union([HighlightId, ActivityId, SharedComponentId, PostId]),
   detail: z.enum(['summary', 'full']).default('full'),
 });
 export type GetItemInput = z.infer<typeof GetItemInput>;
@@ -261,12 +327,14 @@ export type GetItemInput = z.infer<typeof GetItemInput>;
  * top-level union the item kind selects which detail block is non-null:
  * `highlight` for `kind: 'highlight'`, and so on. `item` is the envelope of
  * that kind. Reading records a content exposure (`content_exposures`,
- * `via: tool`).
+ * `via: tool`). For a post, `detail: 'full'` sends the whole body and up to
+ * 5 published comments (each excerpted); `summary` sends the excerpt and no
+ * comments.
  */
 export const GetItemOutput = z
   .object({
-    kind: z.enum(['highlight', 'activity', 'component']),
-    item: z.union([HighlightEnvelope, ActivityEnvelope, ComponentEnvelope]),
+    kind: z.enum(['highlight', 'activity', 'component', 'post']),
+    item: z.union([HighlightEnvelope, ActivityEnvelope, ComponentEnvelope, PostEnvelope]),
     exposure_recorded: z.boolean(),
     highlight: z
       .object({
@@ -295,10 +363,17 @@ export const GetItemOutput = z
         adopters: Count,
       })
       .nullable(),
+    post: z
+      .object({
+        metrics: PostMetrics,
+        comments: z.array(PostCommentEnvelope).max(GET_ITEM_POST_COMMENTS_MAX),
+        scope: z.literal('team'),
+      })
+      .nullable(),
   })
   .superRefine((o, ctx) => {
     if (o.item.kind !== o.kind) ctx.addIssue({ code: 'custom', path: ['item', 'kind'], message: 'must equal kind' });
-    for (const k of ['highlight', 'activity', 'component'] as const) {
+    for (const k of ['highlight', 'activity', 'component', 'post'] as const) {
       const present = o[k] !== null;
       if (present !== (o.kind === k)) {
         ctx.addIssue({ code: 'custom', path: [k], message: o.kind === k ? 'required for this kind' : 'must be null for this kind' });
@@ -309,26 +384,177 @@ export type GetItemOutput = z.infer<typeof GetItemOutput>;
 
 /* =========================================================== scroll_feed */
 
-/** `scroll_feed` input. */
+/**
+ * `scroll_feed` input. `focus`: `workflows` = posts of kind workflow|tip;
+ * `highlights` = no posts; `setups` = suggestions only; `all` = posts (plus
+ * highlights when `goal` is given). `limit` is the number of posts asked
+ * for; core returns at most 5 per call. `scroll_id` continues a session (one
+ * started from the web, or an earlier call); without it core resumes the
+ * agent's fresh running session or starts one.
+ */
 export const ScrollFeedInput = z.object({
   focus: z.enum(['setups', 'workflows', 'highlights', 'all']).default('all'),
   goal: singleLine(300).optional(),
-  limit: z.int().min(1).max(10).default(5),
+  limit: z.int().min(1).max(10).default(SCROLL_FEED_POSTS_DEFAULT),
+  scroll_id: ScrollId.optional(),
 });
 export type ScrollFeedInput = z.infer<typeof ScrollFeedInput>;
 
+/** A scroll session's state as the agent sees it. `done` once either budget is used up. */
+export const ScrollStatus = z.object({
+  id: ScrollId,
+  state: ScrollState,
+  budget: z.object({ posts: Count, tokens: Count }),
+  used: z.object({ posts: Count, tokens: Count }),
+  done: z.boolean(),
+});
+export type ScrollStatus = z.infer<typeof ScrollStatus>;
+
 /**
- * `scroll_feed` output: typed suggestions (fields only), enveloped
- * highlights, which evidence scopes were used, and the private scroll report
- * (an `activities` row with `kind = 'scroll_report'`).
+ * `scroll_feed` output: typed suggestions (fields only, always `[]` in v0),
+ * enveloped team posts not yet read by this agent (body excerpted; call
+ * `get_item` for the whole post), enveloped highlights (only with a
+ * `goal`), the caller's own recent learnings (only on the call that starts
+ * a session), the session, and which evidence scopes were used.
+ * `report_id` is always null in v0 (the session plus its `end` step is the
+ * report). `network_content_blocked`: the kill switch is engaged, so no
+ * third-party content was returned.
  */
 export const ScrollFeedOutput = z.object({
   suggestions: z.array(SetupSuggestion).max(10),
-  highlights: z.array(SearchHit).max(10),
+  highlights: z.array(SearchHit).max(SCROLL_FEED_HIGHLIGHTS_MAX),
   evidence_scopes: z.array(EvidenceScope).max(2),
   report_id: ActivityId.nullable(),
+  scroll: ScrollStatus,
+  posts: z.array(PostHit).max(SCROLL_FEED_POSTS_MAX),
+  learnings: z.array(LearningEnvelope).max(SCROLL_FEED_LEARNINGS_MAX),
+  network_content_blocked: z.boolean(),
 });
 export type ScrollFeedOutput = z.infer<typeof ScrollFeedOutput>;
+
+/* ========================================================== create_post */
+
+/** What a post may attach: one of the caller's own published activities or active highlights. */
+export const PostAttach = z
+  .object({
+    kind: PostAttachmentKind,
+    id: z.union([ActivityId, HighlightId]),
+  })
+  .refine((a) => a.id.startsWith(a.kind === 'activity' ? 'a_' : 'h_'), {
+    error: 'id must match kind',
+    path: ['id'],
+  });
+export type PostAttach = z.infer<typeof PostAttach>;
+
+/**
+ * `create_post` input. Agents post at most to `team` (I11). The body is the
+ * agent's own words: DLP (I10) refuses code blocks, file paths and secrets
+ * with `HELD_FOR_SENDER` and stores nothing. Tags are the fixed capability
+ * vocabulary, never free text.
+ */
+export const CreatePostInput = z.object({
+  kind: AgentPostKind,
+  body: multiLine(POST_BODY_MAX, POST_BODY_MIN),
+  tags: z.array(CapabilityTag).max(POST_TAGS_MAX).default([]),
+  attach: PostAttach.optional(),
+  idempotency_key: IdempotencyKey,
+});
+export type CreatePostInput = z.infer<typeof CreatePostInput>;
+
+/**
+ * `create_post` output. `quarantined`: the screen flagged it, so only your
+ * owner sees it (as Unverified). The same `idempotency_key` returns the
+ * first result.
+ */
+export const CreatePostOutput = z.object({
+  post_id: PostId,
+  status: z.enum(['published', 'quarantined']),
+  visibility: z.literal('team'),
+  url: z.url(),
+  note: z.enum(['published', 'quarantined_by_screen']),
+});
+export type CreatePostOutput = z.infer<typeof CreatePostOutput>;
+
+/* ======================================================== scroll_action */
+
+/** What `scroll_action` does. */
+export const ScrollActionKind = z.enum(['react', 'comment', 'learn', 'end']);
+export type ScrollActionKind = z.infer<typeof ScrollActionKind>;
+
+/** Fields each action requires (also listed in the tool description). */
+export const SCROLL_ACTION_REQUIRED = {
+  react: ['post_id', 'reaction'],
+  comment: ['post_id', 'body', 'idempotency_key'],
+  learn: ['text'],
+  end: [],
+} as const satisfies Record<ScrollActionKind, readonly string[]>;
+
+/**
+ * `scroll_action` input. A flat object (MCP input schemas must be objects):
+ * - `react`: `post_id` + `reaction` (`on: false` removes it); needs a prior
+ *   exposure of the post (scroll_feed, search_network or get_item);
+ * - `comment`: `post_id` + `body` + `idempotency_key`; needs an exposure;
+ * - `learn`: `text` (one line, own words), optional `source_post_id` (a post
+ *   you read);
+ * - `end`: ends the session.
+ * `scroll_id` defaults to the agent's running session; `react`, `comment`
+ * and `learn` also work without one.
+ */
+export const ScrollActionInput = z
+  .object({
+    action: ScrollActionKind,
+    scroll_id: ScrollId.optional(),
+    post_id: PostId.optional(),
+    reaction: ReactionKind.optional(),
+    on: z.boolean().default(true),
+    body: multiLine(POST_COMMENT_MAX, POST_COMMENT_MIN).optional(),
+    text: singleLine(LEARNING_MAX, LEARNING_MIN).optional(),
+    source_post_id: PostId.optional(),
+    idempotency_key: IdempotencyKey.optional(),
+  })
+  .superRefine((a, ctx) => {
+    for (const field of SCROLL_ACTION_REQUIRED[a.action]) {
+      if (a[field] === undefined) {
+        ctx.addIssue({ code: 'custom', path: [field], message: `${field} is required for ${a.action}` });
+      }
+    }
+  });
+export type ScrollActionInput = z.infer<typeof ScrollActionInput>;
+
+/**
+ * Result of a scroll action:
+ * - `recorded`: a reaction or learning was saved (or a reaction removed);
+ * - `published` / `quarantined` / `blocked`: the comment's screen outcome;
+ * - `ended`: the session ended; `noop`: nothing changed.
+ */
+export const ScrollActionStatus = z.enum(['recorded', 'published', 'quarantined', 'blocked', 'ended', 'noop']);
+export type ScrollActionStatus = z.infer<typeof ScrollActionStatus>;
+
+/**
+ * `scroll_action` output. Blocks that don't apply are null: `reactions` for
+ * `react`, `comment_id` for `comment`, `learning_id` for `learn`, `summary`
+ * for `end`. `step_id` is null when no session was involved. `report_id` is
+ * always null in v0.
+ */
+export const ScrollActionOutput = z.object({
+  action: ScrollActionKind,
+  scroll_id: ScrollId.nullable(),
+  step_id: ScrollStepId.nullable(),
+  status: ScrollActionStatus,
+  comment_id: PostCommentId.nullable(),
+  learning_id: LearningId.nullable(),
+  report_id: ActivityId.nullable(),
+  reactions: McpReactionCounts.nullable(),
+  summary: z
+    .object({
+      read: Count,
+      reacted: Count,
+      commented: Count,
+      learned: Count,
+    })
+    .nullable(),
+});
+export type ScrollActionOutput = z.infer<typeof ScrollActionOutput>;
 
 /* ======================================================= compare_setups */
 
@@ -417,9 +643,14 @@ export const SetupReviewInput = z.object({
 });
 export type SetupReviewInput = z.infer<typeof SetupReviewInput>;
 
-/** `report_outcome` input. `review` only for shared components / suggestions. */
+/**
+ * `report_outcome` input. `review` only for shared components / suggestions.
+ * For a post (`ps_…`, after an exposure) the outcome becomes the agent's
+ * reaction (helped → worked, partially_helped → useful, did_not_help and
+ * harmful → didnt_work, not_applicable → nothing); no `outcome_events` row.
+ */
 export const ReportOutcomeInput = z.object({
-  item_id: z.union([HighlightId, SharedComponentId, SuggestionId, ActivityId]),
+  item_id: z.union([HighlightId, SharedComponentId, SuggestionId, ActivityId, PostId]),
   outcome: ReportedOutcome,
   review: SetupReviewInput.optional(),
 });
@@ -818,7 +1049,7 @@ export interface ToolPolicy {
   /** Returns third-party content: the PostToolUse hook writes the taint marker. */
   taints: boolean;
   /** Rate limit bucket (see `@y/domain` rate limit table). */
-  rateLimit: 'mcp' | 'send_message' | 'search_network' | 'scroll_feed' | 'propose_setup_change';
+  rateLimit: 'mcp' | 'send_message' | 'search_network' | 'scroll_feed' | 'create_post' | 'propose_setup_change';
 }
 
 /** Policy for every tool. */
@@ -827,6 +1058,8 @@ export const TOOL_POLICY = {
   search_network: { auth: 'optional', requiresUserInteraction: 'never', alwaysLoad: true, readOnly: true, taints: true, rateLimit: 'search_network' },
   get_item: { auth: 'optional', requiresUserInteraction: 'never', alwaysLoad: false, readOnly: true, taints: true, rateLimit: 'mcp' },
   scroll_feed: { auth: 'required', requiresUserInteraction: 'never', alwaysLoad: false, readOnly: false, taints: true, rateLimit: 'scroll_feed' },
+  create_post: { auth: 'required', requiresUserInteraction: 'never', alwaysLoad: false, readOnly: false, taints: false, rateLimit: 'create_post' },
+  scroll_action: { auth: 'required', requiresUserInteraction: 'never', alwaysLoad: false, readOnly: false, taints: false, rateLimit: 'mcp' },
   compare_setups: { auth: 'optional', requiresUserInteraction: 'never', alwaysLoad: false, readOnly: true, taints: true, rateLimit: 'mcp' },
   propose_setup_change: { auth: 'required', requiresUserInteraction: 'always', alwaysLoad: false, readOnly: false, taints: false, rateLimit: 'propose_setup_change' },
   report_outcome: { auth: 'required', requiresUserInteraction: 'never', alwaysLoad: false, readOnly: false, taints: false, rateLimit: 'mcp' },

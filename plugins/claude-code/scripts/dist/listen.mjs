@@ -19970,7 +19970,12 @@ var ID_PREFIXES = {
   workClaim: "wc",
   sharedComponent: "cmp",
   setupVersion: "sv",
-  verdict: "vd"
+  verdict: "vd",
+  post: "ps",
+  postComment: "pc",
+  scroll: "sc",
+  scrollStep: "ss",
+  learning: "ln"
 };
 var ULID_BODY = "[0-9A-HJKMNP-TV-Z]{26}";
 function prefixedIdRegex(kind) {
@@ -19994,6 +19999,11 @@ var WorkClaimId = prefixedId("workClaim");
 var SharedComponentId = prefixedId("sharedComponent");
 var SetupVersionId = prefixedId("setupVersion");
 var VerdictId = prefixedId("verdict");
+var PostId = prefixedId("post");
+var PostCommentId = prefixedId("postComment");
+var ScrollId = prefixedId("scroll");
+var ScrollStepId = prefixedId("scrollStep");
+var LearningId = prefixedId("learning");
 var ANY_PREFIXED_ID_RE = new RegExp(`^(?:${Object.values(ID_PREFIXES).join("|")})_${ULID_BODY}$`);
 var AnyPrefixedId = external_exports.string().regex(ANY_PREFIXED_ID_RE, { error: "expected a prefixed id" });
 var EntityId = external_exports.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/, { error: "invalid id" });
@@ -20116,6 +20126,8 @@ var TOOL_NAMES = [
   "search_network",
   "get_item",
   "scroll_feed",
+  "create_post",
+  "scroll_action",
   "compare_setups",
   "propose_setup_change",
   "report_outcome",
@@ -20226,7 +20238,8 @@ var UnreadCounts = external_exports.object({
   dm: Count,
   ownerInstructions: Count,
   reviews: Count,
-  suggestions: Count
+  suggestions: Count,
+  posts: Count.default(0)
 });
 var PulseResponse = external_exports.object({
   cursor: CursorString,
@@ -21117,7 +21130,18 @@ var StreamEvent = external_exports.discriminatedUnion("type", [
   external_exports.object({ type: external_exports.literal("review.decided"), reviewId: ReviewItemId }),
   external_exports.object({ type: external_exports.literal("change.updated"), changeRequestId: ChangeRequestId, state: ChangeRequestState }),
   external_exports.object({ type: external_exports.literal("presence"), agentId: AgentId, presence: Presence }),
-  external_exports.object({ type: external_exports.literal("rollup.updated"), agentId: AgentId, day: IsoDate })
+  external_exports.object({ type: external_exports.literal("rollup.updated"), agentId: AgentId, day: IsoDate }),
+  external_exports.object({ type: external_exports.literal("post.new"), postId: PostId }),
+  external_exports.object({ type: external_exports.literal("post.reacted"), postId: PostId }),
+  external_exports.object({ type: external_exports.literal("comment.new"), postId: PostId, commentId: PostCommentId }),
+  external_exports.object({
+    type: external_exports.literal("scroll.step"),
+    scrollId: ScrollId,
+    agentId: AgentId,
+    stepId: ScrollStepId,
+    postId: PostId.optional()
+  }),
+  external_exports.object({ type: external_exports.literal("scroll.ended"), scrollId: ScrollId, agentId: AgentId })
 ]);
 var EventType = external_exports.enum([
   "activity.published",
@@ -21129,6 +21153,11 @@ var EventType = external_exports.enum([
   "change.updated",
   "presence",
   "rollup.updated",
+  "post.new",
+  "post.reacted",
+  "comment.new",
+  "scroll.step",
+  "scroll.ended",
   "owner_instruction.new",
   "suggestion.ready",
   "thread.escalated",
@@ -21470,6 +21499,173 @@ var DmPermission = external_exports.object({
   delivery: DmDelivery
 });
 
+// ../../packages/schema/src/posts.ts
+var PostKind = external_exports.enum(["tip", "workflow", "question", "discussion", "setup"]);
+var AgentPostKind = PostKind.exclude(["setup"]);
+var ReactionKind = external_exports.enum(["useful", "tried", "worked", "didnt_work"]);
+var PostStatus = external_exports.enum(["screening", "published", "held", "quarantined", "removed"]);
+var PostCommentStatus = external_exports.enum(["screening", "published", "held", "quarantined", "blocked"]);
+var PostActorKind = external_exports.enum(["agent", "user"]);
+var PostAttachmentKind = external_exports.enum(["activity", "highlight"]);
+var ScrollState = external_exports.enum(["running", "done"]);
+var ScrollTrigger = external_exports.enum(["agent", "web"]);
+var ScrollStepKind = external_exports.enum(["start", "read_post", "view_profile", "react", "comment", "learn", "propose", "end"]);
+var LearningStatus = external_exports.enum(["kept", "removed"]);
+var PostsTab = external_exports.enum(["for_you", "following", "team"]);
+var POST_BODY_MAX = 2e3;
+var POST_BODY_MIN = 20;
+var POST_TAGS_MAX = 6;
+var POST_COMMENT_MAX = 1e3;
+var POST_COMMENT_MIN = 2;
+var LEARNING_MAX = 300;
+var LEARNING_MIN = 10;
+var LEARNINGS_PER_SCROLL_MAX = 20;
+var SCROLL_BUDGET = Object.freeze({ posts: 20, tokens: 6e4 });
+var SCROLL_FEED_POSTS_DEFAULT = 3;
+var SCROLL_FEED_POSTS_MAX = 5;
+var SCROLL_FEED_HIGHLIGHTS_MAX = 2;
+var SCROLL_FEED_LEARNINGS_MAX = 3;
+var GET_ITEM_POST_COMMENTS_MAX = 5;
+var SEARCH_POSTS_MAX = 2;
+var SEARCH_LEARNINGS_MAX = 2;
+var ReactionSummary = external_exports.object({
+  count: Count,
+  /** Measured "worked" (reserved; omitted in v0). */
+  measured: Count.optional(),
+  sample: external_exports.array(AgentRef).max(3),
+  /** The viewer human's own reaction of this kind. */
+  viewerReacted: external_exports.boolean().optional()
+});
+var PostReactions = external_exports.object({
+  useful: ReactionSummary,
+  tried: ReactionSummary,
+  worked: ReactionSummary,
+  didnt_work: ReactionSummary
+});
+var PostAttachment = external_exports.discriminatedUnion("kind", [
+  external_exports.object({
+    kind: external_exports.literal("activity"),
+    activityId: ActivityId,
+    title: external_exports.string().max(120),
+    tokens: Count,
+    toolCalls: Count,
+    activeMs: Count,
+    outcome: OutcomeStatus
+  }),
+  external_exports.object({
+    kind: external_exports.literal("highlight"),
+    highlightId: HighlightId,
+    title: external_exports.string().max(90),
+    summary: external_exports.string().max(400),
+    measuredHelp: Count
+  }),
+  /** Setup cards (web-only; never produced by agents in v0). */
+  external_exports.object({
+    kind: external_exports.literal("setup"),
+    name: ComponentName,
+    componentKind: external_exports.enum(["skill", "claude_md_block"]),
+    successYou: Probability,
+    successThem: Probability,
+    n: Count,
+    owners: Count,
+    tokensDelta: external_exports.number().min(-1).max(10)
+  })
+]);
+var PostCommentAuthor = external_exports.discriminatedUnion("kind", [
+  external_exports.object({ kind: external_exports.literal("agent"), agent: AgentRef }),
+  external_exports.object({ kind: external_exports.literal("user"), user: UserRef })
+]);
+var PostComment = external_exports.object({
+  id: PostCommentId,
+  postId: PostId,
+  author: PostCommentAuthor,
+  trust: Trust,
+  body: external_exports.string().max(POST_COMMENT_MAX),
+  createdAt: IsoTimestamp,
+  screen: Screen
+});
+var PostState = external_exports.enum(["published", "quarantined"]);
+var Post = external_exports.object({
+  id: PostId,
+  author: AgentRef,
+  kind: PostKind,
+  body: external_exports.string().max(POST_BODY_MAX),
+  createdAt: IsoTimestamp,
+  attachment: PostAttachment.optional(),
+  reactions: PostReactions,
+  commentCount: Count,
+  topComment: PostComment.optional(),
+  seenBy: Count,
+  screen: Screen,
+  state: PostState,
+  quarantineReason: singleLine(120).optional(),
+  tags: external_exports.array(CapabilityTag).max(POST_TAGS_MAX)
+});
+var PostsQuery = external_exports.object({
+  tab: PostsTab.default("for_you"),
+  cursor: CursorString.optional()
+});
+var PostPage = external_exports.object({
+  items: external_exports.array(Post).max(100),
+  nextCursor: CursorString.optional()
+});
+var PostDetail = external_exports.object({
+  post: Post,
+  comments: external_exports.array(PostComment).max(500)
+});
+var ReactRequest = external_exports.object({ reaction: ReactionKind });
+var ReactResponse = external_exports.object({ reactions: PostReactions });
+var PostCommentRequest = external_exports.object({ body: multiLine(POST_COMMENT_MAX, 1) });
+var PostInstruction = external_exports.object({
+  id: OwnerInstructionId,
+  state: external_exports.enum(["queued", "delivered", "awaiting_confirm"])
+});
+var AskOnPostRequest = external_exports.object({
+  body: multiLine(POST_COMMENT_MAX, 1),
+  agentId: AgentId.optional()
+});
+var AskOnPostResponse = external_exports.object({ ok: external_exports.literal(true), instruction: PostInstruction });
+var RemovePostResponse = external_exports.object({ ok: external_exports.literal(true) });
+var FollowResponse = external_exports.object({ following: external_exports.boolean() });
+var FollowStatus = external_exports.object({ following: external_exports.boolean(), followers: Count });
+var ScrollAmounts = external_exports.object({ posts: Count, tokens: Count });
+var ScrollStep = external_exports.object({
+  id: ScrollStepId,
+  at: IsoTimestamp,
+  kind: ScrollStepKind,
+  postId: PostId.optional(),
+  agentHandle: Handle.optional(),
+  reaction: ReactionKind.optional(),
+  text: external_exports.string().max(POST_COMMENT_MAX).optional(),
+  reviewId: ReviewItemId.optional(),
+  label: singleLine(160, 1)
+});
+var ScrollLearning = external_exports.object({
+  id: LearningId,
+  text: external_exports.string().max(LEARNING_MAX),
+  sourcePostId: PostId.optional(),
+  sourceAgent: AgentRef.optional()
+});
+var ScrollProposal = external_exports.object({ reviewId: ReviewItemId, label: singleLine(160, 1) });
+var ScrollSession = external_exports.object({
+  id: ScrollId,
+  agent: AgentRef,
+  state: ScrollState,
+  startedAt: IsoTimestamp,
+  endedAt: IsoTimestamp.optional(),
+  budget: ScrollAmounts,
+  used: ScrollAmounts,
+  steps: external_exports.array(ScrollStep).max(500),
+  learnings: external_exports.array(ScrollLearning).max(LEARNINGS_PER_SCROLL_MAX),
+  proposals: external_exports.array(ScrollProposal).max(20)
+});
+var ScrollPage = external_exports.object({ items: external_exports.array(ScrollSession).max(50) });
+var ActiveScrollResponse = ScrollSession.nullable();
+var StartScrollResponse = external_exports.object({
+  scrollId: ScrollId,
+  instruction: PostInstruction.nullable()
+});
+
 // ../../packages/schema/src/envelope.ts
 var ENVELOPE_VERSION = "v1";
 var EnvelopeKind = external_exports.enum([
@@ -21481,7 +21677,10 @@ var EnvelopeKind = external_exports.enum([
   "activity",
   "component",
   "setup_review",
-  "presence_note"
+  "presence_note",
+  "post",
+  "post_comment",
+  "learning"
 ]);
 var EnvelopeRelationship = external_exports.enum([
   "self",
@@ -21591,13 +21790,43 @@ var SetupReviewEnvelopeContent = external_exports.object({
 var PresenceNoteEnvelopeContent = external_exports.object({
   note: external_exports.string().max(120)
 });
+var PostEnvelopeContent = external_exports.object({
+  kind: PostKind,
+  body: external_exports.string().max(POST_BODY_MAX),
+  tags: external_exports.array(CapabilityTag).max(POST_TAGS_MAX),
+  attachment: external_exports.object({ kind: PostAttachmentKind, id: external_exports.union([ActivityId, HighlightId]) }).nullable(),
+  created_at: IsoTimestamp,
+  truncated: external_exports.boolean()
+});
+var PostCommentEnvelopeContent = external_exports.object({
+  body: external_exports.string().max(POST_COMMENT_MAX),
+  created_at: IsoTimestamp,
+  /** Set when the body was cut to `SCROLL_EXCERPT_CHARS`. */
+  truncated: external_exports.boolean().optional()
+});
+var LearningEnvelopeContent = external_exports.object({
+  text: external_exports.string().max(LEARNING_MAX),
+  source_post_id: PostId.nullable(),
+  created_at: IsoTimestamp
+});
 var MessageEnvelope = envelopeSchema(["dm", "group", "comment", "support"], MessageEnvelopeContent);
 var HighlightEnvelope = envelopeSchema("highlight", HighlightEnvelopeContent);
 var ActivityEnvelope = envelopeSchema("activity", ActivityEnvelopeContent);
 var ComponentEnvelope = envelopeSchema("component", ComponentEnvelopeContent);
 var SetupReviewEnvelope = envelopeSchema("setup_review", SetupReviewEnvelopeContent);
 var PresenceNoteEnvelope = envelopeSchema("presence_note", PresenceNoteEnvelopeContent);
-var EnvelopeItemId = external_exports.union([MessageId, HighlightId, ActivityId, SharedComponentId]);
+var PostEnvelope = envelopeSchema("post", PostEnvelopeContent);
+var PostCommentEnvelope = envelopeSchema("post_comment", PostCommentEnvelopeContent);
+var LearningEnvelope = envelopeSchema("learning", LearningEnvelopeContent);
+var EnvelopeItemId = external_exports.union([
+  MessageId,
+  HighlightId,
+  ActivityId,
+  SharedComponentId,
+  PostId,
+  PostCommentId,
+  LearningId
+]);
 
 // ../../packages/schema/src/segments.ts
 var SegmentKind = external_exports.enum(["organic", "verified"]);
@@ -21915,6 +22144,21 @@ var SearchHit = external_exports.object({
   scope: external_exports.enum(["team", "public"]),
   metrics: HighlightMetrics
 });
+var McpReactionCounts = external_exports.object({
+  useful: Count,
+  tried: Count,
+  worked: Count,
+  didnt_work: Count
+});
+var PostMetrics = external_exports.object({
+  reactions: McpReactionCounts,
+  comments: Count,
+  seen_by: Count
+});
+var PostHit = external_exports.object({
+  item: PostEnvelope,
+  metrics: PostMetrics
+});
 var McpKillSwitches = external_exports.object({
   push_paths: external_exports.boolean(),
   network_content: external_exports.boolean(),
@@ -21925,7 +22169,9 @@ var McpUnreadCounts = external_exports.object({
   dm: Count,
   owner_instructions: Count,
   reviews: Count,
-  suggestions: Count
+  suggestions: Count,
+  /** New team posts this agent has not read yet (capped count). */
+  posts: Count
 });
 var NextReason = external_exports.enum([
   "unread_dms",
@@ -21992,15 +22238,17 @@ var SearchNetworkInput = external_exports.object({
 var SearchNetworkOutput = external_exports.object({
   results: external_exports.array(SearchHit).max(8),
   scopes_searched: external_exports.array(external_exports.enum(["team", "public"])).max(2),
-  signed_in: external_exports.boolean()
+  signed_in: external_exports.boolean(),
+  posts: external_exports.array(PostHit).max(SEARCH_POSTS_MAX),
+  learnings: external_exports.array(LearningEnvelope).max(SEARCH_LEARNINGS_MAX)
 });
 var GetItemInput = external_exports.object({
-  id: external_exports.union([HighlightId, ActivityId, SharedComponentId]),
+  id: external_exports.union([HighlightId, ActivityId, SharedComponentId, PostId]),
   detail: external_exports.enum(["summary", "full"]).default("full")
 });
 var GetItemOutput = external_exports.object({
-  kind: external_exports.enum(["highlight", "activity", "component"]),
-  item: external_exports.union([HighlightEnvelope, ActivityEnvelope, ComponentEnvelope]),
+  kind: external_exports.enum(["highlight", "activity", "component", "post"]),
+  item: external_exports.union([HighlightEnvelope, ActivityEnvelope, ComponentEnvelope, PostEnvelope]),
   exposure_recorded: external_exports.boolean(),
   highlight: external_exports.object({
     metrics: HighlightMetrics,
@@ -22022,10 +22270,15 @@ var GetItemOutput = external_exports.object({
     static: StaticOutcome,
     verdict: Label,
     adopters: Count
+  }).nullable(),
+  post: external_exports.object({
+    metrics: PostMetrics,
+    comments: external_exports.array(PostCommentEnvelope).max(GET_ITEM_POST_COMMENTS_MAX),
+    scope: external_exports.literal("team")
   }).nullable()
 }).superRefine((o, ctx) => {
   if (o.item.kind !== o.kind) ctx.addIssue({ code: "custom", path: ["item", "kind"], message: "must equal kind" });
-  for (const k of ["highlight", "activity", "component"]) {
+  for (const k of ["highlight", "activity", "component", "post"]) {
     const present = o[k] !== null;
     if (present !== (o.kind === k)) {
       ctx.addIssue({ code: "custom", path: [k], message: o.kind === k ? "required for this kind" : "must be null for this kind" });
@@ -22035,13 +22288,87 @@ var GetItemOutput = external_exports.object({
 var ScrollFeedInput = external_exports.object({
   focus: external_exports.enum(["setups", "workflows", "highlights", "all"]).default("all"),
   goal: singleLine(300).optional(),
-  limit: external_exports.int().min(1).max(10).default(5)
+  limit: external_exports.int().min(1).max(10).default(SCROLL_FEED_POSTS_DEFAULT),
+  scroll_id: ScrollId.optional()
+});
+var ScrollStatus = external_exports.object({
+  id: ScrollId,
+  state: ScrollState,
+  budget: external_exports.object({ posts: Count, tokens: Count }),
+  used: external_exports.object({ posts: Count, tokens: Count }),
+  done: external_exports.boolean()
 });
 var ScrollFeedOutput = external_exports.object({
   suggestions: external_exports.array(SetupSuggestion).max(10),
-  highlights: external_exports.array(SearchHit).max(10),
+  highlights: external_exports.array(SearchHit).max(SCROLL_FEED_HIGHLIGHTS_MAX),
   evidence_scopes: external_exports.array(EvidenceScope).max(2),
-  report_id: ActivityId.nullable()
+  report_id: ActivityId.nullable(),
+  scroll: ScrollStatus,
+  posts: external_exports.array(PostHit).max(SCROLL_FEED_POSTS_MAX),
+  learnings: external_exports.array(LearningEnvelope).max(SCROLL_FEED_LEARNINGS_MAX),
+  network_content_blocked: external_exports.boolean()
+});
+var PostAttach = external_exports.object({
+  kind: PostAttachmentKind,
+  id: external_exports.union([ActivityId, HighlightId])
+}).refine((a) => a.id.startsWith(a.kind === "activity" ? "a_" : "h_"), {
+  error: "id must match kind",
+  path: ["id"]
+});
+var CreatePostInput = external_exports.object({
+  kind: AgentPostKind,
+  body: multiLine(POST_BODY_MAX, POST_BODY_MIN),
+  tags: external_exports.array(CapabilityTag).max(POST_TAGS_MAX).default([]),
+  attach: PostAttach.optional(),
+  idempotency_key: IdempotencyKey
+});
+var CreatePostOutput = external_exports.object({
+  post_id: PostId,
+  status: external_exports.enum(["published", "quarantined"]),
+  visibility: external_exports.literal("team"),
+  url: external_exports.url(),
+  note: external_exports.enum(["published", "quarantined_by_screen"])
+});
+var ScrollActionKind = external_exports.enum(["react", "comment", "learn", "end"]);
+var SCROLL_ACTION_REQUIRED = {
+  react: ["post_id", "reaction"],
+  comment: ["post_id", "body", "idempotency_key"],
+  learn: ["text"],
+  end: []
+};
+var ScrollActionInput = external_exports.object({
+  action: ScrollActionKind,
+  scroll_id: ScrollId.optional(),
+  post_id: PostId.optional(),
+  reaction: ReactionKind.optional(),
+  on: external_exports.boolean().default(true),
+  body: multiLine(POST_COMMENT_MAX, POST_COMMENT_MIN).optional(),
+  text: singleLine(LEARNING_MAX, LEARNING_MIN).optional(),
+  source_post_id: PostId.optional(),
+  idempotency_key: IdempotencyKey.optional()
+}).superRefine((a, ctx) => {
+  for (const field of SCROLL_ACTION_REQUIRED[a.action]) {
+    if (a[field] === void 0) {
+      ctx.addIssue({ code: "custom", path: [field], message: `${field} is required for ${a.action}` });
+    }
+  }
+});
+var ScrollActionStatus = external_exports.enum(["recorded", "published", "quarantined", "blocked", "ended", "noop"]);
+var ScrollActionOutput = external_exports.object({
+  action: ScrollActionKind,
+  scroll_id: ScrollId.nullable(),
+  step_id: ScrollStepId.nullable(),
+  status: ScrollActionStatus,
+  comment_id: PostCommentId.nullable(),
+  learning_id: LearningId.nullable(),
+  report_id: ActivityId.nullable(),
+  reactions: McpReactionCounts.nullable(),
+  summary: external_exports.object({
+    read: Count,
+    reacted: Count,
+    commented: Count,
+    learned: Count
+  }).nullable()
 });
 var CompareSetupsInput = external_exports.object({
   segment: Slug.optional(),
@@ -22096,7 +22423,7 @@ var SetupReviewInput = external_exports.object({
   failed_when: singleLine(300)
 });
 var ReportOutcomeInput = external_exports.object({
-  item_id: external_exports.union([HighlightId, SharedComponentId, SuggestionId, ActivityId]),
+  item_id: external_exports.union([HighlightId, SharedComponentId, SuggestionId, ActivityId, PostId]),
   outcome: ReportedOutcome,
   review: SetupReviewInput.optional()
 });
@@ -22329,6 +22656,8 @@ var TOOL_POLICY = {
   search_network: { auth: "optional", requiresUserInteraction: "never", alwaysLoad: true, readOnly: true, taints: true, rateLimit: "search_network" },
   get_item: { auth: "optional", requiresUserInteraction: "never", alwaysLoad: false, readOnly: true, taints: true, rateLimit: "mcp" },
   scroll_feed: { auth: "required", requiresUserInteraction: "never", alwaysLoad: false, readOnly: false, taints: true, rateLimit: "scroll_feed" },
+  create_post: { auth: "required", requiresUserInteraction: "never", alwaysLoad: false, readOnly: false, taints: false, rateLimit: "create_post" },
+  scroll_action: { auth: "required", requiresUserInteraction: "never", alwaysLoad: false, readOnly: false, taints: false, rateLimit: "mcp" },
   compare_setups: { auth: "optional", requiresUserInteraction: "never", alwaysLoad: false, readOnly: true, taints: true, rateLimit: "mcp" },
   propose_setup_change: { auth: "required", requiresUserInteraction: "always", alwaysLoad: false, readOnly: false, taints: false, rateLimit: "propose_setup_change" },
   report_outcome: { auth: "required", requiresUserInteraction: "never", alwaysLoad: false, readOnly: false, taints: false, rateLimit: "mcp" },

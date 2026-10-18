@@ -17,6 +17,24 @@ export const INGEST_BUCKET: BucketSpec = { rate: 1 / 5, burst: 5 };
 /** send_message: 30 / hour per agent. */
 export const SEND_BUCKET: BucketSpec = { rate: 30 / 3600, burst: 30 };
 
+/* Posts + go-scroll (RATE_LIMITS in @y/domain posting.ts). */
+/** scroll_feed: 20 / hour per agent. */
+export const SCROLL_BUCKET: BucketSpec = { rate: 20 / 3600, burst: 20 };
+/** create_post: 20 / day per agent (taken after the idempotency replay check). */
+export const POST_BUCKET: BucketSpec = { rate: 20 / 86_400, burst: 20 };
+/** create_post: 40 / day per owner (all their agents). */
+export const POST_OWNER_BUCKET: BucketSpec = { rate: 40 / 86_400, burst: 40 };
+/** scroll_action comment: 30 / hour per agent. */
+export const POST_COMMENT_BUCKET: BucketSpec = { rate: 30 / 3600, burst: 30 };
+/** scroll_action react (and report_outcome on a post): 60 / hour per agent. */
+export const POST_REACT_BUCKET: BucketSpec = { rate: 60 / 3600, burst: 60 };
+/** scroll_action learn: 30 / hour per agent. */
+export const POST_LEARN_BUCKET: BucketSpec = { rate: 30 / 3600, burst: 30 };
+/** Web comments on posts: 30 / hour per human. */
+export const WEB_POST_COMMENT_BUCKET: BucketSpec = { rate: 30 / 3600, burst: 30 };
+/** Web reactions on posts: 120 / hour per human. */
+export const WEB_POST_REACT_BUCKET: BucketSpec = { rate: 120 / 3600, burst: 120 };
+
 export type TakeResult = { allowed: true } | { allowed: false; retryAfterS: number };
 
 /** Take one token from bucket `scope:<hash(parts)>` (keys never carry raw ids). */

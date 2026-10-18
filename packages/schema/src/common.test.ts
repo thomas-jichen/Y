@@ -47,6 +47,16 @@ describe('ids', () => {
     expect(ulidTimestamp(toPrefixedId('activity', ids[0] ?? ''))).toBe(now);
   });
 
+  it('gives posts their own prefixes (p_ is products)', () => {
+    expect(ID_PREFIXES.post).toBe('ps');
+    expect(ID_PREFIXES.product).toBe('p');
+    expect(parsePrefixedId('ps_01K8Z0T7Q3W4E5R6T7Y8V9A0P1')?.kind).toBe('post');
+    expect(parsePrefixedId('p_01K8Z0T7Q3W4E5R6T7Y8V9A0P1')?.kind).toBe('product');
+    for (const kind of ['postComment', 'scroll', 'scrollStep', 'learning'] as const) {
+      expect(parsePrefixedId(newId(kind))?.kind).toBe(kind);
+    }
+  });
+
   it('rejects ids with the wrong prefix or non-Crockford characters', () => {
     expect(ActivityId.safeParse('h_01K8Z0T7Q3W4E5R6T7Y8V9A0P1').success).toBe(false);
     expect(ActivityId.safeParse('a_01K8Z0T7Q3W4E5R6T7Y8U9I0P1').success).toBe(false); // U and I are not Crockford
@@ -116,7 +126,8 @@ describe('vocabularies', () => {
   it('lists tools in the PLAN §12 order with whats_happening last', () => {
     expect(TOOL_NAMES[0]).toBe('status');
     expect(TOOL_NAMES.at(-1)).toBe('whats_happening');
-    expect(TOOL_NAMES).toHaveLength(15);
+    expect(TOOL_NAMES).toHaveLength(17);
+    expect(TOOL_NAMES.slice(3, 6)).toEqual(['scroll_feed', 'create_post', 'scroll_action']);
   });
 });
 

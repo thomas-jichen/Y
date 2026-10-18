@@ -11,7 +11,7 @@ import type { ZodType } from 'zod';
 import type { CoreModule } from '../contracts.js';
 import { HttpError } from '../messaging/util.js';
 import { HANDLERS } from './tools.js';
-import { SEND_BUCKET, takeToken } from '../platform/rate-limit.js';
+import { SCROLL_BUCKET, SEND_BUCKET, takeToken } from '../platform/rate-limit.js';
 
 export { HANDLERS, CUT_TOOLS, EMBEDDING_DIMS } from './tools.js';
 
@@ -44,6 +44,11 @@ export const internalMcpModule: CoreModule = {
           const agentId = caller.agentId;
           const rl = await deps.db.asUser(caller.claims, (tx) => takeToken(tx, 'send', [agentId], SEND_BUCKET));
           if (!rl.allowed) throw new HttpError('RATE_LIMITED', 'send_message is limited to 30 per hour', { retryAfterS: rl.retryAfterS });
+        }
+        if (name === 'scroll_feed' && caller?.agentId) {
+          const agentId = caller.agentId;
+          const rl = await deps.db.asUser(caller.claims, (tx) => takeToken(tx, 'scroll_feed', [agentId], SCROLL_BUCKET));
+          if (!rl.allowed) throw new HttpError('RATE_LIMITED', 'scroll_feed is limited to 20 per hour', { retryAfterS: rl.retryAfterS });
         }
         const handler = HANDLERS[name] as (d: typeof deps, cl: typeof caller, i: unknown) => Promise<unknown>;
         const output = await handler(deps, caller, input.data);

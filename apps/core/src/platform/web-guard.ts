@@ -6,8 +6,9 @@
  *   allowed web origin (or core's own) is rejected. Requests without Origin
  *   (CLI, hooks, server-to-server) pass; they cannot ride a browser's cookies.
  * - Demo gate: when Y_DEMO_SECRET is set, /api/v1/dev/* needs X-Demo-Secret.
- * - Step-up (I5): review decisions and owner instructions need a web login
- *   younger than 12 h (STEP_UP_REQUIRED otherwise).
+ * - Step-up (I5): review decisions and owner instructions (thread instruct,
+ *   post ask, send to scroll) need a web login younger than 12 h
+ *   (STEP_UP_REQUIRED otherwise).
  */
 import type { Context, Hono, MiddlewareHandler } from 'hono';
 import { cors } from 'hono/cors';
@@ -18,7 +19,13 @@ import { fail, safeEqual, sha256Hex } from './util.js';
 
 /** Agent/plugin/internal routes: never browser-called, no Origin rules. */
 const NON_WEB = [/^\/api\/v1\/ingest$/, /^\/api\/v1\/hook\//, /^\/api\/v1\/pulse(\/|$)/, /^\/api\/v1\/agent\//, /^\/internal\//];
-const STEP_UP_ROUTES = [/^\/api\/v1\/review\/[^/]+\/decision$/, /^\/api\/v1\/threads\/[^/]+\/instruct$/];
+const STEP_UP_ROUTES = [
+  /^\/api\/v1\/review\/[^/]+\/decision$/,
+  /^\/api\/v1\/threads\/[^/]+\/instruct$/,
+  // Owner instructions from posts: "ask my agent to reply", "send my agent to scroll".
+  /^\/api\/v1\/posts\/[^/]+\/ask$/,
+  /^\/api\/v1\/agents\/[^/]+\/scroll$/,
+];
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export const CORS_ALLOW_HEADERS = [

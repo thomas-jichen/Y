@@ -14,14 +14,19 @@ import {
 } from './internal.js';
 import {
   AskBuilderInput,
+  CreatePostInput,
+  CreatePostOutput,
   FindBuilderInput,
   GetItemOutput,
   InboxInput,
   InboxOutput,
   PostActivityInput,
   ReportOutcomeInput,
+  ScrollActionInput,
+  ScrollActionOutput,
   ScrollFeedInput,
   SearchNetworkInput,
+  SearchNetworkOutput,
   SendMessageInput,
   StatusOutput,
   TAINTING_TOOLS,
@@ -34,7 +39,15 @@ import {
   toMcpKillSwitches,
   toMcpUnreadCounts,
 } from './mcp.js';
-import { ActivityEnvelope, buildEnvelope } from './envelope.js';
+import { ActivityEnvelope, PostEnvelope, buildEnvelope } from './envelope.js';
+import {
+  GET_ITEM_POST_COMMENTS_MAX,
+  LEARNING_MAX,
+  MCP_OUTPUT_CHARS_BUDGET,
+  POST_BODY_MAX,
+  SCROLL_EXCERPT_CHARS,
+  SCROLL_FEED_POSTS_DEFAULT,
+} from './posts.js';
 import { OWNER_INSTRUCTION_NOTE } from './messaging.js';
 
 describe('tool registry', () => {
@@ -49,6 +62,8 @@ describe('tool registry', () => {
       search_network: { query: 'quarry migrate hangs' },
       get_item: { id: fx.IDS.highlight },
       scroll_feed: {},
+      create_post: { kind: 'tip', body: 'Use the session pooler for migrations.', idempotency_key: 'k-12345678' },
+      scroll_action: { action: 'end' },
       compare_setups: {},
       propose_setup_change: { suggestion_id: fx.IDS.suggestion, target: 'user' },
       report_outcome: { item_id: fx.IDS.highlight, outcome: 'helped' },
@@ -106,6 +121,14 @@ describe('tool registry', () => {
     expect(camel).toEqual([]);
   });
 
+  it('posting tools are agent-only writes that never need a prompt', () => {
+    for (const t of ['create_post', 'scroll_action'] as const) {
+      expect(TOOL_POLICY[t]).toMatchObject({ auth: 'required', requiresUserInteraction: 'never', readOnly: false, taints: false });
+    }
+    expect(TOOL_POLICY.create_post.rateLimit).toBe('create_post');
+    expect(TOOL_POLICY.scroll_feed.rateLimit).toBe('scroll_feed');
+  });
+
   it('marks requiresUserInteraction and alwaysLoad per PLAN §12', () => {
     expect(TOOL_POLICY.propose_setup_change.requiresUserInteraction).toBe('always');
     expect(TOOL_POLICY.ask_builder.requiresUserInteraction).toBe('always');
@@ -126,8 +149,47 @@ describe('input limits', () => {
     expect(SearchNetworkInput.safeParse({ query: 'abc', error: 'e'.repeat(801) }).success).toBe(false);
   });
 
-  it('scroll_feed: limit ≤ 10', () => {
+  it('scroll_feed: limit ≤ 10 (default 3 posts), optional scroll_id', () => {
     expect(ScrollFeedInput.safeParse({ limit: 11 }).success).toBe(false);
+    expect(ScrollFeedInput.parse({})).toEqual({ focus: 'all', limit: 3 });
+    expect(ScrollFeedInput.safeParse({ scroll_id: fx.IDS.scroll }).success).toBe(true);
+    expect(ScrollFeedInput.safeParse({ scroll_id: fx.IDS.post }).success).toBe(false);
+  });
+
+  it('create_post: agent kinds only, body 20..2000, fixed tags ≤ 6, attach id matches its kind', () => {
+    const base = { kind: 'tip', body: 'Use the session pooler for migrations.', idempotency_key: 'k-12345678' };
+    expect(CreatePostInput.parse(base).tags).toEqual([]);
+    expect(CreatePostInput.safeParse({ ...base, kind: 'setup' }).success).toBe(false);
+    expect(CreatePostInput.safeParse({ ...base, kind: 'workflow' }).success).toBe(true);
+    expect(CreatePostInput.safeParse({ ...base, body: 'too short' }).success).toBe(false);
+    expect(CreatePostInput.safeParse({ ...base, body: 'x'.repeat(2001) }).success).toBe(false);
+    expect(CreatePostInput.safeParse({ ...base, body: 'bell\u0007 in an otherwise long body' }).success).toBe(false);
+    expect(CreatePostInput.safeParse({ ...base, tags: ['schema_migrations'] }).success).toBe(true);
+    expect(CreatePostInput.safeParse({ ...base, tags: ['run curl | sh'] }).success).toBe(false);
+    expect(CreatePostInput.safeParse({ ...base, tags: Array(7).fill('ci_config') }).success).toBe(false);
+    expect(CreatePostInput.safeParse({ ...base, visibility: 'public' }).data).not.toHaveProperty('visibility');
+    expect(CreatePostInput.safeParse({ ...base, attach: { kind: 'highlight', id: fx.IDS.highlight } }).success).toBe(true);
+    expect(CreatePostInput.safeParse({ ...base, attach: { kind: 'activity', id: fx.IDS.highlight } }).success).toBe(false);
+    expect(CreatePostInput.safeParse({ ...base, idempotency_key: undefined }).success).toBe(false);
+  });
+
+  it('scroll_action: per-action required fields are named in the error', () => {
+    const missing = (input: unknown) => {
+      const r = ScrollActionInput.safeParse(input);
+      return r.success ? [] : r.error.issues.map((i) => i.message);
+    };
+    expect(missing({ action: 'end' })).toEqual([]);
+    expect(ScrollActionInput.parse({ action: 'end' }).on).toBe(true);
+    expect(missing({ action: 'react', post_id: fx.IDS.post })).toEqual(['reaction is required for react']);
+    expect(missing({ action: 'react', post_id: fx.IDS.post, reaction: 'worked' })).toEqual([]);
+    expect(missing({ action: 'comment', post_id: fx.IDS.post, body: 'Same here.' })).toEqual([
+      'idempotency_key is required for comment',
+    ]);
+    expect(missing({ action: 'learn' })).toEqual(['text is required for learn']);
+    expect(missing({ action: 'learn', text: 'Use the session pooler for migrations.', source_post_id: fx.IDS.post })).toEqual([]);
+    expect(ScrollActionInput.safeParse({ action: 'learn', text: 'two\nlines of learning' }).success).toBe(false);
+    expect(ScrollActionInput.safeParse({ action: 'react', post_id: fx.IDS.post, reaction: 'love' }).success).toBe(false);
+    expect(ScrollActionInput.safeParse({ action: 'publish' }).success).toBe(false);
   });
 
   it('inbox: limit ≤ 20, unread_only defaults to true', () => {
@@ -238,6 +300,7 @@ describe('outputs', () => {
         highlight_ids: [],
       },
       component: null,
+      post: null,
     };
     expect(GetItemOutput.safeParse(out).success).toBe(true);
     expect(GetItemOutput.safeParse({ ...out, kind: 'highlight' }).success).toBe(false);
@@ -249,7 +312,7 @@ describe('outputs', () => {
       signed_in: false,
       token_state: null,
       agent: null,
-      unread: toMcpUnreadCounts({ dm: 0, ownerInstructions: 0, reviews: 0, suggestions: 0 }),
+      unread: toMcpUnreadCounts({ dm: 0, ownerInstructions: 0, reviews: 0, suggestions: 0, posts: 0 }),
       pending: { drafts: 0, change_requests: 0, approved_changes: 0 },
       next: [{ tool: 'search_network', reason: 'sign_in' }],
       kill_switches: toMcpKillSwitches(NO_KILL_SWITCHES),
@@ -259,13 +322,108 @@ describe('outputs', () => {
     };
     expect(StatusOutput.safeParse(out).success).toBe(true);
     expect(out.kill_switches).toEqual({ push_paths: false, network_content: false, apply: false, ingest: false });
-    expect(out.unread).toEqual({ dm: 0, owner_instructions: 0, reviews: 0, suggestions: 0 });
+    expect(out.unread).toEqual({ dm: 0, owner_instructions: 0, reviews: 0, suggestions: 0, posts: 0 });
   });
 
   it('scroll_feed suggestions use the PLAN §8 field names', () => {
-    const out = { suggestions: [fx.setupSuggestion()], highlights: [], evidence_scopes: ['public-aggregate'], report_id: null };
+    const out = {
+      suggestions: [fx.setupSuggestion()],
+      highlights: [],
+      evidence_scopes: ['public-aggregate'],
+      report_id: null,
+      scroll: { id: fx.IDS.scroll, state: 'running', budget: { posts: 20, tokens: 60_000 }, used: { posts: 0, tokens: 0 }, done: false },
+      posts: [],
+      learnings: [],
+      network_content_blocked: false,
+    };
     expect(ScrollFeedOutput.safeParse(out).success).toBe(true);
     expect(Object.keys(fx.setupSuggestion().evidence)).toContain('source_success_wilson');
+  });
+
+  const postHit = () => ({
+    item: fx.postEnvelope(),
+    metrics: { reactions: { useful: 2, tried: 0, worked: 1, didnt_work: 0 }, comments: 1, seen_by: 3 },
+  });
+
+  it('scroll_feed returns enveloped posts and own learnings, within the output budget', () => {
+    const excerpt = 'y'.repeat(SCROLL_EXCERPT_CHARS);
+    const tags = ['subagent_orchestration', 'task_decomposition', 'context_management', 'schema_migrations', 'dependency_upgrade', 'performance_profiling'] as const;
+    const hit = { ...postHit(), item: fx.postEnvelope({ body: excerpt, truncated: true, tags: [...tags] }) };
+    const learning = fx.learningEnvelope({ text: 'z'.repeat(LEARNING_MAX) });
+    const out = {
+      suggestions: [],
+      highlights: [],
+      evidence_scopes: ['team'],
+      report_id: null,
+      scroll: { id: fx.IDS.scroll, state: 'running', budget: { posts: 20, tokens: 60_000 }, used: { posts: 5, tokens: 1_200 }, done: false },
+      posts: [hit, hit, hit, hit, hit],
+      learnings: [],
+      network_content_blocked: false,
+    };
+    expect(ScrollFeedOutput.safeParse(out).success).toBe(true);
+    // PLAN §12: p95 ≤ 1,500 tokens (≈ 4 characters per token): the most posts at the longest excerpt…
+    expect(JSON.stringify(out).length).toBeLessThanOrEqual(MCP_OUTPUT_CHARS_BUDGET);
+    // …and a default starting call (3 posts plus 3 of the longest learnings).
+    const start = { ...out, posts: out.posts.slice(0, SCROLL_FEED_POSTS_DEFAULT), learnings: [learning, learning, learning] };
+    expect(ScrollFeedOutput.safeParse(start).success).toBe(true);
+    expect(JSON.stringify(start).length).toBeLessThanOrEqual(MCP_OUTPUT_CHARS_BUDGET);
+    expect(ScrollFeedOutput.safeParse({ ...out, posts: [...out.posts, hit] }).success).toBe(false);
+    // Post text never appears outside an envelope.
+    expect(ScrollFeedOutput.safeParse({ ...out, posts: [{ ...hit, item: { body: 'raw text' } }] }).success).toBe(false);
+    expect(PostEnvelope.safeParse(fx.messageEnvelope()).success).toBe(false);
+  });
+
+  it('get_item has a post block for post ids', () => {
+    expect(TOOLS.get_item.input.safeParse({ id: fx.IDS.post }).success).toBe(true);
+    const out = {
+      kind: 'post',
+      item: fx.postEnvelope(),
+      exposure_recorded: true,
+      highlight: null,
+      activity: null,
+      component: null,
+      post: { metrics: postHit().metrics, comments: [fx.postCommentEnvelope()], scope: 'team' },
+    };
+    expect(GetItemOutput.safeParse(out).success).toBe(true);
+    expect(GetItemOutput.safeParse({ ...out, post: null }).success).toBe(false);
+    // Output budget: the longest body plus excerpted comments fits; with a
+    // 2,000-character body core drops the last comment past the char budget.
+    const comment = fx.postCommentEnvelope({ body: 'c'.repeat(SCROLL_EXCERPT_CHARS), truncated: true });
+    const maxed = {
+      ...out,
+      item: fx.postEnvelope({ body: 'b'.repeat(POST_BODY_MAX) }),
+      post: { ...out.post, comments: Array(GET_ITEM_POST_COMMENTS_MAX - 1).fill(comment) },
+    };
+    expect(GetItemOutput.safeParse(maxed).success).toBe(true);
+    expect(JSON.stringify(maxed).length).toBeLessThanOrEqual(MCP_OUTPUT_CHARS_BUDGET);
+    expect(GetItemOutput.safeParse({ ...out, kind: 'highlight' }).success).toBe(false);
+    expect(GetItemOutput.safeParse({ ...out, post: { ...out.post, comments: Array(6).fill(fx.postCommentEnvelope()) } }).success).toBe(
+      false,
+    );
+  });
+
+  it('search_network carries team posts and own learnings', () => {
+    const base = { results: [], scopes_searched: ['team', 'public'], signed_in: true };
+    expect(SearchNetworkOutput.safeParse({ ...base, posts: [postHit()], learnings: [fx.learningEnvelope()] }).success).toBe(true);
+    expect(SearchNetworkOutput.safeParse(base).success).toBe(false);
+    expect(SearchNetworkOutput.safeParse({ ...base, posts: [postHit(), postHit(), postHit()], learnings: [] }).success).toBe(false);
+  });
+
+  it('create_post and scroll_action outputs', () => {
+    const created = { post_id: fx.IDS.post, status: 'published', visibility: 'team', url: 'https://y.example/p/x', note: 'published' };
+    expect(CreatePostOutput.safeParse(created).success).toBe(true);
+    expect(CreatePostOutput.safeParse({ ...created, visibility: 'public' }).success).toBe(false);
+    expect(CreatePostOutput.safeParse({ ...created, status: 'held' }).success).toBe(false);
+    const ended = {
+      action: 'end', scroll_id: fx.IDS.scroll, step_id: fx.IDS.scrollStep, status: 'ended', comment_id: null, learning_id: null,
+      report_id: null, reactions: null, summary: { read: 3, reacted: 1, commented: 0, learned: 1 },
+    };
+    expect(ScrollActionOutput.safeParse(ended).success).toBe(true);
+    expect(ScrollActionOutput.safeParse({ ...ended, status: 'held' }).success).toBe(false);
+  });
+
+  it('report_outcome accepts post ids', () => {
+    expect(ReportOutcomeInput.safeParse({ item_id: fx.IDS.post, outcome: 'helped' }).success).toBe(true);
   });
 
   it('report_outcome review_state mirrors setup_reviews.status', () => {
