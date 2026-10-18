@@ -6,19 +6,19 @@ Parallel work that build agents can't do: provisioning real accounts, and checki
 
 ---
 
-## 1. Provision accounts and keys
+## 1. Provision accounts (all free)
 
-Keep every value in a shared password manager. **Never commit keys to the repo.** The variable names match `.env.example` on `core/v0`.
+We're running at **$0** on free tiers. Don't sign up for anything paid (no Fly.io, AWS, Vercel AI Gateway or Supabase Pro). Keep every value in a shared password manager. **Never commit keys to the repo.**
 
-- [ ] **Anthropic API key** (`ANTHROPIC_API_KEY`): session summaries (Haiku 5.5 / Sonnet 5.5) and the safety judge. Set a monthly spend cap in the console.
-- [ ] **Vercel AI Gateway key** (`AI_GATEWAY_API_KEY`): embeddings (`openai/text-embedding-3-small`).
-- [ ] **Supabase project** (Pro plan; production DB, login and OAuth):
-  - Enable the **OAuth 2.1 server** and dynamic client registration.
-  - Create a **GitHub OAuth app** and set it as the GitHub provider.
-  - Record `SUPABASE_URL`, the JWKS URL and the DB connection strings (pooled and direct).
-- [ ] **Manufact account**: `npx mcp-use login`. Hosts the MCP server for the Manufact track.
-- [ ] **Fly.io account**: hosts `apps/core`.
-- [ ] **Slack app** (internal, in our workspace; needed for M6): create it and note the signing secret and bot token. No scopes beyond `chat:write`, `im:write`, `commands` yet.
+- [ ] **Supabase, Free plan** (database, GitHub login, OAuth for MCP clients, Realtime, cron, Edge Functions):
+  - Create one project.
+  - Enable the **OAuth 2.1 server** and dynamic client registration, if the Free plan offers them. Note it if it doesn't; S4 checks this.
+  - Record the project URL, anon key, service-role key, JWKS URL, and the DB connection strings (pooled and direct).
+- [ ] **GitHub OAuth app** (free): set it as Supabase's GitHub login provider, with the callback URL Supabase shows you.
+- [ ] **Vercel, Hobby plan** (free): hosts the core API and the web app. Just create the account; we'll link the project later.
+- [ ] **Manufact, free plan**: run `npx mcp-use login`. Hosts the MCP server for the Manufact track.
+- [ ] **Slack internal app** in our workspace (free; needed later for M6): create it and note the signing secret and bot token. No scopes beyond `chat:write`, `im:write`, `commands` yet.
+- Optional, not needed: an Anthropic API key. Session summaries run on each user's own Claude subscription by default; a key only enables server-side summaries and the AI safety judge.
 
 ---
 
@@ -82,7 +82,7 @@ Follow the Codex hooks docs (learn.chatgpt.com/docs/hooks) for the file format. 
 2. Connect it to Claude Code, both as a plugin MCP server and via `claude mcp add`. Call the tool in each permission mode: default, acceptEdits, bypassPermissions.
 3. Does a native prompt appear every time, even in bypassPermissions? Does an allow rule skip it? What happens under `claude -p`? Check the desktop app too.
 
-### S3: Manufact Cloud
+### S3: Manufact Cloud (free plan)
 
 1. Scaffold a hello mcp-use server and deploy it with `npx mcp-use deploy`. Record the URL format.
 2. **Cold start**: how long does the first call take after more than 10 minutes idle?
@@ -90,12 +90,16 @@ Follow the Codex hooks docs (learn.chatgpt.com/docs/hooks) for the file format. 
 4. **Egress**: can a tool `fetch('https://httpbin.org/get')`?
 5. **401 behavior**: return HTTP 401 with a `WWW-Authenticate` header from middleware. What does Claude Code show? What does claude.ai show?
 6. Can a monorepo subfolder (`apps/mcp`) be deployed? Can you set a custom domain and env vars?
+7. What are the free plan's real limits (requests per month, scale-to-zero, number of projects)?
 
-### S4: Supabase OAuth (after section 1)
+### S4: Supabase OAuth on the Free plan (after section 1)
 
+0. **Is the OAuth 2.1 server available on the Free plan at all?** If not, write that down first; we'd fall back to Better Auth running inside our own server.
 1. With the OAuth 2.1 server enabled, register a client (dynamic client registration) and complete the authorize flow once. Our consent page doesn't exist yet, so use the default or a stub URL.
 2. Decode the access token. Which claims are present (`sub`, `role`, **`client_id`?**, `aud`)? Which scopes can be requested beyond `openid email profile`?
-3. Optional, once S3 works: connect claude.ai (custom connector), ChatGPT and `codex mcp login` to a hello server using `oauthSupabaseProvider` from `mcp-use/oauth/supabase`, and note what breaks.
+3. Check **Realtime** on the Free plan: from a small Node script using `@supabase/supabase-js`, subscribe to a broadcast channel and send to it from SQL with `select realtime.send('{"n":1}'::jsonb, 'ping', 'agent:test', false);`. Does the message arrive, and how fast? Note the concurrent-connection limit.
+4. Check **free embeddings**: deploy a tiny Edge Function that runs `new Supabase.ai.Session('gte-small')` on a sentence (`mean_pool: true, normalize: true`). Does it return 384 numbers, and how long does it take?
+5. Optional, once S3 works: connect claude.ai (custom connector), ChatGPT and `codex mcp login` to a hello server using `oauthSupabaseProvider` from `mcp-use/oauth/supabase`, and note what breaks.
 
 ### Result template
 
