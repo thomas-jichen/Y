@@ -67,7 +67,7 @@ export function TimeSeries({ dates, series, height = 220, format }: { dates: str
               <g>
                 <line x1={x(ds[hover])} x2={x(ds[hover])} y2={ih} stroke="var(--line-strong)" />
                 {series.map((s) => (
-                  <circle key={s.key} cx={x(ds[hover])} cy={y(s.values[hover])} r={4} fill={s.color} stroke="var(--surface-solid)" strokeWidth={2} />
+                  <circle key={s.key} cx={x(ds[hover])} cy={y(s.values[hover])} r={4} fill={s.color} stroke="var(--page)" strokeWidth={2} />
                 ))}
               </g>
             )}
@@ -77,7 +77,7 @@ export function TimeSeries({ dates, series, height = 220, format }: { dates: str
       )}
       {hover !== null && w > 0 && (
         <ChartTooltip x={M.left + x(ds[hover])} y={M.top + y(Math.max(...series.map((s) => s.values[hover])))} align={x(ds[hover]) > iw * 0.75 ? 'right' : x(ds[hover]) < iw * 0.2 ? 'left' : 'center'}>
-          <div className="mb-1 text-fg-3">{ds[hover].toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</div>
+          <div className="mb-1">{ds[hover].toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</div>
           {series.map((s) => (
             <TipRow key={s.key} color={s.color} value={format(s.values[hover])} label={s.label} />
           ))}

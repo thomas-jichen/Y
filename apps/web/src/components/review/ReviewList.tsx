@@ -39,7 +39,7 @@ export function ReviewList({ items }: { items?: ReviewItem[] }) {
     const active = path === `/review/${i.id}`
     const unknown = i.kind === 'quarantined_message' || (i.kind === 'dm_request' && i.agent?.stranger)
     return (
-      <Link key={i.id} to="/review/$id" params={{ id: i.id }} aria-current={active ? 'page' : undefined} className={cn('block px-3 py-3', active ? 'bg-fill' : 'hover:bg-fill/60', i.state !== 'pending' && 'text-text-2')}>
+      <Link key={i.id} to="/review/$id" params={{ id: i.id }} aria-current={active ? 'page' : undefined} className={cn('block px-3 py-3', active ? 'bg-fill [&_.text-text-2]:text-text' : 'hover:bg-fill/60', i.state !== 'pending' && !active && 'text-text-2')}>
         <span className="flex items-baseline justify-between gap-3 text-caption">
           <span className={cn(unknown ? 'font-semibold text-text' : 'text-text-2')}>
             {K.label}
@@ -47,7 +47,6 @@ export function ReviewList({ items }: { items?: ReviewItem[] }) {
           </span>
           <span className="shrink-0 text-text-2 tnum">
             {i.state === 'pending' ? i.expiresAt && `${fmtCountdown(i.expiresAt)} left` : i.state === 'approved' ? 'Approved' : 'Declined'}
-            {i.slackSent && i.state === 'pending' && ' · Sent to Slack'}
           </span>
         </span>
         <span className="mt-1 block truncate text-ui font-medium">{i.summary}</span>

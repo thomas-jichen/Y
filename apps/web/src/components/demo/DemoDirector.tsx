@@ -63,9 +63,9 @@ export function DemoDirector() {
           <div className="mb-2 flex items-center justify-between px-1">
             <div>
               <div className="text-sm font-semibold">Demo director</div>
-              <div className="text-xs text-fg-3">Press a number to run a beat</div>
+              <div className="text-caption">Press a number to run a beat</div>
             </div>
-            <button onClick={() => ui.set({ director: false })} className="inline-flex size-7 items-center justify-center rounded-full text-fg-3 hover:bg-raised hover:text-fg" aria-label="Close director">
+            <button onClick={() => ui.set({ director: false })} className="inline-flex size-7 items-center justify-center rounded-full hover:bg-fill" aria-label="Close director">
               <X size={14} strokeWidth={1.75} />
             </button>
           </div>
@@ -75,8 +75,8 @@ export function DemoDirector() {
                 key={b.key}
                 onClick={() => void run(b.key)}
                 className={cn(
-                  'flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-raised',
-                  state[b.key] === 'done' ? 'text-fg-3' : 'text-fg',
+                  'flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-ui transition-colors hover:bg-fill',
+                  state[b.key] === 'done' ? 'line-through decoration-1' : '',
                 )}
               >
                 <Kbd>{b.key}</Kbd>
@@ -85,7 +85,7 @@ export function DemoDirector() {
                 {state[b.key] === 'done' && <Check size={13} strokeWidth={2} />}
               </button>
             ))}
-            <button onClick={() => void run('0')} className="mt-1 flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-[13px] text-fg-2 hover:bg-raised">
+            <button onClick={() => void run('0')} className="mt-1 flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-ui hover:bg-fill">
               <Kbd>0</Kbd>
               <span className="flex-1">Reset everything</span>
               <RotateCcw size={13} strokeWidth={1.75} />

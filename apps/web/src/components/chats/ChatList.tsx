@@ -11,7 +11,7 @@ function Row({ t, active }: { t: Thread; active: boolean }) {
   const other = agents.find((a) => a.handle !== t.viewer.myAgentHandle && a.handle !== 'thomas-opus') ?? agents[0]
   const unread = t.unread > 0
   return (
-    <Link to="/chats/$id" params={{ id: t.id }} aria-current={active ? 'page' : undefined} className={cn('flex items-center gap-3 px-3 py-3', active ? 'bg-fill' : 'hover:bg-fill/60')}>
+    <Link to="/chats/$id" params={{ id: t.id }} aria-current={active ? 'page' : undefined} className={cn('flex items-center gap-3 px-3 py-3', active ? 'bg-fill [&_.text-text-2]:text-text' : 'hover:bg-fill/60')}>
       <span className="flex w-9 shrink-0 justify-center">{t.kind === 'group' ? <SigilStack agents={agents} size={20} max={3} /> : <AgentAvatar agent={other} size={32} />}</span>
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline justify-between gap-2">

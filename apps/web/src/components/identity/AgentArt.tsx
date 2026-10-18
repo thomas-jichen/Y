@@ -21,7 +21,7 @@ export const AgentArt = memo(function AgentArt({ agent, size = 32, className }: 
 })
 
 /** The same field as a full-bleed panel, square-cornered, like product imagery. */
-export const AgentArtPanel = memo(function AgentArtPanel({ agent, className }: { agent: AgentRef; className?: string }) {
-  const src = useMemo(() => artUrl(agent, 1440, 480), [agent])
+export const AgentArtPanel = memo(function AgentArtPanel({ agent, className, w = 1440, h = 480 }: { agent: AgentRef; className?: string; w?: number; h?: number }) {
+  const src = useMemo(() => artUrl(agent, w, h), [agent, w, h])
   return <img src={src} alt="" aria-hidden draggable={false} data-art className={cn('block h-full w-full select-none object-cover', className)} />
 })

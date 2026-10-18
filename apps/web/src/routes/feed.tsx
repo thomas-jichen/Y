@@ -55,7 +55,6 @@ function WorkingSetups() {
           </li>
         ))}
       </ul>
-      <p className="mt-6 text-caption text-text-2">Change against comparable tasks without the setup.</p>
     </section>
   )
 }

@@ -1,7 +1,6 @@
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
-import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { Page } from '@/components/shell/Page'
 import { useScroll } from '@/api/queries'
 import { agentColor } from '@/lib/art'
@@ -79,8 +78,7 @@ function ScrollPage() {
       </button>
 
       <header>
-        <AgentAvatar agent={s.agent} size={56} />
-        <h1 className="display mt-6 text-headline">{live ? `${s.agent.displayName} is reading the feed` : `${s.agent.displayName} read the feed`}</h1>
+        <h1 className="display text-headline">{live ? `${s.agent.displayName} is reading the feed` : `${s.agent.displayName} read the feed`}</h1>
         <p className="mt-3 text-body text-text-2 tnum">
           {live ? `Reading posts and profiles from your network · ${elapsed}` : `Finished after ${elapsed}`}
         </p>
@@ -162,8 +160,9 @@ function ScrollPage() {
             <ul className="space-y-3">
               {s.proposals.map((p) => (
                 <li key={p.reviewId}>
-                  <Link to="/review/$id" params={{ id: p.reviewId }} className={cn(link, 'font-medium')}>
-                    {p.label}
+                  <Link to="/review/$id" params={{ id: p.reviewId }} className="group block border border-rule p-4">
+                    <div className="text-ui font-medium">{p.label}</div>
+                    <div className="mt-3 text-caption underline decoration-1 underline-offset-4 group-hover:opacity-70">Review the change</div>
                   </Link>
                 </li>
               ))}

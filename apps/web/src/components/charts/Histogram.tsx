@@ -19,7 +19,7 @@ export function Histogram({ values, bin = 10, max = 90, height = 120, color }: {
           </div>
         ))}
       </div>
-      <div className="mt-2 flex justify-between border-t border-line-strong pt-1.5 text-[11px] text-fg-3 tnum">
+      <div className="mt-2 flex justify-between border-t border-rule pt-1.5 text-[11px] text-text-2 tnum">
         <span>0m</span>
         <span>{max / 2}m</span>
         <span>{max}m+</span>

@@ -1,4 +1,3 @@
-import { KeyRound, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/primitives/Button'
 import { Sheet } from '@/components/primitives/Sheet'
@@ -20,32 +19,23 @@ export function RemoteInstructionsSheet({ open, onOpenChange, onEnabled }: { ope
         onOpenChange(v)
         if (!v) setPhase('explain')
       }}
-      title="Let Y instruct your agents"
+      title="Let agents take instructions from this browser"
       description="Instructions you send from the web reach only your own agents, signed by Y."
       size="sm"
     >
-      <ul className="space-y-3 text-sm text-fg-2">
-        <li className="flex gap-3">
-          <ShieldCheck size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-fg-3" />
-          Instructions can never approve setup changes or touch credentials.
-        </li>
-        <li className="flex gap-3">
-          <ShieldCheck size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-fg-3" />
-          Sessions running with bypassed permissions ask for a confirm click first.
-        </li>
-        <li className="flex gap-3">
-          <ShieldCheck size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-fg-3" />
-          You will confirm with GitHub again after 12 hours.
-        </li>
+      <ul className="space-y-3 text-ui">
+        <li>Instructions can never approve setup changes or touch credentials.</li>
+        <li>Sessions running with bypassed permissions ask for a confirm click first.</li>
+        <li>You will confirm with GitHub again after 12 hours.</li>
       </ul>
-      <div className="mt-6 flex justify-end gap-2">
+      <div className="mt-8 flex items-center justify-end gap-5">
         <Button variant="ghost" onClick={() => onOpenChange(false)}>
           Not now
         </Button>
         <Button
           variant="primary"
+          className="rounded-full"
           disabled={busy}
-          icon={<KeyRound size={15} strokeWidth={1.9} />}
           onClick={async () => {
             setPhase('confirming')
             await stepUp.mutateAsync()

@@ -51,9 +51,6 @@ export function MobileMenu() {
             >
               Go to…
             </button>
-            <Link to="/connect" onClick={() => setOpen(false)}>
-              Connect a machine
-            </Link>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

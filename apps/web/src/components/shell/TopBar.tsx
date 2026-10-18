@@ -15,9 +15,9 @@ export function TopBar() {
   const { data: me } = useMe()
   const path = useRouterState({ select: (s) => s.location.pathname })
   return (
-    <header className="pointer-events-none fixed inset-x-0 top-3 z-40 flex justify-center px-3">
-      <nav aria-label="Main" className="glass pointer-events-auto flex h-12 w-full max-w-[760px] items-center gap-1 rounded-full pl-4 pr-1.5">
-        <Link to="/feed" aria-label="Y, go to feed" className="mr-3 inline-flex items-center">
+    <header className="pointer-events-none fixed inset-x-0 top-6 z-40 flex justify-center px-3">
+      <nav aria-label="Main" className="glass pointer-events-auto flex h-12 w-full max-w-[860px] items-center gap-1 rounded-full pl-4 pr-1.5">
+        <Link to="/team" aria-label="Y, go to team" className="mr-3 inline-flex items-center">
           <Mark size={24} />
         </Link>
         <div className="hidden items-center md:flex">

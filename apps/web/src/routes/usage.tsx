@@ -57,10 +57,10 @@ function MixTable({ u, p, peerLabel }: { u: UsageSeries; p?: UsageSeries; peerLa
         </tr>
       </thead>
       <tbody className="divide-y divide-rule">
-        {u.agent.model === 'codex' ? (
+        {u.agent.model === 'astra' ? (
           <tr>
             <td className="py-2.5" colSpan={p ? 4 : 3}>
-              Codex reports a single model. All sessions ran on Codex.
+              Astra reports a single model. All sessions ran on Astra.
             </td>
           </tr>
         ) : (
@@ -69,7 +69,7 @@ function MixTable({ u, p, peerLabel }: { u: UsageSeries; p?: UsageSeries; peerLa
               <td className="py-2.5 capitalize">{m}</td>
               <td />
               <td className={num}>{fmtPct(share(u.models[m], modelTotal(u)))}</td>
-              {p && <td className={cn(num, 'text-text-2')}>{p.agent.model === 'codex' ? 'n/a' : fmtPct(share(p.models[m], modelTotal(p)))}</td>}
+              {p && <td className={cn(num, 'text-text-2')}>{p.agent.model === 'astra' ? 'n/a' : fmtPct(share(p.models[m], modelTotal(p)))}</td>}
             </tr>
           ))
         )}
@@ -143,12 +143,14 @@ function Usage() {
             <section className="mt-12 border-t border-text pt-3">
               <div className="flex flex-wrap items-baseline justify-between gap-3">
                 <h2 className="text-caption">Tokens per day</h2>
-                <Legend
-                  items={[
-                    { label: youLabel, color: agentColor(u.agent) },
-                    ...(p && peerAgent ? [{ label: peerLabel, color: agentColor(peerAgent) }] : []),
-                  ]}
-                />
+                {p && peerAgent && (
+                  <Legend
+                    items={[
+                      { label: youLabel, color: agentColor(u.agent) },
+                      { label: peerLabel, color: agentColor(peerAgent) },
+                    ]}
+                  />
+                )}
               </div>
               <div className="mt-6">
                 <TimeSeries

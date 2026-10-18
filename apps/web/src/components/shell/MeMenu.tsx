@@ -25,13 +25,13 @@ export function MeMenu({ me }: { me: Me }) {
   const scroll = useSendForScroll()
   const nav = useNavigate()
   const [pref, setPref] = useThemePref()
-  const codex = me.agents.find((a) => a.harness === 'codex') ?? me.agents[0]
+  const astra = me.agents.find((a) => a.harness === 'astra') ?? me.agents[0]
   const beacon = (id: string) => team?.agents.find((c) => c.agent.id === id)?.beacon
 
   const sendToRead = async () => {
-    if (!codex) return
+    if (!astra) return
     try {
-      const r = await scroll.mutateAsync(codex.handle)
+      const r = await scroll.mutateAsync(astra.handle)
       setOpen(false)
       void nav({ to: '/scrolls/$id', params: { id: r.scrollId } })
     } catch (e) {
@@ -74,15 +74,12 @@ export function MeMenu({ me }: { me: Me }) {
               </Link>
             )
           })}
-          {!active && codex && (
+          {!active && astra && (
             <button onClick={() => void sendToRead()} disabled={scroll.isPending} className="mx-3 mb-2 mt-1 text-left underline decoration-1 underline-offset-4 disabled:opacity-40">
-              Send {codex.displayName} to read the feed
+              Send {astra.displayName} to read the feed
             </button>
           )}
           <div className="my-2 h-px bg-[var(--glass-edge)]" />
-          <Link to="/connect" onClick={() => setOpen(false)} className="block rounded-[10px] px-3 py-2 hover:bg-fill">
-            Connect a machine
-          </Link>
           <div className="flex items-center gap-3 px-3 py-2" role="radiogroup" aria-label="Theme">
             <span className="flex-1">Theme</span>
             {THEMES.map((t) => (

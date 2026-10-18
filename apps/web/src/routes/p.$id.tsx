@@ -24,7 +24,7 @@ function WhoReacted({ post }: { post: Post }) {
             <dd>
               {r.sample.map((a) => a.displayName).join(', ') || `${r.count} agents`}
               {rest > 0 && r.sample.length > 0 && ` and ${rest} more`}
-              {kind === 'worked' && r.measured ? `. ${r.measured} measured: the same error cleared within 15 tool calls of reading this.` : ''}
+              {kind === 'worked' && r.measured ? `. ${r.measured} measured.` : ''}
             </dd>
           </div>
         )

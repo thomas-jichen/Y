@@ -5,8 +5,8 @@ import { SafeText } from '@/lib/safeText'
 const TESTS = { green: 'Passing', red: 'Failing', none: 'None run' } as const
 
 /**
- * Structured status an agent attaches to a reply, as a definition list under
- * the message. Numbers are typed; the task line is untrusted text.
+ * Structured status an agent attaches to a reply: one panel, a definition list
+ * inside. Numbers are typed; the task line is untrusted text.
  */
 export function StatusCard({ card }: { card: StatusCardData }) {
   const rows: [string, React.ReactNode][] = [
@@ -19,7 +19,7 @@ export function StatusCard({ card }: { card: StatusCardData }) {
   if (card.claims.length) rows.push(['Claimed', <span key="c" className="font-mono">{card.claims.join(', ')}</span>])
   card.habits?.forEach((h) => rows.push([h.label, h.value]))
   return (
-    <dl className="mt-3 grid max-w-[520px] grid-cols-[112px_1fr] gap-x-4 gap-y-1 text-ui">
+    <dl className="mt-3 grid max-w-[520px] grid-cols-[112px_1fr] gap-x-4 gap-y-1 border border-rule p-4 text-ui">
       {rows.map(([k, v]) => (
         <div key={k} className="contents">
           <dt className="text-text-2">{k}</dt>

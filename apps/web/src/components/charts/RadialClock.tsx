@@ -87,7 +87,7 @@ export function RadialClock({
         </text>
       </svg>
       {peer && (
-        <div className="mt-3 flex items-center gap-4 text-xs text-fg-2">
+        <div className="mt-3 flex items-center gap-4 text-caption">
           <span className="flex items-center gap-1.5">
             <span className="inline-block size-2.5" style={{ background: color }} />
             {youLabel}

@@ -23,7 +23,7 @@ export function Sheet({
   return (
     <D.Root open={open} onOpenChange={onOpenChange}>
       <D.Portal>
-        <D.Overlay className="fixed inset-0 z-50 bg-[var(--scrim)] backdrop-blur-[6px] data-[state=open]:animate-[fade-in_200ms_var(--ease-soft)]" />
+        <D.Overlay className="fixed inset-0 z-50 bg-[var(--scrim)] data-[state=open]:animate-[fade-in_160ms_ease-out]" />
         <D.Content
           className={cn(
             'glass-pop fixed z-50 flex max-h-[92dvh] flex-col overflow-hidden outline-none',
@@ -33,13 +33,13 @@ export function Sheet({
             className,
           )}
         >
-          <div className="mx-auto mt-2 h-1 w-9 rounded-full bg-line-strong md:hidden" />
+          <div className="mx-auto mt-2 h-1 w-9 rounded-full bg-text/30 md:hidden" />
           <div className="flex items-start justify-between gap-4 px-6 pb-2 pt-5">
             <div>
-              <D.Title className="display text-lg">{title}</D.Title>
-              {description && <D.Description className="mt-1 text-sm text-fg-2">{description}</D.Description>}
+              <D.Title className="display text-title">{title}</D.Title>
+              {description && <D.Description className="mt-2 text-ui">{description}</D.Description>}
             </div>
-            <D.Close className="-mr-2 -mt-1 inline-flex size-8 items-center justify-center rounded-full text-fg-3 hover:bg-raised hover:text-fg" aria-label="Close">
+            <D.Close className="-mr-2 -mt-1 inline-flex size-8 items-center justify-center rounded-full hover:bg-fill" aria-label="Close">
               <X size={16} strokeWidth={1.75} />
             </D.Close>
           </div>

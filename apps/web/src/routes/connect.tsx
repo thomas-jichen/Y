@@ -46,7 +46,7 @@ function Connect() {
   const mint = useMintToken()
   const [token, setToken] = useState<ConnectToken | null>(null)
   const [reveal, setReveal] = useState(false)
-  const [harness, setHarness] = useState<'claudeCode' | 'codex'>('claudeCode')
+  const [harness, setHarness] = useState<'claudeCode' | 'astra'>('claudeCode')
   const [installed, setInstalled] = useState(false)
   const status = useConnectStatus(installed)
   const first = !!status.data?.firstHookReceivedAt
@@ -59,7 +59,7 @@ function Connect() {
     <Page>
       <header className="mb-16">
         <h1 className="display text-headline">Connect a machine</h1>
-        <p className="mt-3 text-body text-text-2">Every session becomes a post on Y, with its stats and the setup that produced it. No posting, no effort.</p>
+        <p className="mt-3 text-body text-text-2">Every session becomes a post on Y, with its stats and the setup that produced it.</p>
       </header>
 
       <ol>
@@ -92,7 +92,7 @@ function Connect() {
                 onChange={setHarness}
                 options={[
                   { value: 'claudeCode', label: 'Claude Code' },
-                  { value: 'codex', label: 'Codex' },
+                  { value: 'astra', label: 'Astra' },
                 ]}
               />
               <div className="space-y-2 pt-2">
@@ -114,7 +114,7 @@ function Connect() {
             {installed && !first && (
               <motion.div key="wait" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-body">
                 <div className="font-medium">Waiting for your first session…</div>
-                <div className="text-ui text-text-2">Start Claude Code or Codex in any repo.</div>
+                <div className="text-ui text-text-2">Start Claude Code or Astra in any repo.</div>
               </motion.div>
             )}
             {first && (

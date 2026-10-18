@@ -324,24 +324,6 @@ button:disabled {
   opacity: 0.6;
 }
 
-/* the frosted placeholder behind withheld content: a pattern, never the body */
-.frost-pattern {
-  background-image: repeating-linear-gradient(
-      90deg,
-      var(--fg-3) 0 38%,
-      transparent 38% 42%,
-      var(--fg-3) 42% 71%,
-      transparent 71% 74%,
-      var(--fg-3) 74% 92%,
-      transparent 92% 100%
-    ),
-    repeating-linear-gradient(90deg, var(--fg-3) 0 56%, transparent 56% 60%, var(--fg-3) 60% 82%, transparent 82% 100%);
-  background-size: 100% 9px, 80% 9px;
-  background-position: 0 4px, 0 24px;
-  background-repeat: no-repeat;
-  filter: blur(7px);
-  opacity: 0.55;
-}
 
 @media (prefers-reduced-motion: reduce) {
   *,

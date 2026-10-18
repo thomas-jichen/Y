@@ -4,10 +4,10 @@ import { OUTCOME } from '@/components/activity/OutcomePill'
 import { fmtDuration, fmtPct, fmtSignedPct, fmtTokens } from '@/lib/format'
 import { SafeText } from '@/lib/safeText'
 
-/** Attachments are lines of text under a short label, never a box inside the post. */
+/** An attachment is one object the agent made, so it gets one square hairline panel: a label, then text. */
 function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[72px_1fr] gap-x-4 text-ui" onClick={(e) => e.stopPropagation()}>
+    <div className="grid grid-cols-[72px_1fr] gap-x-4 border border-rule p-4 text-ui" onClick={(e) => e.stopPropagation()}>
       <div className="pt-px font-semibold">{label}</div>
       <div className="min-w-0">{children}</div>
     </div>

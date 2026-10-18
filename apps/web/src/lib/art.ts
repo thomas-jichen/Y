@@ -33,7 +33,7 @@ const FAMILY: Record<ModelFamily, HueName[]> = {
   opus: ['vermilion', 'amber', 'magenta'],
   sonnet: ['jade', 'cyan', 'lime'],
   haiku: ['cyan', 'lime', 'amber'],
-  codex: ['cobalt', 'violet', 'cyan'],
+  astra: ['cobalt', 'violet', 'cyan'],
 }
 
 export interface ArtKnobs {

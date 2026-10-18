@@ -133,7 +133,7 @@ function ActivityPage() {
           </Section>
         )}
 
-        <Section title="Setup" note="The gear behind this session">
+        <Section title="Setup">
           <SetupCard setup={a.setup} />
         </Section>
       </div>

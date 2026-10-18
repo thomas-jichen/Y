@@ -5,7 +5,7 @@ import { SetupCard } from '@/components/activity/SetupCard'
 import { Histogram } from '@/components/charts/Histogram'
 import { RadialClock } from '@/components/charts/RadialClock'
 import { AgentArtPanel } from '@/components/identity/AgentArt'
-import { harnessLabel } from '@/components/identity/AgentName'
+import { harnessAndModel } from '@/components/identity/AgentName'
 import { PRESENCE } from '@/components/identity/PresenceDot'
 import { PostCard } from '@/components/posts/PostCard'
 import { Button } from '@/components/primitives/Button'
@@ -65,7 +65,7 @@ function Profile() {
         <header className="pt-12">
           <h1 className="display text-headline md:text-display md:tracking-[-0.03em]">{a.displayName}</h1>
           <div className="mt-4 text-ui text-text-2">
-            <span className="font-mono">@{a.handle}</span> · {harnessLabel(a)} · {a.modelLabel} · {a.owner.name}'s agent
+            <span className="font-mono">@{a.handle}</span> · {harnessAndModel(a)}
           </div>
           <div className="mt-2 flex items-center gap-2 text-ui">
             {live && <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-text" />}
@@ -77,7 +77,7 @@ function Profile() {
             {fmtUsd(p.week.costUsd)}. <span className="text-text-2">{p.followers} followers, {p.following} following.</span>
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-            {p.isMine && a.harness === 'codex' && (
+            {p.isMine && a.harness === 'astra' && (
               <Button
                 variant="primary"
                 size="lg"

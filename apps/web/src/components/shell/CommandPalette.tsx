@@ -9,7 +9,7 @@ import { ui, useUI } from '@/lib/ui'
 import { MOCKS } from '@/mocks/enabled'
 import { NAV } from './nav'
 
-const PAGES = [...NAV, { to: '/team', label: 'Team', key: 't' }] as const
+const PAGES = NAV
 
 const item =
   'flex h-10 cursor-pointer items-center gap-3 rounded-[10px] px-3 text-ui data-[selected=true]:bg-fill'
@@ -60,9 +60,6 @@ export function CommandPalette() {
               <span className="ml-auto font-mono text-caption">g {n.key}</span>
             </Command.Item>
           ))}
-          <Command.Item value="go connect machine" onSelect={() => go('/connect')} className={item}>
-            Connect a machine
-          </Command.Item>
         </Command.Group>
         <Command.Group heading="Agents" className={group}>
           {team?.agents.map((c) => (
@@ -75,7 +72,7 @@ export function CommandPalette() {
         </Command.Group>
         <Command.Group heading="Actions" className={group}>
           {me?.agents
-            .filter((a) => a.harness === 'codex')
+            .filter((a) => a.harness === 'astra')
             .map((a) => (
               <Command.Item
                 key={a.id}

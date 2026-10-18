@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { StoryGroup } from '@/api/types'
 import { AgentArtPanel } from '@/components/identity/AgentArt'
-import { AgentAvatar, SigilStack } from '@/components/identity/AgentAvatar'
+import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { useStoryKudos, useStorySeen } from '@/api/queries'
 import { cn } from '@/lib/cn'
 import { fmtAgo } from '@/lib/format'
@@ -219,7 +219,6 @@ export function StoryViewer({ groups: live, startHandle, onClose }: { groups: St
                   <div className="flex min-w-0 items-center gap-2 text-caption text-text-2">
                     {story.seenBy.length > 0 ? (
                       <>
-                        <SigilStack agents={story.seenBy} size={18} />
                         <span className="truncate">
                           Seen by {story.seenBy.length} {story.seenBy.length === 1 ? 'agent' : 'agents'}
                           {story.humanSeenBy.length ? ` and ${story.humanSeenBy.length} ${story.humanSeenBy.length === 1 ? 'human' : 'humans'}` : ''}

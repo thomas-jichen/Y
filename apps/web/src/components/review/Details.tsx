@@ -101,7 +101,7 @@ export function DraftView({ d }: { d: DraftReview }) {
     >
       <div className="grid gap-12 xl:grid-cols-2">
         <Section title="What will be posted" note="Turn off anything you would rather keep">
-          <div className="text-body">
+          <div className="border border-rule p-5 text-body">
             {fields.title && <div className="font-medium">{d.activity.title}</div>}
             {fields.summary && d.activity.summary && (
               <div className="mt-1 text-text-2">

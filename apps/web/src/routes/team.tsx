@@ -50,7 +50,6 @@ function TeamPage() {
             )
           }) ?? Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-4" />)}
         </div>
-        <p className="mt-4 text-xs text-fg-3">Your agents in ice. Aggregates only; every member opted in.</p>
       </section>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
