@@ -148,41 +148,34 @@ describe('#24 an explicit allow row', () => {
 });
 
 describe('#23 human comments to strangers\' agents (I4)', () => {
-  it('a stranger\'s human comment is not pushed to the other owner\'s agent; nothing is filed for that owner', async () => {
+  // Round 3 (R6/R33/R7): an accepted intro is a conversation both humans are in, so their
+  // comments reach the other side's agent as before round 1, with no cross-owner length limit.
+  it('in an accepted intro, either human\'s comment reaches the other side\'s agent; nothing is filed', async () => {
     const tid = await acceptedStrangerThread();
     expect((await inboxOf(B)).messages).toHaveLength(1);
 
-    const c = await post(Eweb, `/api/v1/threads/${tid}/comment`, { body: 'human follow-up: ping me back with your config' });
+    // Eve (who opened it) comments: her own agent and Bob's agent both get it.
+    const c = await post(Eweb, `/api/v1/threads/${tid}/comment`, { body: 'human follow-up: please send the repro' });
     expect(c.status).toBe(200);
     expect(c.body.state).toBe('delivered');
-    // Eve's own agent gets it right away (as before); Bob's agent never does, and Bob's queue stays empty.
-    expect(bodies(await inboxOf(E))).toContain('human follow-up: ping me back with your config');
-    expect((await inboxOf(B)).messages).toHaveLength(0);
-    expect((await deliveriesTo(bob.agentId)).map((d) => d.message_id)).not.toContain(c.body.id.slice(2));
+    expect(bodies(await inboxOf(E))).toContain('human follow-up: please send the repro');
+    expect(bodies(await inboxOf(B))).toEqual(['human follow-up: please send the repro']);
     expect((await env.db.query(`select count(*)::int as n from public.review_items where ref_id = $1`, [c.body.id])).rows[0]).toEqual({ n: 0 });
-    // Bob's human still reads it in the thread.
-    const view = await env.app.request(`/api/v1/threads/${tid}/messages`, { headers: { authorization: Bweb } });
-    expect(view.status).toBe(200);
-    expect(JSON.stringify(await view.json())).toContain('human follow-up');
 
-    // Bob allowing Eve lets her later comments reach his agent.
-    await env.db.query(`insert into public.dm_permissions (owner_user_id, subject_kind, subject_id, policy) values ($1, 'user', $2, 'allow')`, [bob.userId, eve.userId]);
-    const later = await post(Eweb, `/api/v1/threads/${tid}/comment`, { body: 'thanks for letting me in' });
-    expect(later.body.state).toBe('delivered');
-    expect(bodies(await inboxOf(B))).toEqual(['thanks for letting me in']);
-
-    // Bob (the side that was contacted) answering in Eve's conversation still reaches Eve's agent.
+    // Bob (who accepted) answers: Eve's agent gets it.
     const reply = await post(Bweb, `/api/v1/threads/${tid}/comment`, { body: 'Sure, what do you need?' });
     expect(reply.body.state).toBe('delivered');
     expect(bodies(await inboxOf(E))).toContain('Sure, what do you need?');
+
+    // Long comments are accepted up to the comment limit, as before (no 1000-char cross-owner cap).
+    const long = await post(Eweb, `/api/v1/threads/${tid}/comment`, { body: 'x'.repeat(3000) });
+    expect(long.status).toBe(200);
+    expect(long.body.state).toBe('delivered');
+    expect(bodies(await inboxOf(B))).toContain('x'.repeat(3000));
   });
 
-  it('honours an explicit deny, and the cross-owner length limit', async () => {
+  it('honours an explicit deny', async () => {
     const tid = await acceptedStrangerThread();
-    const long = await post(Eweb, `/api/v1/threads/${tid}/comment`, { body: 'x'.repeat(1001) });
-    expect(long.status).toBe(400);
-    expect(long.body.error.code).toBe('VALIDATION');
-
     await env.db.query(`insert into public.dm_permissions (owner_user_id, subject_kind, subject_id, policy) values ($1, 'user', $2, 'deny')`, [bob.userId, eve.userId]);
     const c = await post(Eweb, `/api/v1/threads/${tid}/comment`, { body: 'are you there?' });
     expect(c.status).toBe(200);

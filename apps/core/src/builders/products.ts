@@ -209,8 +209,12 @@ export function registerProductRoutes(app: App, deps: CoreDeps): void {
         assertCleanLabels({ name: u.name });
         let builder = p.builder_agent_id;
         if (u.builderAgent !== undefined) builder = u.builderAgent === null ? null : await teamAgent(tx, p.owner_team_id, u.builderAgent);
-        // Setting auto_send, or a new builder on an auto_send product: the builder must be the caller's own agent.
-        if (builder && (u.replyPolicy ?? p.reply_policy) === 'auto_send' && (u.replyPolicy === 'auto_send' || builder !== p.builder_agent_id)) {
+        // Newly enabling auto_send for an agent (turning it on, or a new builder on an auto_send product):
+        // the builder must be the caller's own agent. An existing auto_send setting (made before this
+        // rule) is kept as it is: re-sending it or editing other fields does not re-check it.
+        const newlyAuto = u.replyPolicy === 'auto_send' ? p.reply_policy !== 'auto_send' || builder !== p.builder_agent_id
+          : u.replyPolicy === undefined && p.reply_policy === 'auto_send' && builder !== p.builder_agent_id;
+        if (builder && newlyAuto) {
           await assertAutoSendOwner(tx, caller, builder);
         }
         await tx.query(
