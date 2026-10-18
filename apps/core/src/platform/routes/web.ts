@@ -11,14 +11,17 @@ import {
   RemoteInstructionsSetting,
   ReviewListQuery,
   STREAM_HEARTBEAT_S,
+  ThreadDetail,
   toStreamEvent,
   type DmRequestReview,
   type DraftReview,
   type FeedPage,
   type Me,
+  type QuarantinedMessageReview,
+  type ReviewItem,
   type ReviewKind,
 } from '@y/schema';
-import type { CoreDeps, PushEvent } from '../../contracts.js';
+import type { Caller, CoreDeps, PushEvent } from '../../contracts.js';
 import { authenticate } from '../http.js';
 import { loadActivities, reviewItemsFromRows } from '../mappers.js';
 import { realtimeChannelFor } from '../realtime-channel.js';
@@ -31,8 +34,27 @@ import { bareId, fail, iso, num, parseOr, readJson, sha256Hex } from '../util.js
 
 const PAGE = 20;
 
+/**
+ * Per-process limits of GET /api/v1/stream. Exported so tests can tighten them.
+ * - maxPerUser: open streams per user in this process (#85); more get RATE_LIMITED. A stream that
+ *   has not looped for 3 heartbeats no longer counts, so a leaked entry can't lock a user out.
+ * - reauthMs: how often an open stream re-checks its caller (#83): a bearer is verified again and
+ *   the user must still exist; otherwise the stream ends (EventSource reconnects and re-authenticates).
+ * - replayPages: Last-Event-ID replay reads pages of 100 missed events, at most this many (#47).
+ */
+export const STREAM_LIMITS = { maxPerUser: 20, reauthMs: 5 * 60_000, replayPages: 10 };
+const REPLAY_PAGE = 100;
+/** Open streams per deps (one app) → user → stream → last loop time (ms). */
+const openStreams = new WeakMap<CoreDeps, Map<string, Map<symbol, number>>>();
+
+/**
+ * Feed cursors carry published_at at full (microsecond) precision: a JS Date keeps only
+ * milliseconds, which skipped rows published in the boundary millisecond (#84). Cursors minted
+ * before this (millisecond ISO) still decode.
+ */
 function encodeCursor(publishedAt: unknown, id: string): string {
-  return Buffer.from(`${iso(publishedAt)}|${id}`).toString('base64url');
+  const at = typeof publishedAt === 'string' && publishedAt ? publishedAt : iso(publishedAt);
+  return Buffer.from(`${at}|${id}`).toString('base64url');
 }
 function decodeCursor(cursor: string): { at: string; id: string } | null {
   try {
@@ -105,8 +127,10 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
         where.push(`exists (select 1 from public.follows f where f.follower_user_id = $${params.length} and f.agent_id = a.agent_id)`);
       }
       params.push(PAGE + 1);
-      const r = await tx.query<{ id: string; published_at: Date }>(
-        `select a.id, a.published_at from public.activities a where ${where.join(' and ')}
+      const r = await tx.query<{ id: string; published_at: Date; cursor_at: string }>(
+        `select a.id, a.published_at,
+                to_char(a.published_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as cursor_at
+           from public.activities a where ${where.join(' and ')}
           order by a.published_at desc, a.id desc limit $${params.length}`,
         params,
       );
@@ -115,7 +139,7 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
       const last = rows[rows.length - 1];
       return {
         items: acts.map((activity) => ({ type: 'activity' as const, activity })),
-        ...(r.rows.length > PAGE && last ? { nextCursor: encodeCursor(last.published_at, last.id) } : {}),
+        ...(r.rows.length > PAGE && last ? { nextCursor: encodeCursor(last.cursor_at, last.id) } : {}),
       };
     });
     return c.json(page);
@@ -176,6 +200,7 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
       const [item] = await reviewItemsFromRows(tx, [row]);
       if (row.kind === 'dm_request' && item) return { status: 'dm' as const, item, mid: bareId('m', String(row.ref_id)) };
       if (row.kind === 'builder_reply' && item) return { status: 'builder' as const, item, mid: bareId('m', String(row.ref_id)) };
+      if (row.kind === 'quarantined_message' && item) return { status: 'quarantined' as const, item, mid: bareId('m', String(row.ref_id)) };
       if (row.kind !== 'draft') return { status: 501 as const, kind: row.kind as string };
       const hid = bareId('h', String(row.ref_id));
       const h = hid
@@ -249,6 +274,12 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
     if (detail.status === 'builder') {
       // The draft is the owner's own agent's message; the question is customer text (untrusted, plain text in the UI).
       const out = detail.mid ? await builderReplyDetail(deps, caller, detail.item, detail.mid) : null;
+      if (!out) return fail(c, 'NOT_FOUND', 'review item not found');
+      return c.json(out);
+    }
+    if (detail.status === 'quarantined') {
+      // The screened-out message itself, so the human decides release/reject on what they can read (#48).
+      const out = detail.mid ? await quarantinedDetail(app, c.req.header('authorization'), deps, caller, detail.item, detail.mid) : null;
       if (!out) return fail(c, 'NOT_FOUND', 'review item not found');
       return c.json(out);
     }
@@ -328,6 +359,41 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
     const caller = await authenticate(c, deps, 'web');
     if (caller instanceof Response) return caller;
     const lastId = c.req.header('last-event-id');
+    // authenticate() takes ?token= only without an Authorization header; with one, the bearer is re-verified later.
+    const authorization = c.req.header('authorization');
+
+    let byUser = openStreams.get(deps);
+    if (!byUser) openStreams.set(deps, (byUser = new Map()));
+    let mine = byUser.get(caller.userId);
+    if (!mine) byUser.set(caller.userId, (mine = new Map()));
+    const opened = Date.now();
+    for (const [k, at] of mine) if (opened - at > STREAM_HEARTBEAT_S * 3000) mine.delete(k);
+    if (mine.size >= STREAM_LIMITS.maxPerUser) {
+      return fail(c, 'RATE_LIMITED', 'too many open event streams for this account; close a tab and retry', { retryable: true, retryAfterS: 30 });
+    }
+    const slot = Symbol('stream');
+    mine.set(slot, opened);
+    const streams = mine;
+    const release = () => {
+      streams.delete(slot);
+      if (streams.size === 0 && byUser.get(caller.userId) === streams) byUser.delete(caller.userId);
+    };
+
+    /** The caller may still read this stream (#83). Fails open on errors: a DB blip must not drop every stream. */
+    const stillAllowed = async (): Promise<boolean> => {
+      try {
+        if (authorization) {
+          const again = await deps.auth.verifyBearer(authorization);
+          if (!again || again.userId !== caller.userId) return false;
+        }
+        const u = await deps.db.asService((s) => s.query('select 1 from public.users where id = $1', [caller.userId]));
+        return (u.rowCount ?? 0) > 0;
+      } catch (e) {
+        deps.log('warn', 'stream re-auth check failed', { err: String(e) });
+        return true;
+      }
+    };
+
     return streamSSE(c, async (stream) => {
       const queue: PushEvent[] = [];
       let wake: (() => void) | null = null;
@@ -335,23 +401,41 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
         queue.push(e);
         wake?.();
       };
-      const unsubscribe = deps.bus.subscribeUser(caller.userId, push);
       let closed = false;
+      let unsubscribe: (() => void) | null = null;
       stream.onAbort(() => {
         closed = true;
         wake?.();
       });
       try {
+        unsubscribe = deps.bus.subscribeUser(caller.userId, push);
+        // A bus that polls (serverless) fixes its start cursor asynchronously: wait, so every event after ': open' arrives.
+        await (unsubscribe as { ready?: Promise<unknown> }).ready;
         // Flush headers now: proxies (the Vite dev/preview proxy, some CDNs) hold them until the first body chunk.
         await stream.write(': open\n\n');
         if (lastId && /^\d{1,19}$/.test(lastId)) {
-          const missed = await deps.db.asUser(caller.claims, (tx) =>
-            tx.query<{ id: string | number; type: string; payload: Record<string, unknown> }>('select * from api.my_events($1, 100)', [Number(lastId)]),
-          );
-          for (const r of missed.rows) queue.unshift({ id: String(r.id), type: r.type, audienceAgentIds: [], audienceUserIds: [caller.userId], payload: r.payload ?? {} });
+          // my_events pages ascend by id; the replay goes ahead of any live event, oldest first (#47).
+          const missed: PushEvent[] = [];
+          let after = Number(lastId);
+          for (let page = 0; page < STREAM_LIMITS.replayPages; page++) {
+            const r = await deps.db.asUser(caller.claims, (tx) =>
+              tx.query<{ id: string | number; type: string; payload: Record<string, unknown> }>('select * from api.my_events($1, $2)', [after, REPLAY_PAGE]),
+            );
+            for (const row of r.rows) {
+              missed.push({ id: String(row.id), type: row.type, audienceAgentIds: [], audienceUserIds: [caller.userId], payload: row.payload ?? {} });
+            }
+            if (r.rows.length < REPLAY_PAGE) break;
+            after = Number(r.rows[r.rows.length - 1]!.id);
+          }
+          queue.unshift(...missed);
         }
         let sentUpTo = lastId && /^\d+$/.test(lastId) ? Number(lastId) : 0;
+        let checkedAt = Date.now();
         while (!closed) {
+          if (Date.now() - checkedAt >= STREAM_LIMITS.reauthMs) {
+            checkedAt = Date.now();
+            if (!(await stillAllowed())) break;
+          }
           while (queue.length > 0) {
             const e = queue.shift()!;
             const eid = Number(e.id ?? 0);
@@ -360,6 +444,7 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
             const se = toStreamEvent({ type: e.type as never, payload: e.payload as never });
             if (se) await stream.writeSSE({ id: String(e.id ?? ''), event: se.type, data: JSON.stringify(se) });
           }
+          streams.set(slot, Date.now());
           await new Promise<void>((resolve) => {
             const t = setTimeout(resolve, STREAM_HEARTBEAT_S * 1000);
             wake = () => {
@@ -371,8 +456,51 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
           if (!closed && queue.length === 0) await stream.write(': ping\n\n');
         }
       } finally {
-        unsubscribe();
+        unsubscribe?.();
+        release();
       }
     });
   });
+}
+
+/**
+ * GET /api/v1/review/:id for a quarantined_message item: the message (read through the caller's own
+ * thread view, so RLS decides what they may see) and its thread. The body is the sender's text,
+ * normalized like a stranger's intro; the UI renders it as untrusted plain text. Null when the
+ * message is not in the viewer's view.
+ */
+async function quarantinedDetail(
+  app: Hono,
+  authorization: string | undefined,
+  deps: CoreDeps,
+  caller: Caller,
+  item: ReviewItem,
+  messageId: string,
+): Promise<QuarantinedMessageReview | null> {
+  if (!authorization) return null;
+  const threadId = await deps.db.asUser(caller.claims, async (tx) =>
+    (await tx.query<{ thread_id: string }>('select thread_id from public.messages where id = $1', [messageId])).rows[0]?.thread_id,
+  );
+  if (!threadId) return null;
+  const want = `m_${messageId}`;
+  let cursor: string | undefined;
+  for (let page = 0; page < 10; page++) {
+    const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+    const res = await app.request(`/api/v1/threads/t_${threadId}/messages${qs}`, { headers: { authorization } });
+    if (res.status !== 200) return null;
+    const parsed = ThreadDetail.safeParse(await res.json());
+    if (!parsed.success) return null;
+    const message = parsed.data.messages.find((m) => m.id === want);
+    if (message) {
+      const body = normalizeUntrusted(message.body).text;
+      return {
+        item,
+        message: { ...message, body, screen: message.screen ?? { label: l0Scan(body, 'dm_teammate').label, layers: ['l0'] } },
+        thread: parsed.data.thread,
+      };
+    }
+    if (!parsed.data.nextCursor) return null;
+    cursor = parsed.data.nextCursor;
+  }
+  return null;
 }
