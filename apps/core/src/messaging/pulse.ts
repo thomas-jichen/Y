@@ -46,10 +46,28 @@ async function wakeFor(deps: CoreDeps, agentId: string, ownerUserId: string, ses
     const isOi = ev.type === 'owner_instruction.new';
     const ctx: Parameters<typeof pickLeaseSession>[1] = { now, kind: isOi ? 'owner_instruction' : 'dm' };
     if (threadWire) ctx.threadId = threadWire.replace(/^t_/, '');
-    const target = pickLeaseSession(candidates, ctx);
+    const messageWire = typeof ev.payload.messageId === 'string' ? ev.payload.messageId : null;
+    // DM wakes: the target was fixed at delivery time (route.ts); fall back to picking now (and pinning it).
+    let target: string | null = null;
+    if (messageWire && !isOi) {
+      target = await deps.db.asService(async (tx) => {
+        const d = await tx.query<{ target_session_id: string | null }>(
+          `select target_session_id from public.message_deliveries where message_id = $1 and recipient_agent_id = $2`,
+          [messageWire.replace(/^m_/, ''), agentId]);
+        const pinned = d.rows[0]?.target_session_id ?? null;
+        if (pinned) return pinned;
+        const picked = pickLeaseSession(candidates, ctx);
+        if (picked) {
+          await tx.query(`update public.message_deliveries set target_session_id = $3 where message_id = $1 and recipient_agent_id = $2 and target_session_id is null`,
+            [messageWire.replace(/^m_/, ''), agentId, picked]);
+        }
+        return picked;
+      });
+    } else {
+      target = pickLeaseSession(candidates, ctx);
+    }
     if (target !== sessionId) continue;
 
-    const messageWire = typeof ev.payload.messageId === 'string' ? ev.payload.messageId : null;
     const senderAgentId = typeof ev.payload.senderAgentId === 'string' ? ev.payload.senderAgentId : null;
     const decision = await deps.db.asService(async (tx) => {
       if (messageWire) {
@@ -101,7 +119,7 @@ export function registerPulse(app: App, deps: CoreDeps): void {
       await deps.db.asUser(caller.claims, (tx) => tx.query(
         `insert into public.session_leases (agent_id, session_id, install_id, listening, last_heartbeat_at)
          values ($1, $2, $3, 'listening', now())
-         on conflict (agent_id, session_id) do update set listening = 'listening', last_heartbeat_at = now(), updated_at = now(),
+         on conflict (agent_id, session_id) do update set listening = 'listening', last_heartbeat_at = now(),
            install_id = coalesce(excluded.install_id, public.session_leases.install_id)`,
         [agentId, sessionId, caller.installId]));
 

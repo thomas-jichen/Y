@@ -56,8 +56,12 @@ export type DistillerMode = z.infer<typeof DistillerMode>;
  * `repoKeySalt` is the salt of `teamId` (the team this agent posts to) used
  * to compute `repoKey` locally; both are absent until the agent belongs to a
  * team. Sources: `team_secrets.repo_key_salt`, `team_members`,
- * `team_policies`, `agent_settings.wake_on_dm`; `distiller` from the plugin
- * setting capped by server capability.
+ * `team_policies`, `agent_settings.wake_on_dm`.
+ * `distiller` is what the server offers: `server` only when core has
+ * `ANTHROPIC_API_KEY` (the client may still choose `local` with its
+ * `distiller` plugin setting), `local` otherwise, `off` when capture or
+ * sharing is off. The client never uploads a digest for server distill
+ * unless this says `server`.
  */
 export const BriefPolicy = z.object({
   shareMode: ShareMode,

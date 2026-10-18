@@ -150,6 +150,40 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
+  e2e:
+    dependencies:
+      '@hono/node-server':
+        specifier: ^2.1.5
+        version: 2.1.5(hono@4.13.13)
+      '@paceline/core':
+        specifier: workspace:*
+        version: link:../apps/core
+      '@paceline/db':
+        specifier: workspace:*
+        version: link:../packages/db
+      '@paceline/mcp':
+        specifier: workspace:*
+        version: link:../apps/mcp
+      '@paceline/plugin-claude-code':
+        specifier: workspace:*
+        version: link:../plugins/claude-code
+      '@paceline/pointers':
+        specifier: workspace:*
+        version: link:../packages/pointers
+      '@paceline/schema':
+        specifier: workspace:*
+        version: link:../packages/schema
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.5
+        version: 26.6.5
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+
   eval:
     dependencies:
       '@anthropic-ai/sdk':

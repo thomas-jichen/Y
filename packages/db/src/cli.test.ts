@@ -33,6 +33,7 @@ describe('parseArgs', () => {
       migrationsDir: 'm',
       local: true,
     });
+    expect(parseArgs(['migrate', '--flavor', 'postgres'])).toMatchObject({ command: 'migrate', flavor: 'postgres' });
     expect(parseArgs(['test-sql', '--tests-dir', 't', '--filter', 'rls'])).toMatchObject({
       command: 'test-sql',
       testsDir: 't',

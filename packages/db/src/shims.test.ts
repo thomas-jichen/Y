@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { applyLocalShims, migrate, readLocalShims } from './migrate.js';
+import { LOCAL_SHIM_MARKER, applyLocalShims, migrate, readLocalShims } from './migrate.js';
 import { createPgliteDb, type PgliteDb } from './pglite.js';
 
 const USER = '5d1f6c0a-2b3c-4d5e-8f90-a1b2c3d4e5f6';
@@ -117,6 +117,60 @@ describe('local shims', () => {
     );
     expect(hashed.rows[0]!.h).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
     expect(hashed.rows[0]!.u).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('mark the schemas they create, so plain Postgres can tell them from Supabase', async () => {
+    const { rows } = await db.query<{ nspname: string; c: string }>(
+      "select nspname, obj_description(oid, 'pg_namespace') as c from pg_namespace where nspname in ('auth', 'realtime') order by 1",
+    );
+    expect(rows.map((r) => r.nspname)).toEqual(['auth', 'realtime']);
+    for (const row of rows) expect(row.c.startsWith(LOCAL_SHIM_MARKER)).toBe(true);
+  });
+
+  it('provide realtime.send(payload, event, topic, private) as NOTIFY paceline_realtime', async () => {
+    const got: unknown[] = [];
+    const unlisten = await db.listen('paceline_realtime', (payload) => {
+      got.push(JSON.parse(payload));
+    });
+    try {
+      await db.query("select realtime.send($1::jsonb, 'review.new', $2, false)", [
+        JSON.stringify({ id: '7', type: 'review.new', payload: { reviewId: 'rv_00000000000000000000RVW001' } }),
+        `user:${USER}:${'a'.repeat(64)}`,
+      ]);
+      await expect.poll(() => got.length).toBe(1);
+      expect(got[0]).toEqual({
+        topic: `user:${USER}:${'a'.repeat(64)}`,
+        event: 'review.new',
+        payload: { id: '7', type: 'review.new', payload: { reviewId: 'rv_00000000000000000000RVW001' } },
+        private: false,
+      });
+    } finally {
+      await unlisten();
+    }
+  });
+
+  it('keep realtime.send away from the API roles (only definer code broadcasts)', async () => {
+    await expect(
+      db.asUser({ sub: USER }, (tx) => tx.query("select realtime.send('{}'::jsonb, 'x', 'user:x:y', false)")),
+    ).rejects.toThrow(/permission denied/);
+  });
+
+  it('leave a real realtime schema alone', async () => {
+    const other = await createPgliteDb();
+    try {
+      await other.exec(`
+        create schema realtime;
+        create function realtime.send(payload jsonb, event text, topic text, private boolean default true)
+        returns void language sql as 'select null';
+      `);
+      await applyLocalShims(other);
+      const { rows } = await other.query<{ src: string }>(
+        "select prosrc as src from pg_proc where oid = 'realtime.send(jsonb, text, text, boolean)'::regprocedure",
+      );
+      expect(rows[0]!.src).toBe('select null');
+    } finally {
+      await other.close();
+    }
   });
 
   it('make the extensions PGlite ships available to migrations', async () => {

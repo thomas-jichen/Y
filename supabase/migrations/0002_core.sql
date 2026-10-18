@@ -148,6 +148,10 @@ create domain paceline_private.screen_action as text
 -- so ['l0'] alone is a complete verdict.
 create domain paceline_private.screen_layers as text[]
   check (value @> array['l0']::text[] and value <@ array['l0', 'l1', 'l2']::text[]);
+-- Reason categories shown on the screen chip ("Quarantined: prompt_injection"):
+-- L0Category / JudgeCategory values from packages/schema, at most 8.
+create domain paceline_private.screen_categories as text[]
+  check (paceline_private.text_array_ok(value, '^[a-z_]{1,40}$', 8));
 create domain paceline_private.task_intent as text
   check (value in (
     'fix_failing_test', 'debug_runtime_error', 'fix_build_error', 'fix_type_error', 'fix_lint',
@@ -302,7 +306,10 @@ create table public.agent_presence (
   agent_id uuid primary key references public.agents (id) on delete cascade,
   presence paceline_private.presence not null default 'away',
   listener paceline_private.listener_state not null default 'none',
+  -- Set by the worker only, after screening (shown enveloped in whats_happening).
   note text check (char_length(note) <= 120),
+  note_screen_label paceline_private.label,
+  note_screen_layers paceline_private.screen_layers,
   note_screen_action paceline_private.screen_action,
   updated_at timestamptz not null default now()
 );
@@ -316,6 +323,9 @@ create table public.installs (
   plugin_version text check (char_length(plugin_version) <= 40),
   harness_version text check (char_length(harness_version) <= 40),
   platform text check (char_length(platform) <= 64),
+  -- The owner's own label from /connect ("work laptop"); owner-only (RLS).
+  machine_label text check (char_length(machine_label) between 1 and 64 and machine_label !~ '[[:cntrl:]]'),
+  -- Per-team HMAC of the machine label, for teammate-visible grouping (PLAN §4).
   machine_label_hash paceline_private.sha256_hex,
   created_at timestamptz not null default now(),
   last_seen_at timestamptz,
@@ -412,6 +422,9 @@ create table public.repo_access (
   user_id uuid not null references public.users (id) on delete cascade,
   team_id uuid not null references public.teams (id) on delete cascade,
   repo_key paceline_private.sha256_hex not null,
+  -- GitHub full name learned during verification ("acme/api"). The source of
+  -- Activity.repoLabel, shown only to this user (who has verified access).
+  repo_label text check (repo_label ~ '^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$'),
   verified_at timestamptz,
   source text not null default 'github' check (source in ('github')),
   expires_at timestamptz,
@@ -427,7 +440,8 @@ create index repo_access_key_idx on public.repo_access (repo_key, user_id);
 create table public.verdicts (
   id paceline_private.ulid primary key default paceline_private.ulid(),
   content_class text not null check (content_class in ('card', 'highlight', 'comment', 'dm_teammate', 'dm_stranger',
-                                                      'owner_instruction', 'shared_component', 'builder_answer', 'stats')),
+                                                      'owner_instruction', 'shared_component', 'setup_review',
+                                                      'builder_answer', 'stats')),
   content_id paceline_private.prefixed_id not null,
   l0 jsonb not null,
   l2 jsonb,
@@ -573,6 +587,7 @@ create table public.shared_components (
   screen_label paceline_private.label,
   screen_layers paceline_private.screen_layers,
   screen_action paceline_private.screen_action,
+  screen_categories paceline_private.screen_categories not null default '{}',
   verdict_id paceline_private.ulid references public.verdicts (id) on delete set null,
   adopters integer not null default 0 check (adopters >= 0),
   embedding vector(384),
@@ -633,6 +648,7 @@ create table public.activities (
   screen_label paceline_private.label,
   screen_layers paceline_private.screen_layers,
   screen_action paceline_private.screen_action,
+  screen_categories paceline_private.screen_categories not null default '{}',
   verdict_id paceline_private.ulid references public.verdicts (id) on delete set null,
   embedding vector(384),
   fts tsvector generated always as (
@@ -664,8 +680,11 @@ create index activities_owner_idx on public.activities (owner_user_id, created_a
 create index activities_session_idx on public.activities (session_id);
 create index activities_segment_idx on public.activities (segment_id) where segment_id is not null;
 
--- Stop chunks. digest_enc is the (server-encrypted) redacted digest; it is
--- purged after distill or within 24 h (I6), keeping digest_sha256 for receipts.
+-- Stop chunks. Transcript-derived content is purged after distill or within
+-- 24 h (I6), keeping digest_sha256/digest_bytes/redaction for receipts:
+--   digest_enc      the (server-encrypted) redacted digest (server distill)
+--   error_episodes  IngestChunk.errorEpisodes (redacted excerpts ≤ 800 chars)
+--   local_distill   IngestChunk.distilled (LocalDistill: card + highlight drafts)
 create table public.activity_chunks (
   session_id uuid not null references public.sessions (id) on delete cascade,
   seq integer not null check (seq >= 0),
@@ -675,13 +694,19 @@ create table public.activity_chunks (
   digest_sha256 paceline_private.sha256_hex,
   digest_bytes integer check (digest_bytes >= 0),
   redaction jsonb not null default '{}' check (jsonb_typeof(redaction) = 'object'),
+  error_episodes jsonb not null default '[]'
+    check (jsonb_typeof(error_episodes) = 'array' and jsonb_array_length(error_episodes) <= 20
+           and octet_length(error_episodes::text) <= 32768),
+  local_distill jsonb check (local_distill is null
+                             or (jsonb_typeof(local_distill) = 'object' and octet_length(local_distill::text) <= 65536)),
   received_at timestamptz not null default now(),
   distilled_at timestamptz,
   digest_purged_at timestamptz,
   primary key (session_id, seq)
 );
 create index activity_chunks_activity_idx on public.activity_chunks (activity_id);
-create index activity_chunks_digest_purge_idx on public.activity_chunks (received_at) where digest_enc is not null;
+create index activity_chunks_digest_purge_idx on public.activity_chunks (received_at)
+  where digest_enc is not null or local_distill is not null or error_episodes <> '[]'::jsonb;
 
 create table public.highlights (
   id paceline_private.ulid primary key default paceline_private.ulid(),
@@ -703,6 +728,7 @@ create table public.highlights (
   screen_label paceline_private.label,
   screen_layers paceline_private.screen_layers,
   screen_action paceline_private.screen_action,
+  screen_categories paceline_private.screen_categories not null default '{}',
   verdict_id paceline_private.ulid references public.verdicts (id) on delete set null,
   measured_help integer not null default 0 check (measured_help >= 0),
   measured_fail integer not null default 0 check (measured_fail >= 0),
@@ -768,10 +794,13 @@ create table public.setup_reviews (
   used_for text not null check (char_length(used_for) between 1 and 300),
   worked_when text not null default '' check (char_length(worked_when) <= 300),
   failed_when text not null default '' check (char_length(failed_when) <= 300),
-  status text not null default 'screening' check (status in ('screening', 'active', 'quarantined', 'rejected')),
+  -- SetupReviewStatus in packages/schema.
+  status text not null default 'screening'
+    check (status in ('screening', 'active', 'held_for_sender', 'quarantined', 'rejected')),
   screen_label paceline_private.label,
   screen_layers paceline_private.screen_layers,
   screen_action paceline_private.screen_action,
+  screen_categories paceline_private.screen_categories not null default '{}',
   verdict_id paceline_private.ulid references public.verdicts (id) on delete set null,
   linked_adoption_id paceline_private.ulid,
   created_at timestamptz not null default now(),
@@ -908,6 +937,8 @@ create table public.threads (
   state text not null default 'request' check (state in ('request', 'open', 'paused_by_owner', 'resolved', 'archived')),
   created_by_user_id uuid not null references public.users (id) on delete cascade,
   created_by_agent_id uuid references public.agents (id) on delete set null,
+  -- update_thread action 'assign': a participant agent (checked by trigger).
+  assigned_agent_id uuid references public.agents (id) on delete set null,
   last_message_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -956,6 +987,7 @@ create table public.messages (
   screen_label paceline_private.label,
   screen_layers paceline_private.screen_layers,
   screen_action paceline_private.screen_action,
+  screen_categories paceline_private.screen_categories not null default '{}',
   verdict_id paceline_private.ulid references public.verdicts (id) on delete set null,
   idempotency_key text check (idempotency_key ~ '^[A-Za-z0-9_.:-]{8,128}$'),
   created_at timestamptz not null default now(),
@@ -985,7 +1017,10 @@ create table public.message_deliveries (
 create index message_deliveries_recipient_idx on public.message_deliveries (recipient_agent_id, state, created_at desc);
 
 -- Signed instructions from an agent's own owner. Kept separate from messages
--- and returned in inbox.ownerInstructions[], never inside untrusted content.
+-- and returned in inbox.owner_instructions[], never inside untrusted content.
+-- requires_confirm is derived by trigger (the agent has an unattended session:
+-- bypassPermissions / codex_never); such an instruction is hidden from the
+-- agent and never wakes it until the owner confirms (PLAN §9).
 create table public.owner_instructions (
   id paceline_private.ulid primary key default paceline_private.ulid(),
   agent_id uuid not null references public.agents (id) on delete cascade,
@@ -995,8 +1030,14 @@ create table public.owner_instructions (
   verified_via text not null check (verified_via in ('web', 'slack')),
   kid paceline_private.key_id not null,
   sig paceline_private.ed25519_sig not null,
+  requires_confirm boolean not null default false,
+  confirmed_at timestamptz,
+  confirmed_via text check (confirmed_via in ('web', 'slack')),
   created_at timestamptz not null default now(),
-  delivered_at timestamptz
+  delivered_at timestamptz,
+  check ((confirmed_at is null) = (confirmed_via is null)),
+  check (confirmed_at is null or requires_confirm),
+  check (delivered_at is null or not requires_confirm or confirmed_at is not null)
 );
 create index owner_instructions_agent_idx on public.owner_instructions (agent_id, created_at desc);
 
@@ -1047,7 +1088,7 @@ create table public.events (
   id bigserial primary key,
   type text not null check (type in ('activity.published', 'activity.updated', 'message.new', 'message.delivered',
                                      'review.new', 'review.decided', 'change.updated', 'presence', 'rollup.updated',
-                                     'owner_instruction.new', 'suggestion.ready', 'wake.requested',
+                                     'owner_instruction.new', 'suggestion.ready', 'thread.escalated', 'wake.requested',
                                      'kill_switch.changed', 'takedown')),
   audience_agent_ids uuid[] not null default '{}' check (cardinality(audience_agent_ids) <= 100),
   audience_user_ids uuid[] not null default '{}' check (cardinality(audience_user_ids) <= 100),
@@ -1114,6 +1155,12 @@ create table public.setup_suggestions (
   patch jsonb not null check (jsonb_typeof(patch) = 'object' and octet_length(patch::text) <= 131072),
   patch_hash paceline_private.sha256_hex not null,
   static_report jsonb not null default '[]',
+  static_outcome text check (static_outcome in ('pass', 'warn', 'fail')),
+  -- Copied from the verdict (SetupSuggestion.risk.verdict, ChangeRequest.screen).
+  screen_label paceline_private.label,
+  screen_layers paceline_private.screen_layers,
+  screen_action paceline_private.screen_action,
+  screen_categories paceline_private.screen_categories not null default '{}',
   verdict_id paceline_private.ulid references public.verdicts (id) on delete set null,
   status text not null default 'pending' check (status in ('pending', 'ready', 'stale', 'withdrawn')),
   scope text not null default 'team' check (scope in ('team', 'public-aggregate')),
@@ -1239,6 +1286,9 @@ create table public.slack_identity_links (
   slack_team_id text not null check (slack_team_id ~ '^[A-Z0-9]{5,20}$'),
   slack_user_id text not null check (slack_user_id ~ '^[A-Z0-9]{5,20}$'),
   user_id uuid not null references public.users (id) on delete cascade,
+  -- Copied from slack_installations.team_name when linking (SlackLink.workspaceName),
+  -- so the settings page never needs the service-only installations table.
+  slack_team_name text check (char_length(slack_team_name) <= 80),
   linked_at timestamptz not null default now(),
   revoked_at timestamptz,
   primary key (slack_team_id, slack_user_id),

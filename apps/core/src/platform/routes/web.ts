@@ -1,0 +1,313 @@
+/** Web JSON API (docs/UI.md §4, packages/schema web.ts). Human callers, RLS via db.asUser. */
+import type { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
+import { randomUUID } from 'node:crypto';
+import { isSqlState } from '@paceline/db';
+import {
+  DECISIONS_BY_KIND,
+  DecisionRequest,
+  FeedQuery,
+  ReviewListQuery,
+  STREAM_HEARTBEAT_S,
+  toStreamEvent,
+  type DraftReview,
+  type FeedPage,
+  type Me,
+  type ReviewKind,
+} from '@paceline/schema';
+import type { CoreDeps, PushEvent } from '../../contracts.js';
+import { authenticate } from '../http.js';
+import { loadActivities, reviewItemsFromRows } from '../mappers.js';
+import { bareId, fail, iso, num, parseOr, readJson, sha256Hex } from '../util.js';
+
+const PAGE = 20;
+
+function encodeCursor(publishedAt: unknown, id: string): string {
+  return Buffer.from(`${iso(publishedAt)}|${id}`).toString('base64url');
+}
+function decodeCursor(cursor: string): { at: string; id: string } | null {
+  try {
+    const [at, id] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+    if (!at || !id || Number.isNaN(Date.parse(at)) || !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(id)) return null;
+    return { at, id };
+  } catch {
+    return null;
+  }
+}
+
+export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
+  /* -------------------------------------------------------------------- me */
+  app.get('/api/v1/me', async (c) => {
+    const caller = await authenticate(c, deps, 'web');
+    if (caller instanceof Response) return caller;
+    const me = await deps.db.asUser(caller.claims, async (tx): Promise<Me | null> => {
+      const u = (await tx.query<Record<string, unknown>>('select * from public.users where id = $1', [caller.userId])).rows[0];
+      if (!u) return null;
+      const agents = await tx.query<Record<string, unknown>>(
+        `select a.id, a.handle, a.harness, coalesce(p.presence, 'away') as presence
+           from public.agents a left join public.agent_presence p on p.agent_id = a.id
+          where a.owner_user_id = $1 order by a.created_at limit 20`,
+        [caller.userId],
+      );
+      const teams = await tx.query<Record<string, unknown>>(
+        `select t.id, t.slug, t.name, m.role from public.team_members m join public.teams t on t.id = m.team_id
+          where m.user_id = $1 order by m.joined_at limit 50`,
+        [caller.userId],
+      );
+      const login = typeof u.github_login === 'string' && u.github_login ? u.github_login : String(u.handle);
+      const owner = { id: caller.userId, login, handle: `@${u.handle as string}`, avatarUrl: String(u.avatar_url ?? '') };
+      return {
+        user: owner,
+        agents: agents.rows.map((a) => ({
+          id: a.id as string,
+          handle: `@${a.handle as string}`,
+          harness: a.harness as Me['agents'][number]['harness'],
+          owner,
+          presence: a.presence as Me['agents'][number]['presence'],
+        })),
+        teams: teams.rows.map((t) => ({ id: t.id as string, slug: t.slug as string, name: t.name as string, role: t.role as Me['teams'][number]['role'] })),
+      };
+    });
+    if (!me) return fail(c, 'NOT_FOUND', 'user not found');
+    return c.json(me);
+  });
+
+  /* ------------------------------------------------------------------ feed */
+  app.get('/api/v1/feed', async (c) => {
+    const caller = await authenticate(c, deps, 'web');
+    if (caller instanceof Response) return caller;
+    const q = parseOr(c, FeedQuery, c.req.query());
+    if (!q.ok) return q.res;
+    const cur = q.data.cursor ? decodeCursor(q.data.cursor) : null;
+    if (q.data.cursor && !cur) return fail(c, 'VALIDATION', 'invalid cursor');
+    const page = await deps.db.asUser(caller.claims, async (tx): Promise<FeedPage> => {
+      const where: string[] = [`a.status = 'published'`];
+      const params: unknown[] = [];
+      if (cur) {
+        params.push(cur.at, cur.id);
+        where.push(`(a.published_at, a.id::text) < ($${params.length - 1}::timestamptz, $${params.length})`);
+      }
+      if (q.data.tab === 'highlights') {
+        where.push(`exists (select 1 from public.highlights h where h.activity_id = a.id and h.status = 'active')`);
+      } else if (q.data.tab === 'following') {
+        params.push(caller.userId);
+        where.push(`exists (select 1 from public.follows f where f.follower_user_id = $${params.length} and f.agent_id = a.agent_id)`);
+      }
+      params.push(PAGE + 1);
+      const r = await tx.query<{ id: string; published_at: Date }>(
+        `select a.id, a.published_at from public.activities a where ${where.join(' and ')}
+          order by a.published_at desc, a.id desc limit $${params.length}`,
+        params,
+      );
+      const rows = r.rows.slice(0, PAGE);
+      const acts = await loadActivities(tx, rows.map((x) => x.id), caller.userId);
+      const last = rows[rows.length - 1];
+      return {
+        items: acts.map((activity) => ({ type: 'activity' as const, activity })),
+        ...(r.rows.length > PAGE && last ? { nextCursor: encodeCursor(last.published_at, last.id) } : {}),
+      };
+    });
+    return c.json(page);
+  });
+
+  /* ------------------------------------------------------------ activities */
+  app.get('/api/v1/activities/:id', async (c) => {
+    const caller = await authenticate(c, deps, 'web');
+    if (caller instanceof Response) return caller;
+    const id = bareId('a', c.req.param('id'));
+    if (!id) return fail(c, 'VALIDATION', 'expected an activity id (a_…)');
+    const [act] = await deps.db.asUser(caller.claims, (tx) => loadActivities(tx, [id], caller.userId));
+    if (!act) return fail(c, 'NOT_FOUND', 'activity not found');
+    return c.json(act);
+  });
+
+  app.post('/api/v1/activities/:id/kudos', async (c) => {
+    const caller = await authenticate(c, deps, 'web');
+    if (caller instanceof Response) return caller;
+    const id = bareId('a', c.req.param('id'));
+    if (!id) return fail(c, 'VALIDATION', 'expected an activity id (a_…)');
+    const out = await deps.db.asUser(caller.claims, async (tx) => {
+      const seen = await tx.query('select 1 from public.activities where id = $1', [id]);
+      if (seen.rowCount === 0) return null;
+      await tx.query('insert into public.kudos (activity_id, user_id) values ($1, $2) on conflict do nothing', [id, caller.userId]);
+      const n = await tx.query<{ n: string | number }>('select count(*) as n from public.kudos where activity_id = $1', [id]);
+      return { kudos: num(n.rows[0]?.n) };
+    });
+    if (!out) return fail(c, 'NOT_FOUND', 'activity not found');
+    return c.json(out);
+  });
+
+  /* ---------------------------------------------------------------- review */
+  app.get('/api/v1/review', async (c) => {
+    const caller = await authenticate(c, deps, 'web');
+    if (caller instanceof Response) return caller;
+    const q = parseOr(c, ReviewListQuery, c.req.query());
+    if (!q.ok) return q.res;
+    const items = await deps.db.asUser(caller.claims, async (tx) => {
+      const r = await tx.query<Record<string, unknown>>(
+        `select * from public.review_items where owner_user_id = $1 and ($2::text is null or kind = $2)
+          order by (state = 'pending') desc, created_at desc limit 500`,
+        [caller.userId, q.data.kind ?? null],
+      );
+      return reviewItemsFromRows(tx, r.rows);
+    });
+    return c.json(items);
+  });
+
+  app.get('/api/v1/review/:id', async (c) => {
+    const caller = await authenticate(c, deps, 'web');
+    if (caller instanceof Response) return caller;
+    const id = bareId('rv', c.req.param('id'));
+    if (!id) return fail(c, 'VALIDATION', 'expected a review id (rv_…)');
+    const detail = await deps.db.asUser(caller.claims, async (tx) => {
+      const row = (await tx.query<Record<string, unknown>>('select * from public.review_items where id = $1', [id])).rows[0];
+      if (!row) return { status: 404 as const };
+      const [item] = await reviewItemsFromRows(tx, [row]);
+      if (row.kind !== 'draft') return { status: 501 as const, kind: row.kind as string };
+      const hid = bareId('h', String(row.ref_id));
+      const h = hid
+        ? (await tx.query<{ activity_id: string | null }>('select activity_id from public.highlights where id = $1', [hid])).rows[0]
+        : undefined;
+      const activityId = h?.activity_id ?? bareId('a', String(row.ref_id));
+      const [activity] = activityId ? await loadActivities(tx, [activityId], caller.userId) : [];
+      if (!activity || !item) return { status: 404 as const };
+      const chunks = await tx.query<Record<string, unknown>>(
+        `select digest_sha256, digest_bytes, redaction, received_at from public.activity_chunks where activity_id = $1 order by seq`,
+        [activityId],
+      );
+      const hits: Record<string, number> = {};
+      let dropped = false;
+      let bytes = 0;
+      let first: unknown = null;
+      for (const ch of chunks.rows) {
+        bytes += num(ch.digest_bytes);
+        first ??= ch.received_at;
+        const red = (ch.redaction ?? {}) as { hitsByRule?: Record<string, number>; dropped?: boolean };
+        dropped ||= Boolean(red.dropped);
+        for (const [k, v] of Object.entries(red.hitsByRule ?? {})) hits[k] = (hits[k] ?? 0) + num(v);
+      }
+      const lastSha = [...chunks.rows].reverse().find((x) => x.digest_sha256)?.digest_sha256;
+      const out: DraftReview & { highlightId?: string } = {
+        item,
+        activity,
+        // Digests are purged once distilled (I6); the receipt remains.
+        redactedDigest: '',
+        receipt: {
+          bytes,
+          sha256: typeof lastSha === 'string' ? lastSha : sha256Hex(''),
+          hitsByRule: hits,
+          droppedDigest: dropped,
+          deletesAt: new Date((first ? new Date(iso(first)).getTime() : deps.now().getTime()) + 24 * 3600_000).toISOString(),
+        },
+        fieldToggles: {},
+        componentShareToggles: {},
+        ...(hid ? { highlightId: `h_${hid}` } : {}),
+      };
+      return { status: 200 as const, out };
+    });
+    if (detail.status === 404) return fail(c, 'NOT_FOUND', 'review item not found');
+    if (detail.status === 501) return fail(c, 'NOT_FOUND', `review detail for kind ${detail.kind} is not available yet`);
+    return c.json(detail.out);
+  });
+
+  app.post('/api/v1/review/:id/decision', async (c) => {
+    const caller = await authenticate(c, deps, 'web');
+    if (caller instanceof Response) return caller;
+    const id = bareId('rv', c.req.param('id'));
+    if (!id) return fail(c, 'VALIDATION', 'expected a review id (rv_…)');
+    const body = parseOr(c, DecisionRequest, await readJson(c));
+    if (!body.ok) return body.res;
+    const idem = c.req.header('idempotency-key');
+    const decisionId = idem && /^[A-Za-z0-9_.:-]{8,128}$/.test(idem) ? idem : `dec_${randomUUID()}`;
+    try {
+      const result = await deps.db.asUser(caller.claims, async (tx) => {
+        const row = (await tx.query<Record<string, unknown>>('select * from public.review_items where id = $1', [id])).rows[0];
+        if (!row) return { status: 404 as const };
+        const kind = row.kind as ReviewKind;
+        const allowed = DECISIONS_BY_KIND[kind] as readonly string[];
+        if (!allowed.includes(body.data.decision)) return { status: 400 as const, msg: `decision ${body.data.decision} is not valid for ${kind}` };
+        if (body.data.decision === 'hold') return { status: 400 as const, msg: 'hold is not supported yet' };
+        if (row.state !== 'pending' && row.decision_id === decisionId) {
+          const [same] = await reviewItemsFromRows(tx, [row]);
+          return { status: 200 as const, item: same }; // idempotent replay
+        }
+        const state = body.data.decision === 'reject' ? 'rejected' : 'approved';
+        const decided = await tx.query<Record<string, unknown>>('select * from api.decide_review($1, $2, $3, $4, $5)', [
+          id,
+          state,
+          decisionId,
+          'web',
+          body.data.decision,
+        ]);
+        const updated = decided.rows[0];
+        if (!updated) return { status: 409 as const };
+        // Side effects run in the worker: 'review.draft' (here) or 'review.<kind>' handlers of other modules.
+        await deps.jobs.enqueue(
+          `review.${kind}`,
+          { reviewId: id, refId: String(row.ref_id), decision: body.data.decision, ...(body.data.edits ? { edits: body.data.edits } : {}) },
+          { dedupeKey: `review:${id}`, tx },
+        );
+        const [item] = await reviewItemsFromRows(tx, [updated]);
+        return { status: 200 as const, item };
+      });
+      if (result.status === 404) return fail(c, 'NOT_FOUND', 'review item not found');
+      if (result.status === 400) return fail(c, 'VALIDATION', result.msg);
+      if (result.status === 409) return fail(c, 'CONFLICT', 'this item was already decided or has expired');
+      return c.json(result.item);
+    } catch (e) {
+      if (isSqlState(e, '23505')) return fail(c, 'CONFLICT', 'Idempotency-Key was already used for another decision');
+      throw e;
+    }
+  });
+
+  /* ---------------------------------------------------------------- stream */
+  app.get('/api/v1/stream', async (c) => {
+    const caller = await authenticate(c, deps, 'web');
+    if (caller instanceof Response) return caller;
+    const lastId = c.req.header('last-event-id');
+    return streamSSE(c, async (stream) => {
+      const queue: PushEvent[] = [];
+      let wake: (() => void) | null = null;
+      const push = (e: PushEvent) => {
+        queue.push(e);
+        wake?.();
+      };
+      const unsubscribe = deps.bus.subscribeUser(caller.userId, push);
+      let closed = false;
+      stream.onAbort(() => {
+        closed = true;
+        wake?.();
+      });
+      try {
+        if (lastId && /^\d{1,19}$/.test(lastId)) {
+          const missed = await deps.db.asUser(caller.claims, (tx) =>
+            tx.query<{ id: string | number; type: string; payload: Record<string, unknown> }>('select * from api.my_events($1, 100)', [Number(lastId)]),
+          );
+          for (const r of missed.rows) queue.unshift({ id: String(r.id), type: r.type, audienceAgentIds: [], audienceUserIds: [caller.userId], payload: r.payload ?? {} });
+        }
+        let sentUpTo = lastId && /^\d+$/.test(lastId) ? Number(lastId) : 0;
+        while (!closed) {
+          while (queue.length > 0) {
+            const e = queue.shift()!;
+            const eid = Number(e.id ?? 0);
+            if (eid && eid <= sentUpTo) continue;
+            sentUpTo = Math.max(sentUpTo, eid);
+            const se = toStreamEvent({ type: e.type as never, payload: e.payload as never });
+            if (se) await stream.writeSSE({ id: String(e.id ?? ''), event: se.type, data: JSON.stringify(se) });
+          }
+          await new Promise<void>((resolve) => {
+            const t = setTimeout(resolve, STREAM_HEARTBEAT_S * 1000);
+            wake = () => {
+              clearTimeout(t);
+              resolve();
+            };
+          });
+          wake = null;
+          if (!closed && queue.length === 0) await stream.write(': ping\n\n');
+        }
+      } finally {
+        unsubscribe();
+      }
+    });
+  });
+}

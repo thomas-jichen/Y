@@ -67,13 +67,21 @@ export class PgPushBus implements PushBus {
   async publish(event: PushEvent, tx?: Tx): Promise<void> {
     const agents = [...new Set(event.audienceAgentIds)];
     const users = [...new Set(event.audienceUserIds)];
-    const fn = SYSTEM_TYPES.has(event.type) ? 'api.emit_system_event' : 'api.emit_event';
+
     // Larger audiences are split into several events (events.audience_* ≤ 100).
     const chunks: Array<[string[], string[]]> = [];
     for (let i = 0; i < Math.max(agents.length, users.length, 1); i += MAX_AUDIENCE) {
       chunks.push([agents.slice(i, i + MAX_AUDIENCE), users.slice(i, i + MAX_AUDIENCE)]);
     }
     const run = async (q: Tx) => {
+      // Worker/service contexts use emit_system_event (service_role only, no audience checks);
+      // user contexts use emit_event, which checks the caller may notify every audience member.
+      const who = await q.query<{ u: string; s: boolean }>(
+        `select current_user::text as u, coalesce((select r.rolsuper or r.rolbypassrls from pg_catalog.pg_roles r where r.rolname = current_user), false) as s`,
+      );
+      const service = who.rows[0]?.u === 'service_role' || Boolean(who.rows[0]?.s);
+      if (!service && SYSTEM_TYPES.has(event.type)) throw new Error(`${event.type} is a system event (worker only)`);
+      const fn = service ? 'api.emit_system_event' : 'api.emit_event';
       for (const [a, u] of chunks) {
         await q.query(`select ${fn}($1, $2::uuid[], $3::uuid[], $4::jsonb)`, [event.type, a, u, JSON.stringify(event.payload)]);
       }
@@ -96,7 +104,10 @@ export class PgPushBus implements PushBus {
         do {
           this.pumpAgain = false;
           const r = await this.db.asService((tx) =>
-            tx.query<EventRow>('select id, type, audience_agent_ids, audience_user_ids, payload from api.events_since($1, 500)', [
+            tx.query<EventRow>(
+              `select id, type, to_jsonb(audience_agent_ids) as audience_agent_ids, to_jsonb(audience_user_ids) as audience_user_ids, payload
+                 from api.events_since($1, 500)`,
+              [
               this.watermark,
             ]),
           );
@@ -136,7 +147,7 @@ export class PgPushBus implements PushBus {
   private async eventsForAgent(agentId: string, after: number): Promise<PushEvent[]> {
     const r = await this.db.asService((tx) =>
       tx.query<EventRow>(
-        `select id, type, audience_agent_ids, audience_user_ids, payload from public.events
+        `select id, type, to_jsonb(audience_agent_ids) as audience_agent_ids, to_jsonb(audience_user_ids) as audience_user_ids, payload from public.events
           where id > $1 and audience_agent_ids @> array[$2::uuid] order by id limit 100`,
         [after, agentId],
       ),

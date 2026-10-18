@@ -64,6 +64,7 @@ export interface PgliteDbOptions {
 /** A {@link Db} backed by PGlite, with access to the underlying instance. */
 export interface PgliteDb extends Db {
   readonly kind: 'pglite';
+  readonly flavor: 'pglite';
   readonly local: true;
   /** `'memory'` or the absolute data directory. */
   readonly dataDir: string | 'memory';
@@ -135,6 +136,7 @@ export async function createPgliteDb(options: PgliteDbOptions = {}): Promise<Pgl
 
 class PgliteDbImpl implements PgliteDb {
   readonly kind = 'pglite' as const;
+  readonly flavor = 'pglite' as const;
   readonly local = true as const;
   readonly #driver: TxDriver;
   readonly #report: DbErrorReporter;

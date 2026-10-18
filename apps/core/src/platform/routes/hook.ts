@@ -1,0 +1,252 @@
+/** Hook REST for plugins: POST /ingest, GET /agent/brief, POST /hook/match. Install-token callers. */
+import type { Hono } from 'hono';
+import type { Tx } from '@paceline/db';
+import {
+  AgentBrief,
+  AgentBriefQuery,
+  HookMatchRequest,
+  IngestChunk,
+  KILL_SWITCH_DB_NAMES,
+  NO_KILL_SWITCHES,
+  makePointer,
+  type HookMatchResponse,
+  type IngestResponse,
+  type KillSwitches,
+  type Pointer,
+  type HumanNotice,
+} from '@paceline/schema';
+import type { Caller, CoreDeps } from '../../contracts.js';
+import { PlatformAuth } from '../auth.js';
+import { PgPushBus } from '../bus.js';
+import { authenticate } from '../http.js';
+import type { SealedChunk } from '../pipeline.js';
+import { fail, parseOr, readJson, sealDigest, segmentUlid } from '../util.js';
+
+export const MIN_PLUGIN_VERSION = '0.1.0';
+/** P2 push threshold (packages/retrieval THRESHOLDS.push). */
+export const PUSH_MATCH_THRESHOLD = 0.6;
+
+function cursorOf(deps: CoreDeps): string {
+  return deps.bus instanceof PgPushBus ? deps.bus.cursor : '0';
+}
+
+async function unreadFor(tx: Tx, agentId: string): Promise<number> {
+  const r = await tx.query<{ n: string | number }>(
+    `select count(*) as n from public.message_deliveries where recipient_agent_id = $1 and state in ('pending', 'pointer_sent')`,
+    [agentId],
+  );
+  return Number(r.rows[0]?.n ?? 0);
+}
+
+async function killSwitches(deps: CoreDeps): Promise<KillSwitches> {
+  const r = await deps.db.asAnon((tx) => tx.query<{ name: string; engaged: boolean }>('select name, engaged from public.kill_switches'));
+  const out: KillSwitches = { ...NO_KILL_SWITCHES };
+  for (const [wire, dbName] of Object.entries(KILL_SWITCH_DB_NAMES) as [keyof KillSwitches, string][]) {
+    out[wire] = r.rows.some((x) => x.name === dbName && x.engaged);
+  }
+  return out;
+}
+
+const clamp999 = (n: number) => Math.max(1, Math.min(999, n));
+
+export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
+  /* --------------------------------------------------------------- ingest */
+  app.post('/api/v1/ingest', async (c) => {
+    const caller = await authenticate(c, deps, 'agent');
+    if (caller instanceof Response) return caller;
+    const parsed = parseOr(c, IngestChunk, await readJson(c));
+    if (!parsed.ok) return parsed.res;
+    const ch = parsed.data;
+    if ((await killSwitches(deps)).ingest) return fail(c, 'RATE_LIMITED', 'ingest is paused (kill switch)', { retryAfterS: 300 });
+    const agentId = caller.agentId!;
+
+    const res = await deps.db.asUser(caller.claims, async (tx): Promise<IngestResponse> => {
+      const s = await tx.query<{ id: string; started_at: Date }>(
+        `insert into public.sessions (agent_id, install_id, harness_session_id, repo_key, harness_version)
+         values ($1, $2, $3, $4, $5)
+         on conflict (agent_id, harness_session_id) do update
+           set last_event_at = now(), harness_version = excluded.harness_version,
+               repo_key = coalesce(excluded.repo_key, public.sessions.repo_key),
+               status = 'open', close_reason = null, ended_at = null
+         returning id, started_at`,
+        [agentId, caller.installId, ch.sessionId, ch.repoKey ?? null, ch.harnessVersion.slice(0, 40)],
+      );
+      const session = s.rows[0]!;
+      const activityId = segmentUlid(session.id, ch.segmentIndex, new Date(session.started_at).getTime());
+      const team = await tx.query<{ team_id: string }>(
+        'select team_id from public.team_members where user_id = $1 order by joined_at limit 1',
+        [caller.userId],
+      );
+      await tx.query(
+        `insert into public.activities (id, agent_id, owner_user_id, session_id, team_id, source, visibility, status, repo_key, stats)
+         values ($1, $2, $3, $4, $5, 'captured', 'private', 'open', $6, $7::jsonb)
+         on conflict (id) do nothing`,
+        [activityId, agentId, caller.userId, session.id, team.rows[0]?.team_id ?? null, ch.repoKey ?? null, JSON.stringify(ch.statsDelta)],
+      );
+      if (ch.setup?.snapshot) {
+        await tx.query(
+          `insert into public.setup_versions (agent_id, hash, snapshot, model) values ($1, $2, $3::jsonb, $4)
+           on conflict (agent_id, hash) do nothing`,
+          [agentId, ch.setup.hash, JSON.stringify(ch.setup.snapshot), ch.setup.snapshot.model.slice(0, 80)],
+        );
+      }
+      const sealed: SealedChunk = {
+        text: ch.digest && !ch.digest.redaction.dropped ? ch.digest.text : '',
+        errorEpisodes: ch.errorEpisodes,
+        laps: ch.laps ?? [],
+        setupHash: ch.setup?.hash ?? null,
+        ...(ch.distilled ? { distilled: ch.distilled } : {}),
+      };
+      const inserted = await tx.query<{ seq: number }>(
+        `insert into public.activity_chunks (session_id, seq, activity_id, stats_delta, digest_enc, digest_sha256, digest_bytes, redaction)
+         values ($1, $2, $3, $4::jsonb, $5, $6, $7, $8::jsonb)
+         on conflict (session_id, seq) do nothing
+         returning seq`,
+        [
+          session.id,
+          ch.seq,
+          activityId,
+          JSON.stringify(ch.statsDelta),
+          sealDigest(deps.config.hmacKey, JSON.stringify(sealed)),
+          ch.digest?.sha256 ?? null,
+          ch.digest ? Buffer.byteLength(ch.digest.text, 'utf8') : null,
+          JSON.stringify(ch.digest?.redaction ?? {}),
+        ],
+      );
+      if (caller.installId) {
+        await tx.query('update public.installs set last_seen_at = now(), plugin_version = $2 where id = $1', [caller.installId, ch.pluginVersion]);
+      }
+      const duplicate = inserted.rowCount === 0;
+      if (!duplicate && ch.close) {
+        await deps.jobs.enqueue('finalize', { activityId }, { dedupeKey: `finalize:${activityId}`, tx });
+      }
+      return {
+        accepted: !duplicate,
+        ...(duplicate ? { duplicate: true } : {}),
+        activityId: `a_${activityId}`,
+        pulse: { unread: await unreadFor(tx, agentId), cursor: cursorOf(deps) },
+      };
+    });
+    return c.json(res);
+  });
+
+  /* ---------------------------------------------------------------- brief */
+  app.get('/api/v1/agent/brief', async (c) => {
+    const q = parseOr(c, AgentBriefQuery, c.req.query());
+    if (!q.ok) return q.res;
+    const m = /^Bearer\s+(\S+)$/i.exec(c.req.header('authorization') ?? '');
+    if (!m?.[1]) return fail(c, 'UNAUTHORIZED', 'install token required');
+    const auth = deps.auth instanceof PlatformAuth ? deps.auth : null;
+    const resolution = auth
+      ? await auth.resolveInstall(m[1])
+      : await deps.auth.verifyBearer(c.req.header('authorization')).then((caller) =>
+          caller?.agentId ? ({ state: 'ok', caller, handle: '', harness: 'claude_code' } as const) : ({ state: 'unknown_install' } as const),
+        );
+    const ks = await killSwitches(deps);
+    const url = deps.config.publicUrl;
+    // distiller 'server': v0 distills uploaded (pass-1 redacted) digests with the deterministic heuristic.
+    const basePolicy = { shareMode: 'stats', holdMinutes: 30, capture: 'on', wakeOnDm: 'teammates', policyAccepted: false, distiller: 'server' } as const;
+    if (resolution.state !== 'ok') {
+      const notice: HumanNotice = { kind: resolution.state === 'revoked' ? 'token_revoked' : 'unknown_install', url: `${url}/connect` };
+      return c.json(
+        AgentBrief.parse({
+          v: 1,
+          tokenState: resolution.state,
+          minPluginVersion: MIN_PLUGIN_VERSION,
+          killSwitches: ks,
+          pointers: [],
+          policy: basePolicy,
+          humanNotices: [notice],
+          serverTime: deps.now().toISOString(),
+        }),
+      );
+    }
+    const caller: Caller = resolution.caller;
+    const agentId = caller.agentId!;
+    const brief = await deps.db.asUser(caller.claims, async (tx) => {
+      const agent = (
+        await tx.query<{ handle: string; harness: string }>('select handle, harness from public.agents where id = $1', [agentId])
+      ).rows[0];
+      const settings = (await tx.query<{ wake_on_dm: string }>('select wake_on_dm from public.agent_settings where agent_id = $1', [agentId])).rows[0];
+      const team = (
+        await tx.query<{ team_id: string; policy_accepted_version: number | null; repo_key_salt: string | null }>(
+          `select m.team_id, m.policy_accepted_version, s.repo_key_salt from public.team_members m
+             left join public.team_secrets s on s.team_id = m.team_id
+            where m.user_id = $1 order by m.joined_at limit 1`,
+          [caller.userId],
+        )
+      ).rows[0];
+      const pending = Number(
+        (
+          await tx.query<{ n: string | number }>(
+            `select count(*) as n from public.review_items where owner_user_id = $1 and state = 'pending'`,
+            [caller.userId],
+          )
+        ).rows[0]?.n ?? 0,
+      );
+      const unread = await unreadFor(tx, agentId);
+      const pointers: Pointer[] = [];
+      const notices: HumanNotice[] = [];
+      if (!ks.pushPaths) {
+        if (unread > 0) pointers.push(makePointer('P1', { count: clamp999(unread) }));
+        if (pending > 0) pointers.push(makePointer('P5', { count: clamp999(pending) }));
+      }
+      if (pending > 0) notices.push({ kind: 'drafts_pending', count: pending, url: `${url}/review` });
+      return {
+        v: 1,
+        tokenState: 'ok',
+        agent: { id: agentId, handle: `@${agent?.handle ?? resolution.handle}`, harness: agent?.harness ?? resolution.harness },
+        minPluginVersion: MIN_PLUGIN_VERSION,
+        killSwitches: ks,
+        pointers,
+        pulseToken: auth ? auth.mintPulseToken(caller) : undefined,
+        policy: {
+          ...basePolicy,
+          wakeOnDm: settings?.wake_on_dm ?? 'teammates',
+          policyAccepted: team?.policy_accepted_version != null,
+          ...(team ? { teamId: team.team_id } : {}),
+          ...(team?.repo_key_salt ? { repoKeySalt: team.repo_key_salt } : {}),
+        },
+        humanNotices: notices,
+        serverTime: deps.now().toISOString(),
+      };
+    });
+    return c.json(AgentBrief.parse(brief));
+  });
+
+  /* ---------------------------------------------------------------- match */
+  app.post('/api/v1/hook/match', async (c) => {
+    const caller = await authenticate(c, deps, 'agent');
+    if (caller instanceof Response) return caller;
+    const parsed = parseOr(c, HookMatchRequest, await readJson(c));
+    if (!parsed.ok) return parsed.res;
+    const req = parsed.data;
+    if ((await killSwitches(deps)).pushPaths) return c.json({ match: null } satisfies HookMatchResponse);
+    const agentId = caller.agentId!;
+    const out = await deps.db.asUser(caller.claims, async (tx) => {
+      const r = await tx.query<{ highlight_id: string; similarity: number; visibility: string; owner_user_id: string }>(
+        'select * from api.match_error_signature($1, 1)',
+        [req.signature],
+      );
+      const best = r.rows[0];
+      if (!best || Number(best.similarity) < PUSH_MATCH_THRESHOLD) return { match: null };
+      const scope = best.visibility === 'public' ? 'public' : 'team';
+      const authorTrust = best.owner_user_id === caller.userId ? 'self' : scope === 'public' ? 'public' : 'teammate';
+      const score = Math.min(1, Math.max(0, Number(best.similarity)));
+      const highlightId = `h_${best.highlight_id}`;
+      const session = (
+        await tx.query<{ id: string }>('select id from public.sessions where agent_id = $1 and harness_session_id = $2', [agentId, req.sessionId])
+      ).rows[0];
+      await tx.query(
+        `insert into public.content_exposures (content_kind, content_id, agent_id, session_id, via) values ('highlight', $1, $2, $3, 'pointer')`,
+        [highlightId, agentId, session?.id ?? null],
+      );
+      return {
+        match: { highlightId, score, scope, authorTrust },
+        // Convenience for the hook: the exact P2 pointer to render locally (I3: ids/ints/enums only).
+        pointer: makePointer('P2', { highlight_id: highlightId, score: Math.max(60, Math.min(100, Math.round(score * 100))), scope }),
+      };
+    });
+    return c.json(out);
+  });
+}

@@ -14,8 +14,9 @@
 -- * Ownership derivation: owner_user_id / sender_owner_id are always derived
 --   from the agent, so a caller cannot claim someone else's ownership.
 -- * Guards for authenticated callers: status/visibility transitions on
---   owner-edited content, thread state machine, member roles and opt-in
---   flags, install revocation, append-only audit log.
+--   owner-edited content, thread state machine and assignee, member roles and
+--   opt-in flags, owner-instruction confirm/delivery, install revocation,
+--   append-only audit log.
 -- * Review queue: change requests create their review item; review items and
 --   change requests emit review.new / review.decided / change.updated events.
 --   Core must NOT emit those three itself.
@@ -530,6 +531,74 @@ $fn$;
 create trigger org_members_guard before insert or update on public.org_members
   for each row execute function paceline_private.guard_org_members();
 
+-- update_thread 'assign': only a participant agent can be the assignee (FK
+-- checks bypass RLS, so the guard checks it explicitly).
+create or replace function paceline_private.guard_thread_assignee()
+returns trigger
+language plpgsql volatile
+set search_path = ''
+as $fn$
+begin
+  if current_user in ('authenticated', 'anon')
+     and new.assigned_agent_id is distinct from old.assigned_agent_id
+     and new.assigned_agent_id is not null
+     and not paceline_private.is_agent_participant(new.id, new.assigned_agent_id) then
+    raise exception using errcode = '42501', message = 'threads: the assignee must be a participant agent';
+  end if;
+  return new;
+end
+$fn$;
+
+create trigger threads_guard_assignee before update of assigned_agent_id on public.threads
+  for each row execute function paceline_private.guard_thread_assignee();
+
+-- Owner instructions (PLAN §9): an instruction for an agent that has an
+-- unattended session (bypassPermissions / codex_never) needs the owner's
+-- confirm click before the agent can see it or be woken for it. Derived here
+-- from session_leases; callers may only force it on, never off.
+create or replace function paceline_private.derive_owner_instruction_confirm()
+returns trigger
+language plpgsql volatile security definer
+set search_path = ''
+as $fn$
+begin
+  new.requires_confirm := coalesce(new.requires_confirm, false) or exists (
+    select 1 from public.session_leases l
+    where l.agent_id = new.agent_id
+      and l.permission_mode in ('bypassPermissions', 'codex_never'));
+  return new;
+end
+$fn$;
+
+create trigger owner_instructions_derive_confirm before insert on public.owner_instructions
+  for each row execute function paceline_private.derive_owner_instruction_confirm();
+
+-- Who may change what after insert: only a human (web/Slack) confirms, only
+-- the agent itself marks delivered. Column grants already freeze the rest.
+create or replace function paceline_private.guard_owner_instruction_update()
+returns trigger
+language plpgsql volatile
+set search_path = ''
+as $fn$
+begin
+  if current_user not in ('authenticated', 'anon') then
+    return new;
+  end if;
+  if (new.confirmed_at, new.confirmed_via) is distinct from (old.confirmed_at, old.confirmed_via)
+     and not (paceline_private.is_human() and old.confirmed_at is null and old.requires_confirm) then
+    raise exception using errcode = '42501', message = 'owner_instructions: only the owner confirms, once';
+  end if;
+  if new.delivered_at is distinct from old.delivered_at
+     and paceline_private.acting_agent_id() is distinct from new.agent_id then
+    raise exception using errcode = '42501', message = 'owner_instructions: only the agent itself marks delivery';
+  end if;
+  return new;
+end
+$fn$;
+
+create trigger owner_instructions_guard_update before update on public.owner_instructions
+  for each row execute function paceline_private.guard_owner_instruction_update();
+
 -- A revoked install stays revoked.
 create or replace function paceline_private.guard_install_revocation()
 returns trigger
@@ -650,5 +719,7 @@ revoke all on function
   paceline_private.guard_thread_state(), paceline_private.guard_team_members(), paceline_private.guard_org_members(),
   paceline_private.guard_install_revocation(), paceline_private.stamp_friendship_response(),
   paceline_private.audit_log_append_only(), paceline_private.on_change_request_insert(),
-  paceline_private.on_change_request_state(), paceline_private.on_review_item_event()
+  paceline_private.on_change_request_state(), paceline_private.on_review_item_event(),
+  paceline_private.guard_thread_assignee(), paceline_private.derive_owner_instruction_confirm(),
+  paceline_private.guard_owner_instruction_update()
   from public, anon, authenticated, service_role;

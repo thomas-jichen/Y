@@ -44,7 +44,7 @@ export async function sendMessage(deps: CoreDeps, caller: Caller, input: ToolInp
     // Idempotency: (sender, idempotency_key).
     const dup = await tx.query<{ id: string; thread_id: string; state: string }>(
       `select id, thread_id, state from public.messages where sender_id = $1 and idempotency_key = $2`,
-      [agentId, input.idempotencyKey],
+      [agentId, input.idempotency_key],
     );
     if (dup.rows[0]) return { duplicate: dup.rows[0] } as const;
 
@@ -104,16 +104,16 @@ export async function sendMessage(deps: CoreDeps, caller: Caller, input: ToolInp
     await tx.query(
       `insert into public.messages (id, thread_id, sender_kind, sender_id, intent, urgency, body, state, idempotency_key)
        values ($1, $2, 'agent', $3, $4, $5, $6, 'queued', $7)`,
-      [messageId, threadId, agentId, input.intent, input.urgency, input.body, input.idempotencyKey],
+      [messageId, threadId, agentId, input.intent, input.urgency, input.body, input.idempotency_key],
     );
     return { messageId, threadId } as const;
   });
 
   if ('duplicate' in prepared) {
-    const d = prepared.duplicate;
+    const d = prepared.duplicate!;
     return {
-      messageId: wire('message', d.id), threadId: wire('thread', d.thread_id), state: d.state as 'queued',
-      delivery: { path: null, recipientPresence: null, etaS: null, note: 'screening' }, claimIds: [],
+      message_id: wire('message', d.id), thread_id: wire('thread', d.thread_id), state: d.state as 'queued',
+      delivery: { path: null, recipient_presence: null, eta_s: null, note: 'screening' }, claim_ids: [],
     };
   }
 
@@ -125,21 +125,21 @@ export async function sendMessage(deps: CoreDeps, caller: Caller, input: ToolInp
     deps.log('warn', 'inline routing failed; deferred', { err: String(err) });
     await deps.jobs.enqueue('route_message', { messageId: prepared.messageId }, { dedupeKey: `route:${prepared.messageId}` });
     return {
-      messageId: wire('message', prepared.messageId), threadId: wire('thread', prepared.threadId), state: 'queued',
-      delivery: { path: null, recipientPresence: null, etaS: null, note: 'screening' }, claimIds: [],
+      message_id: wire('message', prepared.messageId), thread_id: wire('thread', prepared.threadId), state: 'queued',
+      delivery: { path: null, recipient_presence: null, eta_s: null, note: 'screening' }, claim_ids: [],
     };
   }
   return {
-    messageId: wire('message', prepared.messageId),
-    threadId: wire('thread', prepared.threadId),
+    message_id: wire('message', prepared.messageId),
+    thread_id: wire('thread', prepared.threadId),
     state: routed.state,
     delivery: {
       path: routed.path,
-      recipientPresence: null,
-      etaS: routed.path === 'wake' ? 30 : null,
+      recipient_presence: null,
+      eta_s: routed.path === 'wake' ? 30 : null,
       note: routed.note,
     },
-    claimIds: [],
+    claim_ids: [],
   };
 }
 
@@ -165,7 +165,7 @@ interface InboxRow {
 
 export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'inbox'>): Promise<ToolOutput<'inbox'>> {
   const agentId = requireAgent(caller);
-  const threadFilter = input.threadId ? bare('thread', input.threadId) : null;
+  const threadFilter = input.thread_id ? bare('thread', input.thread_id) : null;
   const cursor = input.cursor ? bare('message', input.cursor) : null;
 
   // Phase 1 (RLS, as the agent): what this agent may read; mark it seen.
@@ -183,7 +183,7 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
           and ($3::text is null or m.thread_id = $3)
           and ($4::text is null or m.id < $4)
         order by m.id desc limit $5`,
-      [agentId, input.unreadOnly, threadFilter, cursor, input.limit + 1],
+      [agentId, input.unread_only, threadFilter, cursor, input.limit + 1],
     );
     const rows = r.rows.slice(0, input.limit);
     const more = r.rows.length > input.limit;
@@ -192,7 +192,7 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
       const t = deliveryTransition(row.delivery_state as 'pending', 'seen');
       if (t.ok && t.state !== row.delivery_state) {
         await tx.query(
-          `update public.message_deliveries set state = $3, seen_at = now(), updated_at = now() where message_id = $1 and recipient_agent_id = $2`,
+          `update public.message_deliveries set state = $3, seen_at = now() where message_id = $1 and recipient_agent_id = $2`,
           [row.message_id, agentId, t.state]);
       }
     }
@@ -202,7 +202,7 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
       `select id, thread_id, body, verified_via, kid, sig, created_at, delivered_at from public.owner_instructions
         where agent_id = $1 and ($2::boolean = false or delivered_at is null) and ($3::text is null or thread_id = $3)
         order by id desc limit 20`,
-      [agentId, input.unreadOnly, threadFilter],
+      [agentId, input.unread_only, threadFilter],
     );
     const undelivered = oi.rows.filter((o) => !o.delivered_at).map((o) => o.id);
     if (undelivered.length) {
@@ -227,7 +227,7 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
     const relationship = !isAgent
       ? (row.sender_kind === 'user' ? 'human_comment' : 'system')
       : row.sender_owner_id === caller.userId ? 'self' : row.trust === 'teammate' ? 'teammate' : row.trust === 'contact' ? 'contact' : 'stranger';
-    const content: Record<string, unknown> = { body: row.body, intent: row.intent, urgency: row.urgency, createdAt: toIso(row.created_at) };
+    const content: Record<string, unknown> = { body: row.body, intent: row.intent, urgency: row.urgency, created_at: toIso(row.created_at) };
     if (row.subject) content.subject = row.subject;
     const userOwner = row.sender_kind === 'user' && row.sender_id ? users.get(row.sender_id) : undefined;
     messages.push(makeEnvelope({
@@ -238,36 +238,36 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
         agent: info ? atHandle(info.handle) : null,
         owner: info ? atHandle(info.ownerHandle) : userOwner ? atHandle(userOwner.handle) : null,
         relationship: relationship as 'teammate',
-        ownerVerified: true,
+        owner_verified: true,
       },
       screen: { label: (row.screen_label ?? 'clean') as 'clean', layers: (row.screen_layers ?? ['l0']) as ['l0'] },
       content,
     }) as InboxOutput['messages'][number]);
   }
 
-  const ownerInstructions: InboxOutput['ownerInstructions'] = oi.map((o) => {
-    const item: InboxOutput['ownerInstructions'][number] = {
+  const ownerInstructions: InboxOutput['owner_instructions'] = oi.map((o) => {
+    const item: InboxOutput['owner_instructions'][number] = {
       id: wire('ownerInstruction', o.id),
-      agentId,
+      agent_id: agentId,
       body: o.body,
-      verifiedVia: o.verified_via,
-      createdAt: toIso(o.created_at),
+      verified_via: o.verified_via,
+      created_at: toIso(o.created_at),
       signature: { alg: 'Ed25519', kid: o.kid, sig: o.sig },
       note: OWNER_INSTRUCTION_NOTE,
     };
-    if (o.thread_id) item.threadId = wire('thread', o.thread_id);
-    if (o.delivered_at) item.deliveredAt = toIso(o.delivered_at);
+    if (o.thread_id) item.thread_id = wire('thread', o.thread_id);
+    if (o.delivered_at) item.delivered_at = toIso(o.delivered_at);
     return item;
   });
 
-  const out: InboxOutput = { messages, ownerInstructions, threads };
+  const out: InboxOutput = { messages, owner_instructions: ownerInstructions, threads };
   const last = rows[rows.length - 1];
-  if (more && last) out.nextCursor = wire('message', last.message_id);
+  if (more && last) out.next_cursor = wire('message', last.message_id);
   return out;
 }
 
 export interface LoadedThreads {
-  threads: { id: string; kind: InboxThreadSummary['kind']; state: InboxThreadSummary['state']; last_message_at: Date | string; unread: number }[];
+  threads: { id: string; kind: InboxThreadSummary['kind']; state: InboxThreadSummary['state']; last_message_at: Date | string; unread: number; assigned_agent_id: string | null }[];
   parts: { thread_id: string; p_kind: string; p_id: string; owner_user_id: string }[];
 }
 
@@ -275,7 +275,7 @@ export interface LoadedThreads {
 export async function loadThreads(tx: Tx, agentId: string, threadIds: string[]): Promise<LoadedThreads> {
   if (threadIds.length === 0) return { threads: [], parts: [] };
   const t = await tx.query<LoadedThreads['threads'][number]>(
-    `select t.id, t.kind, t.state, t.last_message_at,
+    `select t.id, t.kind, t.state, t.last_message_at, t.assigned_agent_id,
             (select count(*)::int from public.message_deliveries d join public.messages m on m.id = d.message_id
               where m.thread_id = t.id and d.recipient_agent_id = $2 and d.state in ('pending','pointer_sent')
                 and m.state in ('delivered','released')) as unread
@@ -289,7 +289,7 @@ export async function loadThreads(tx: Tx, agentId: string, threadIds: string[]):
 
 export async function buildSummaries(deps: CoreDeps, caller: Caller, agentId: string, loaded: LoadedThreads): Promise<InboxThreadSummary[]> {
   if (loaded.threads.length === 0) return [];
-  const agentIds = [...new Set(loaded.parts.filter((p) => p.p_kind === 'agent').map((p) => p.p_id))];
+  const agentIds = [...new Set([...loaded.parts.filter((p) => p.p_kind === 'agent').map((p) => p.p_id), ...loaded.threads.map((t) => t.assigned_agent_id).filter((x): x is string => !!x)])];
   const owners = [...new Set(loaded.parts.map((p) => p.owner_user_id))];
   const { infos, rels } = await deps.db.asService(async (s) => {
     const infos = await agentInfos(s, agentIds);
@@ -304,7 +304,8 @@ export async function buildSummaries(deps: CoreDeps, caller: Caller, agentId: st
       const info = infos.get(p.p_id);
       if (info) participants.push({ handle: atHandle(info.handle), relationship: rels.get(p.owner_user_id) ?? 'stranger' });
     }
-    return { id: wire('thread', th.id), kind: th.kind, state: th.state, unread: th.unread, lastMessageAt: toIso(th.last_message_at), participants, claims: [] };
+    return { id: wire('thread', th.id), kind: th.kind, state: th.state, unread: th.unread, last_message_at: toIso(th.last_message_at), participants, claims: [],
+      assigned_to: th.assigned_agent_id && infos.get(th.assigned_agent_id) ? atHandle(infos.get(th.assigned_agent_id)!.handle) : null };
   });
 }
 
@@ -312,12 +313,12 @@ export async function buildSummaries(deps: CoreDeps, caller: Caller, agentId: st
 
 export async function updateThread(deps: CoreDeps, caller: Caller, input: ToolInput<'update_thread'>): Promise<ToolOutput<'update_thread'>> {
   const agentId = requireAgent(caller);
-  const threadId = bare('thread', input.threadId);
+  const threadId = bare('thread', input.thread_id);
   let selfHandle: string | null = null;
   if (input.action === 'assign') {
     const self = (await deps.db.asService((s) => agentInfos(s, [agentId]))).get(agentId);
     selfHandle = self ? atHandle(self.handle) : null;
-    if (input.assignTo !== selfHandle) throw new HttpError('SCOPE_FORBIDDEN', 'agents can only assign threads to themselves');
+    if (input.assign_to !== selfHandle) throw new HttpError('SCOPE_FORBIDDEN', 'agents can only assign threads to themselves');
   }
   if (input.action === 'release_claim') throw notImplemented('work claims');
   const loaded = await deps.db.asUser(caller.claims, async (tx) => {
@@ -329,26 +330,29 @@ export async function updateThread(deps: CoreDeps, caller: Caller, input: ToolIn
     if (!th) throw new HttpError('NOT_FOUND', 'thread not found');
     switch (input.action) {
       case 'mark_handled': {
-        const msg = input.messageId ? bare('message', input.messageId) : null;
+        const msg = input.message_id ? bare('message', input.message_id) : null;
         const d = await tx.query<{ message_id: string; state: string }>(
           `select d.message_id, d.state from public.message_deliveries d join public.messages m on m.id = d.message_id
             where m.thread_id = $1 and d.recipient_agent_id = $2 and ($3::text is null or m.id = $3)`, [threadId, agentId, msg]);
         for (const row of d.rows) {
           const tr = deliveryTransition(row.state as 'seen', 'handled');
           if (!tr.ok || tr.state === row.state) continue;
-          await tx.query(`update public.message_deliveries set state = 'handled', handled_at = now(), seen_at = coalesce(seen_at, now()), updated_at = now()
+          await tx.query(`update public.message_deliveries set state = 'handled', handled_at = now(), seen_at = coalesce(seen_at, now())
                             where message_id = $1 and recipient_agent_id = $2`, [row.message_id, agentId]);
         }
         break;
       }
       case 'resolve':
         if (th.state !== 'open' && th.state !== 'resolved') throw new HttpError('CONFLICT', `cannot resolve a ${th.state} thread`);
-        if (th.state === 'open') await tx.query(`update public.threads set state = 'resolved', updated_at = now() where id = $1`, [threadId]);
+        if (th.state === 'open') await tx.query(`update public.threads set state = 'resolved' where id = $1`, [threadId]);
         break;
       case 'mute':
       case 'unmute':
         await tx.query(`update public.thread_participants set muted = $3 where thread_id = $1 and p_kind = 'agent' and p_id = $2`,
           [threadId, agentId, input.action === 'mute']);
+        break;
+      case 'assign':
+        await tx.query(`update public.threads set assigned_agent_id = $2 where id = $1`, [threadId, agentId]);
         break;
       default:
         break;
@@ -358,7 +362,7 @@ export async function updateThread(deps: CoreDeps, caller: Caller, input: ToolIn
   if (input.action === 'escalate') {
     // Ids only: the owner's web app shows the thread; nothing is decided here.
     await deps.bus.publish({ type: 'message.new', audienceAgentIds: [], audienceUserIds: [caller.userId],
-      payload: { threadId: input.threadId, escalated: true } });
+      payload: { threadId: input.thread_id, escalated: true } });
   }
   const [summary] = await buildSummaries(deps, caller, agentId, loaded);
   if (!summary) throw new HttpError('NOT_FOUND', 'thread not found');

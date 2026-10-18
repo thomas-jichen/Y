@@ -3,22 +3,22 @@
  * the Supabase `embed` Edge Function (production). 384 dims everywhere.
  */
 
-/**
- * Embedding width: `vector(384)` columns, gte-small and the mock embedder.
- * Mirrors `EMBEDDING_DIMS` in `@paceline/schema` (hosting contracts).
- */
-export const EMBEDDING_DIMS = 384 as const;
+import {
+  EMBEDDING_DIMS,
+  EMBEDDING_MODEL,
+  EMBED_FUNCTION_PATH,
+  EMBED_MAX_INPUTS,
+  EMBED_MAX_INPUT_CHARS,
+  EMBED_SECRET_HEADER,
+} from '@paceline/schema';
+
+/** Re-exported hosting contracts (`@paceline/schema`): 384 dims, gte-small, the embed Edge Function path, header and limits. */
+export { EMBEDDING_DIMS, EMBED_FUNCTION_PATH, EMBED_MAX_INPUTS, EMBED_MAX_INPUT_CHARS, EMBED_SECRET_HEADER };
 
 /** Production embedding model (Supabase built-in inference). */
-export const GTE_EMBEDDING_MODEL = 'gte-small' as const;
+export const GTE_EMBEDDING_MODEL = EMBEDDING_MODEL;
 /** Model id of {@link createMockEmbedder}. */
 export const MOCK_EMBEDDING_MODEL = 'mock-hash-v1' as const;
-
-/** Embed Edge Function path, secret header and limits (mirror `@paceline/schema` hosting contracts). */
-export const EMBED_FUNCTION_PATH = '/functions/v1/embed' as const;
-export const EMBED_SECRET_HEADER = 'x-paceline-embed-secret' as const;
-export const EMBED_MAX_INPUTS = 32;
-export const EMBED_MAX_INPUT_CHARS = 8000;
 
 /** An embedder. Vectors are L2-normalized and exactly {@link EMBEDDING_DIMS} long. */
 export interface Embedder {

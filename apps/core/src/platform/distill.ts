@@ -79,7 +79,10 @@ export function heuristicDrafts(input: HeuristicInput): HeuristicDraft[] {
     const draft = {
       kind: 'fix' as const,
       title: clip(`Fix: ${sig}`, 90).padEnd(8, '.'),
-      summary: clip(`Resolved "${clip(sig, 160)}" after ${pitfalls.length} failed attempt(s); verified by a passing ${okLine.tool} run.`, 400),
+      summary: clip(
+        `Resolved "${clip(sig, 160)}" with ${clip(steps[0]!, 160)} after ${pitfalls.length} failed attempt(s); verified by a passing ${okLine.tool} run.`,
+        400,
+      ),
       body: {
         problem: clip(sig, 600),
         steps: steps.slice(0, 8),
@@ -97,6 +100,8 @@ export function heuristicDrafts(input: HeuristicInput): HeuristicDraft[] {
     if (!parsed.success) continue;
     seen.add(sig);
     out.push({ ...parsed.data, errorSignature: sig });
+    // One draft per error→fix window: ERROR lines inside this window are its pitfalls.
+    i = okIdx;
   }
   return out;
 }

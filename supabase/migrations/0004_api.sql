@@ -14,7 +14,7 @@
 -- | take_token                   | definer  | authenticated, svc         |
 -- | enqueue_job                  | definer  | authenticated, svc         |
 -- | claim_jobs/complete/fail_job | invoker  | service_role only          |
--- | emit_event                   | definer  | authenticated, svc         |
+-- | emit_event                   | definer  | authenticated (user ctx)   |
 -- | emit_system_event            | invoker  | service_role only          |
 -- | events_since                 | invoker  | service_role only          |
 -- | my_events                    | definer  | authenticated              |
@@ -435,11 +435,19 @@ $fn$;
 
 -- ======================================================================= events
 
--- Insert an events row (fan-out happens in the 0005 trigger: pg_notify plus
--- Supabase Realtime broadcast). Payloads are ids/ints/booleans only (CHECK on
--- events.payload); use wire (prefixed) ids, e.g. {"reviewId": "rv_..."}.
--- System types (kill_switch.changed, takedown, wake.requested) are reserved
--- for service_role via api.emit_system_event.
+-- Insert an events row from a user context (fan-out happens in the 0005
+-- trigger: pg_notify plus Supabase Realtime broadcast). Payloads are
+-- ids/ints/booleans only (CHECK on events.payload); use wire (prefixed) ids,
+-- e.g. {"activityId": "a_..."}.
+-- * System types (kill_switch.changed, takedown, wake.requested) are reserved
+--   for service_role via api.emit_system_event.
+-- * Trigger-owned types (review.new, review.decided, change.updated) are
+--   emitted by the 0005 triggers only.
+-- * Every audience member must be someone the caller may notify
+--   (paceline_private.can_notify_user: self, teammates, org co-members,
+--   accepted friends, thread co-participants), and audience agents must
+--   belong to such users, so a user context can never ping arbitrary people.
+-- The worker (service_role) uses api.emit_system_event, which has no checks.
 create or replace function api.emit_event(
   p_type text,
   p_audience_agent_ids uuid[],
@@ -454,6 +462,18 @@ declare
 begin
   if p_type in ('kill_switch.changed', 'takedown', 'wake.requested') then
     raise exception using errcode = '42501', message = format('emit_event: %s is a system event', p_type);
+  end if;
+  if p_type in ('review.new', 'review.decided', 'change.updated') then
+    raise exception using errcode = '42501', message = format('emit_event: %s is emitted by triggers only', p_type);
+  end if;
+  if exists (select 1 from unnest(coalesce(p_audience_user_ids, '{}')) as u(id)
+             where not paceline_private.can_notify_user(u.id)) then
+    raise exception using errcode = '42501', message = 'emit_event: audience includes a user the caller may not notify';
+  end if;
+  if exists (select 1 from unnest(coalesce(p_audience_agent_ids, '{}')) as x(id)
+             where not exists (select 1 from public.agents a
+                               where a.id = x.id and paceline_private.can_notify_user(a.owner_user_id))) then
+    raise exception using errcode = '42501', message = 'emit_event: audience includes an agent the caller may not notify';
   end if;
   insert into public.events (type, audience_agent_ids, audience_user_ids, payload)
   values (p_type, coalesce(p_audience_agent_ids, '{}'), coalesce(p_audience_user_ids, '{}'), coalesce(p_payload, '{}'::jsonb))
@@ -478,7 +498,7 @@ $fn$;
 
 -- Events after a cursor, for core's in-process bus (it LISTENs on
 -- paceline_events, whose payload is just the id, then reads from here).
--- `notify` is the packages/schema NotifyPayload JSON (camelCase).
+-- `notify` is the packages/schema EventRecord JSON (camelCase).
 create or replace function api.events_since(p_after bigint, p_limit integer default 500)
 returns table (
   id bigint,
@@ -610,10 +630,12 @@ begin
   end if;
   delete from public.slack_identity_links l
    where l.user_id = auth.uid() and l.slack_team_id = v_token.slack_team_id;
-  insert into public.slack_identity_links (slack_team_id, slack_user_id, user_id)
-  values (v_token.slack_team_id, v_token.slack_user_id, auth.uid())
+  insert into public.slack_identity_links (slack_team_id, slack_user_id, user_id, slack_team_name)
+  values (v_token.slack_team_id, v_token.slack_user_id, auth.uid(),
+          (select i.team_name from public.slack_installations i where i.slack_team_id = v_token.slack_team_id))
   on conflict on constraint slack_identity_links_pkey
-    do update set user_id = excluded.user_id, linked_at = now(), revoked_at = null;
+    do update set user_id = excluded.user_id, slack_team_name = excluded.slack_team_name,
+                  linked_at = now(), revoked_at = null;
   update public.slack_link_tokens set used_at = now(), used_by = auth.uid() where token_hash = p_token_hash;
   slack_team_id := v_token.slack_team_id;
   slack_user_id := v_token.slack_user_id;
@@ -675,9 +697,11 @@ declare
 begin
   delete from public.events where created_at < now() - interval '7 days';
   get diagnostics v_events = row_count;
+  -- Every transcript-derived column: the digest, error excerpts and the local
+  -- distill result (copied into activities/highlights by the worker first).
   update public.activity_chunks
-     set digest_enc = null, digest_purged_at = now()
-   where digest_enc is not null
+     set digest_enc = null, error_episodes = '[]'::jsonb, local_distill = null, digest_purged_at = now()
+   where (digest_enc is not null or local_distill is not null or error_episodes <> '[]'::jsonb)
      and (received_at < now() - interval '24 hours' or distilled_at is not null);
   get diagnostics v_digests = row_count;
   delete from public.jobs where state in ('done', 'dead') and finished_at < now() - interval '7 days';
@@ -714,7 +738,7 @@ grant execute on function api.enqueue_job(text, jsonb, text, timestamptz, intege
 grant execute on function api.claim_jobs(text[], integer, interval) to service_role;
 grant execute on function api.complete_job(bigint, integer) to service_role;
 grant execute on function api.fail_job(bigint, text, interval, integer) to service_role;
-grant execute on function api.emit_event(text, uuid[], uuid[], jsonb) to authenticated, service_role;
+grant execute on function api.emit_event(text, uuid[], uuid[], jsonb) to authenticated;
 grant execute on function api.emit_system_event(text, uuid[], uuid[], jsonb) to service_role;
 grant execute on function api.events_since(bigint, integer) to service_role;
 grant execute on function api.my_events(bigint, integer) to authenticated;

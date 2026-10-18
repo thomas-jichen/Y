@@ -73,12 +73,9 @@ export function postToolUseFailure(ctx: HookCtx): Promise<HookResult> {
     const tool = toolKey(ctx.input.tool_name);
 
     // Record the episode first (local) so it survives a slow or failed match.
-    const excerpt = { text: pre.text.slice(0, 800) };
-    {
-      const ep: ErrorEpisode = { signature, tool, excerpt: excerpt.text.slice(0, 800) };
-      ensureDir(ctx.paths.episodes);
-      fs.appendFileSync(episodesFile(ctx, sid), `${JSON.stringify(ep)}\n`);
-    }
+    const ep: ErrorEpisode = { signature, tool, excerpt: pre.text.slice(0, 800) };
+    ensureDir(ctx.paths.episodes);
+    fs.appendFileSync(episodesFile(ctx, sid), `${JSON.stringify(ep)}\n`);
 
     if (!ctx.config.token || !pushPathsAllowed(brief)) return OK;
     const timeoutMs = remaining(ctx) - 100;

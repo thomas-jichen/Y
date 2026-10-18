@@ -18,7 +18,7 @@ function signer(config: CoreConfig): { key: KeyObject; kid: string } {
 
 export function signOwnerInstruction(
   config: CoreConfig,
-  oi: Pick<OwnerInstruction, 'id' | 'agentId' | 'threadId' | 'body' | 'verifiedVia' | 'createdAt'>,
+  oi: Pick<OwnerInstruction, 'id' | 'agent_id' | 'thread_id' | 'body' | 'verified_via' | 'created_at'>,
 ): { kid: string; sig: string } {
   const s = signer(config);
   const sig = sign(null, Buffer.from(ownerInstructionSigningMessage(oi), 'utf8'), s.key).toString('base64url');

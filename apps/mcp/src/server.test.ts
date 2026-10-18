@@ -51,16 +51,16 @@ function verify(req: IncomingMessage, raw: string): boolean {
 }
 
 const statusOut = (signedIn: boolean): StatusOutput => ({
-  signedIn,
-  tokenState: signedIn ? 'ok' : null,
+  signed_in: signedIn,
+  token_state: signedIn ? 'ok' : null,
   agent: signedIn ? { handle: '@vivan-claude', harness: 'claude_code', presence: 'live' } : null,
-  unread: { dm: signedIn ? 2 : 0, ownerInstructions: 0, reviews: 1, suggestions: 0 },
-  pending: { drafts: 1, changeRequests: 0, approvedChanges: 0 },
+  unread: { dm: signedIn ? 2 : 0, owner_instructions: 0, reviews: 1, suggestions: 0 },
+  pending: { drafts: 1, change_requests: 0, approved_changes: 0 },
   next: signedIn ? [{ tool: 'inbox', reason: 'unread_dms' }] : [{ tool: 'status', reason: 'sign_in' }],
-  killSwitches: { pushPaths: false, networkContent: false, apply: false, ingest: false },
-  minPluginVersion: null,
-  signInUrl: signedIn ? null : 'http://localhost:5173/connect',
-  serverTime: '2026-10-17T12:00:00.000Z',
+  kill_switches: { push_paths: false, network_content: false, apply: false, ingest: false },
+  min_plugin_version: null,
+  sign_in_url: signedIn ? null : 'http://localhost:5173/connect',
+  server_time: '2026-10-17T12:00:00.000Z',
 });
 
 /** Per-tool canned replies; a test may override one. */
@@ -69,7 +69,7 @@ const defaultReplies: Record<string, (r: Recorded) => unknown> = {
   status: (r) => ({ ok: true, output: statusOut(Boolean(r.authorization)) }),
   search_network: (r) => ({
     ok: true,
-    output: { results: [], scopesSearched: r.authorization ? ['team', 'public'] : ['public'], signedIn: Boolean(r.authorization) },
+    output: { results: [], scopes_searched: r.authorization ? ['team', 'public'] : ['public'], signed_in: Boolean(r.authorization) },
   }),
   review_queue: () => ({ ok: true, output: { items: [], counts: {}, note: REVIEW_QUEUE_NOTE } }),
   send_message: () => makeError('DM_NOT_PERMITTED', 'This recipient does not accept DMs from you.'),
@@ -209,7 +209,7 @@ describe('forwarding to core', () => {
       { authorization: TOKEN },
     );
     expect(res.isError).toBeFalsy();
-    expect(res.structuredContent).toEqual({ results: [], scopesSearched: ['team', 'public'], signedIn: true });
+    expect(res.structuredContent).toEqual({ results: [], scopes_searched: ['team', 'public'], signed_in: true });
     const r = recorded[0]!;
     expect(r.authorization).toBe(TOKEN);
     expect(r.sigOk).toBe(true);
@@ -247,7 +247,7 @@ describe('error mapping', () => {
   it('maps a core error body to an MCP error result unchanged', async () => {
     const res = await mcp().call(
       'send_message',
-      { to: '@stranger-agent', body: 'hi, how did you fix the pgvector import?', intent: 'question', idempotencyKey: 'idem-key-0001' },
+      { to: '@stranger-agent', body: 'hi, how did you fix the pgvector import?', intent: 'question', idempotency_key: 'idem-key-0001' },
       { authorization: TOKEN },
     );
     expect(res.isError).toBe(true);

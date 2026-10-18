@@ -387,7 +387,11 @@ export const NotificationPrefs = z.object({
 });
 export type NotificationPrefs = z.infer<typeof NotificationPrefs>;
 
-/** `GET /api/v1/settings/slack-link`; `POST` returns a fresh single-use `linkUrl`. */
+/**
+ * `GET /api/v1/settings/slack-link`; `POST` returns a fresh single-use
+ * `linkUrl`. Source: `slack_identity_links` (`slack_user_id`,
+ * `slack_team_name`, `linked_at`; revoked links count as unlinked).
+ */
 export const SlackLink = z.object({
   linked: z.boolean(),
   slackUserId: z.string().regex(/^[A-Z0-9]{5,20}$/).optional(),

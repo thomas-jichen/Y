@@ -95,16 +95,28 @@ export interface ListenOptions {
 export type DbKind = 'pglite' | 'pg';
 
 /**
+ * What kind of database this is (`PACELINE_DB_FLAVOR`), which decides
+ * whether the built-in Supabase shims are applied by `migrate()`:
+ * - `pglite`: in-process PGlite (tests, local dev). Shims always.
+ * - `postgres`: a plain Postgres (local or a container). Shims when the
+ *   `auth` schema is missing or was created by the shims themselves.
+ * - `supabase`: a Supabase project or local stack. Never shims.
+ */
+export type DbFlavor = 'pglite' | 'postgres' | 'supabase';
+
+/**
  * A database handle. All user-scoped work goes through {@link Db.asUser} so
  * row-level security applies (invariant I7).
  */
 export interface Db extends Queryable {
   /** The adapter in use. */
   readonly kind: DbKind;
+  /** The database flavor (decides the Supabase shims; see {@link DbFlavor}). */
+  readonly flavor: DbFlavor;
   /**
-   * True for local databases (PGlite, or Postgres flagged local). Migrations
-   * whose file name contains `_local_`, and the built-in Supabase shims, are
-   * applied only when this is true.
+   * True for local databases (PGlite, or Postgres flagged local with
+   * `PACELINE_DB_LOCAL`). Migrations whose file name contains `_local_` are
+   * applied only when this is true, and it forces the Supabase shims on.
    */
   readonly local: boolean;
   /**

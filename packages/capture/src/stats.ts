@@ -229,7 +229,8 @@ const CORRECTION_RE = /^\s*(?:no\b|nope\b|that'?s\s+(?:wrong|not)|not\s+what\s+i
 const PR_URL_RE = /https?:\/\/(?:github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+|gitlab\.com\/[\w./-]+\/-\/merge_requests\/\d+)/g;
 const GIT_COMMIT_RE = /\bgit\s+(?:-C\s+\S+\s+|-c\s+\S+\s+)*commit\b/;
 
-const lineCount = (s: unknown): number => (typeof s === 'string' && s.length > 0 ? s.split('\n').length : 0);
+/** Lines in a file body (a trailing newline doesn't add a line). */
+export const lineCount = (s: unknown): number => (typeof s === 'string' && s.length > 0 ? s.replace(/\r?\n$/, '').split('\n').length : 0);
 
 /** Estimate added/removed lines between two strings (multiset line diff). */
 export function lineDelta(oldStr: unknown, newStr: unknown): { added: number; removed: number } {
@@ -409,7 +410,7 @@ export function computeStats(
           if (summary) lastTest.summary = summary;
         }
       }
-      if (GIT_COMMIT_RE.test(cmd) && res && !res.isError) s.gitCommits++;
+      if (GIT_COMMIT_RE.test(cmd) && res && !res.isError) s.gitCommits = (s.gitCommits ?? 0) + 1;
     }
   }
   s.skillsInvoked = skills;

@@ -6,8 +6,11 @@
  * - Refuses to run when an applied file's contents changed (hash mismatch):
  *   write a new migration instead of editing an applied one.
  * - Files whose name contains `_local_` are applied only on local databases
- *   (PGlite, or Postgres flagged local). So are the built-in Supabase shims
- *   (`local-shims.sql`), which run first on every local migrate.
+ *   (PGlite, or Postgres flagged local).
+ * - The built-in Supabase shims (`local-shims.sql`) run first, by flavor:
+ *   always on PGlite and on local databases, on a plain Postgres
+ *   (`flavor: 'postgres'`) when its `auth` schema is missing or is the shims'
+ *   own, and never on Supabase.
  * - Safe to run from several processes at once: each step takes a
  *   transaction-scoped advisory lock and re-checks what is applied.
  */
@@ -53,17 +56,22 @@ export interface MigrateOptions {
    * directory must exist.
    */
   migrationsDir?: string;
-  /** Apply local-only files and shims. Defaults to `db.local`. */
+  /** Apply local-only files (and force the shims on). Defaults to `db.local`. */
   local?: boolean;
-  /** Apply the built-in Supabase shims first. Defaults to the value of `local`. */
-  shims?: boolean;
+  /**
+   * Apply the built-in Supabase shims first: `true`, `false`, or `'auto'`
+   * (only when the `auth` schema is missing or carries the shims' marker
+   * comment). Defaults to `true` when `local`, `'auto'` for
+   * `db.flavor === 'postgres'`, else `false`.
+   */
+  shims?: boolean | 'auto';
   /** Progress lines (one per applied file). Default: silent. */
   log?: (line: string) => void;
 }
 
 /** What {@link migrate} did. */
 export interface MigrateResult {
-  /** Whether local-only files and shims were considered. */
+  /** Whether local-only files were considered. */
   local: boolean;
   /** Whether the built-in shims were applied. */
   shimsApplied: boolean;
@@ -167,6 +175,23 @@ export async function loadMigrationFiles(dir: string, required = true): Promise<
 /** The SQL of the built-in Supabase shims (packages/db/src/local-shims.sql). */
 export async function readLocalShims(): Promise<string> {
   return readFile(paths.localShims, 'utf8');
+}
+
+/** Comment prefix the shims put on the schemas they create (`auth`, `realtime`). */
+export const LOCAL_SHIM_MARKER = 'paceline local shim';
+
+/**
+ * True when the shims belong on this database: its `auth` schema is missing,
+ * or it was created by the shims (comment starts with {@link LOCAL_SHIM_MARKER}).
+ * False for a real Supabase database.
+ */
+export async function needsLocalShims(q: Queryable): Promise<boolean> {
+  const { rows } = await q.query<{ needed: boolean }>(
+    `select to_regnamespace('auth') is null
+         or coalesce(obj_description(to_regnamespace('auth')::oid, 'pg_namespace'), '') like $1 as needed`,
+    [`${LOCAL_SHIM_MARKER}%`],
+  );
+  return rows[0]?.needed === true;
 }
 
 /** Applies the built-in Supabase shims in one transaction. Idempotent. */
@@ -326,7 +351,7 @@ function errorLine(error: unknown, sql: string): number | undefined {
 
 interface Plan {
   local: boolean;
-  shims: boolean;
+  shims: boolean | 'auto';
   files: MigrationFile[];
   skippedLocalOnly: string[];
   applied: AppliedMigration[];
@@ -336,7 +361,7 @@ interface Plan {
 
 async function plan(db: Db, options: MigrateOptions): Promise<Plan> {
   const local = options.local ?? db.local;
-  const shims = options.shims ?? local;
+  const shims = options.shims ?? (local ? true : db.flavor === 'postgres' ? 'auto' : false);
   const explicit = options.migrationsDir !== undefined;
   const dir = resolve(options.migrationsDir ?? paths.migrationsDir);
   const all = await loadMigrationFiles(dir, explicit);
@@ -391,15 +416,16 @@ export async function migrate(db: Db, options: MigrateOptions = {}): Promise<Mig
     }
   }
 
+  const shimsApplied = p.shims === 'auto' ? await needsLocalShims(db) : p.shims;
   await ensureMigrationsTable(db);
-  if (p.shims) {
+  if (shimsApplied) {
     await applyLocalShims(db);
     log('applied local-shims.sql');
   }
 
   const result: MigrateResult = {
     local: p.local,
-    shimsApplied: p.shims,
+    shimsApplied,
     applied: [],
     alreadyApplied: p.files.filter((file) => appliedNames.has(file.name)).map((file) => file.name),
     skippedLocalOnly: p.skippedLocalOnly,

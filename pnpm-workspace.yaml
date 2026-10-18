@@ -4,6 +4,7 @@ packages:
   - "plugins/*"
   - "cli"
   - "eval"
+  - "e2e"
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:

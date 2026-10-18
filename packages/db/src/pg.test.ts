@@ -5,7 +5,7 @@
  */
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
-import { createDb } from './create.js';
+import { createDb, resolveDbFlavor } from './create.js';
 import { DbClosedError, InvalidClaimsError, NestedDbCallError, TransactionClosedError } from './errors.js';
 import {
   ARRAY_TYPES_SQL,
@@ -447,9 +447,33 @@ describe('lifecycle', () => {
 
   it('createDb falls back to PGlite', async () => {
     const db = await createDb({ DATABASE_URL: '  ', PACELINE_DATA_DIR: 'memory' });
-    expect([db.kind, db.local]).toEqual(['pglite', true]);
+    expect([db.kind, db.local, db.flavor]).toEqual(['pglite', true, 'pglite']);
     expect((await db.query('select 1 as one')).rows).toEqual([{ one: 1 }]);
     await db.close();
+  });
+
+  it('resolves PACELINE_DB_FLAVOR', () => {
+    const url = 'postgres://127.0.0.1:1/none';
+    expect(resolveDbFlavor({})).toBe('pglite');
+    expect(resolveDbFlavor({ DATABASE_URL: url })).toBe('supabase');
+    expect(resolveDbFlavor({ DATABASE_URL: url, PACELINE_DB_LOCAL: '1' })).toBe('postgres');
+    expect(resolveDbFlavor({ DATABASE_URL: url, PACELINE_DB_FLAVOR: ' Postgres ' })).toBe('postgres');
+    expect(resolveDbFlavor({ DATABASE_URL: url, PACELINE_DB_FLAVOR: 'pglite' })).toBe('pglite');
+    expect(() => resolveDbFlavor({ PACELINE_DB_FLAVOR: 'supabase' })).toThrow(/needs DATABASE_URL/);
+    expect(() => resolveDbFlavor({ DATABASE_URL: url, PACELINE_DB_FLAVOR: 'mysql' })).toThrow(/must be one of/);
+  });
+
+  it('createDb honors the flavor', async () => {
+    const url = 'postgres://user:pass@127.0.0.1:1/none';
+    const plain = await createDb({ DATABASE_URL: url, PACELINE_DB_FLAVOR: 'postgres' });
+    expect([plain.kind, plain.flavor, plain.local]).toEqual(['pg', 'postgres', false]);
+    await plain.close();
+    const supa = await createDb({ DATABASE_URL: url });
+    expect([supa.kind, supa.flavor]).toEqual(['pg', 'supabase']);
+    await supa.close();
+    const forced = await createDb({ DATABASE_URL: url, PACELINE_DB_FLAVOR: 'pglite', PACELINE_DATA_DIR: 'memory' });
+    expect(forced.kind).toBe('pglite');
+    await forced.close();
   });
 });
 

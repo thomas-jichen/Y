@@ -5,7 +5,7 @@
  * 'queued' are routed.
  */
 import type { Tx } from '@paceline/db';
-import { dmDecision, transition, type MessageEvent } from '@paceline/domain';
+import { LEASE_STALE_MS, dmDecision, pickLeaseSession, transition, type LeaseCandidate, type MessageEvent } from '@paceline/domain';
 import { actionFor, dlpScan, l0Scan, normalizeUntrusted, screen } from '@paceline/safety';
 import { ulid, type DmPermission, type MessageState, type ScreenAction } from '@paceline/schema';
 import type { CoreDeps, PushEvent } from '../contracts.js';
@@ -210,10 +210,12 @@ async function deliver(
   events: PushEvent[],
 ) {
   for (const x of rcpts) {
+    // A wake targets exactly ONE listening session, chosen now (PLAN §9 leases).
+    const target = x.wake ? await pickTarget(tx, x.agentId, m.thread_id, _deps.now().getTime()) : null;
     await tx.query(
-      `insert into public.message_deliveries (message_id, recipient_agent_id, state, path, expires_at)
-       values ($1, $2, 'pending', $3, now() + interval '14 days') on conflict do nothing`,
-      [m.id, x.agentId, x.wake ? 'wake' : 'inbox'],
+      `insert into public.message_deliveries (message_id, recipient_agent_id, state, path, target_session_id, expires_at)
+       values ($1, $2, 'pending', $3, $4, now() + interval '14 days') on conflict do nothing`,
+      [m.id, x.agentId, x.wake ? 'wake' : 'inbox', target],
     );
   }
   await tx.query(`update public.threads set last_message_at = now() where id = $1`, [m.thread_id]);
@@ -222,6 +224,24 @@ async function deliver(
     if (m.sender_id) payload.senderAgentId = m.sender_id;
     events.push({ type: 'message.new', audienceAgentIds: [x.agentId], audienceUserIds: [x.ownerId], payload });
   }
+}
+
+export async function pickTarget(tx: Tx, agentId: string, threadId: string, now: number): Promise<string | null> {
+  const r = await tx.query<{ session_id: string; listening: string; last_heartbeat_at: Date | string; repo_key: string | null;
+    last_thread_ids: string[]; permission_mode: string; headless: boolean }>(
+    `select session_id, listening, last_heartbeat_at, repo_key, last_thread_ids, permission_mode, headless
+       from public.session_leases where agent_id = $1 and last_heartbeat_at > now() - ($2::int * interval '1 millisecond')`,
+    [agentId, LEASE_STALE_MS]);
+  const cands: LeaseCandidate[] = r.rows.map((l) => {
+    const c: LeaseCandidate = {
+      sessionId: l.session_id, listening: l.listening !== 'none', needsApproval: l.listening === 'listening_needs_approval',
+      lastHeartbeatAt: new Date(l.last_heartbeat_at).getTime(), lastThreadIds: l.last_thread_ids ?? [],
+      permissionMode: l.permission_mode as LeaseCandidate['permissionMode'], headless: l.headless,
+    };
+    if (l.repo_key) c.repoKey = l.repo_key;
+    return c;
+  });
+  return pickLeaseSession(cands, { now, kind: 'dm', threadId });
 }
 
 function noteFor(state: MessageState, path: string | null): RouteResult['note'] {

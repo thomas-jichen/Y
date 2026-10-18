@@ -4,7 +4,7 @@
  *
  * Typical use in apps/core:
  *
- *   const db = await createDb(process.env);
+ *   const db = await createDb(process.env); // PACELINE_DB_FLAVOR=pglite|postgres|supabase
  *   await migrate(db);
  *   const rows = await db.asUser({ sub: userId, agent_id, via: 'install' }, (tx) =>
  *     tx.query('select * from activities where id = $1', [id]),
@@ -14,6 +14,7 @@ export type {
   AuthClaims,
   Db,
   DbErrorReporter,
+  DbFlavor,
   DbKind,
   JwtClaims,
   ListenOptions,
@@ -73,10 +74,11 @@ export {
   type PgQueryConfig,
   type PgResultLike,
 } from './pg.js';
-export { createDb, envFlag, type CreateDbOptions, type DbEnv } from './create.js';
+export { createDb, envFlag, resolveDbFlavor, type CreateDbOptions, type DbEnv } from './create.js';
 export { findWorkspaceRoot, paths, resolveDataDir } from './paths.js';
 export {
   LOCAL_ONLY_MARKER,
+  LOCAL_SHIM_MARKER,
   MIGRATION_LOCK_KEY,
   MigrationFailedError,
   MigrationHashMismatchError,
@@ -90,6 +92,7 @@ export {
   loadMigrationFiles,
   migrate,
   migrationStatus,
+  needsLocalShims,
   readLocalShims,
   type AppliedMigration,
   type HashMismatch,

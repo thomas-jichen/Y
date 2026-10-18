@@ -3,7 +3,16 @@
  * screen (highlight) → review item, review.draft (approval publishes), embed, close_idle.
  */
 import type { Tx } from '@paceline/db';
-import { ActivityStats, emptyStats, mergeStats, totalToolCalls, type ErrorEpisode, type Lap } from '@paceline/schema';
+import {
+  ActivityStats,
+  HighlightDraft,
+  emptyStats,
+  mergeStats,
+  totalToolCalls,
+  type ErrorEpisode,
+  type Lap,
+  type LocalDistill,
+} from '@paceline/schema';
 import { isWarmup, sizeBucketFor, templatedTitle } from '@paceline/domain';
 import { redact } from '@paceline/redact';
 import { actionFor, l0Scan } from '@paceline/safety';
@@ -18,6 +27,8 @@ export interface SealedChunk {
   errorEpisodes: ErrorEpisode[];
   laps: Lap[];
   setupHash: string | null;
+  /** Client-side (local CLI) distill result, when the plugin distilled locally. */
+  distilled?: LocalDistill;
 }
 
 const IDLE_MINUTES = 30;
@@ -85,10 +96,10 @@ const finalize: JobHandler = async (payload, deps) => {
     const sv = setupHash
       ? (await tx.query<{ id: string; model: string | null }>('select id, model from public.setup_versions where agent_id = $1 and hash = $2', [a.agent_id, setupHash])).rows[0]
       : undefined;
-    const model = sv?.model ?? stats.models[0] ?? 'unknown';
+    const model = (sv?.model && sv.model !== 'default' ? sv.model : null) ?? stats.models[0] ?? 'unknown';
     const title = pass2(templatedTitle(stats, { model }, { stackTags: [] })).slice(0, 120) || 'Coding session';
     const outcome =
-      stats.prUrlsCount > 0
+      (stats.prUrlsCount ?? 0) > 0
         ? { status: 'shipped', verifiedBy: 'pr' }
         : stats.tests.runs > 0
           ? { status: stats.tests.greenAtEnd ? 'green' : 'partial', verifiedBy: 'tests' }
@@ -204,11 +215,20 @@ const distillHeuristic: JobHandler = async (payload, deps) => {
     const sealed = await readSealed(deps, tx, id);
     const ids: string[] = [];
     if (already.rowCount === 0 && sealed.length > 0) {
-      const drafts = heuristicDrafts({
-        digest: sealed.map((s) => s.text).join('\n'),
-        episodes: sealed.flatMap((s) => s.errorEpisodes ?? []),
-        normalize: normalizeErrorSignature,
-      });
+      const local = [...sealed].reverse().find((s) => s.distilled)?.distilled;
+      const drafts = local
+        ? // Local distill: the client's Stage B drafts (re-validated; injection-flagged cards yield nothing).
+          local.card.flags.suspectedInjection
+          ? []
+          : local.highlights
+              .map((h) => HighlightDraft.safeParse(h))
+              .flatMap((r) => (r.success && r.data.confidence >= 0.6 ? [{ ...r.data, errorSignature: r.data.errorSignatures[0] ?? '' }] : []))
+              .slice(0, 3)
+        : heuristicDrafts({
+            digest: sealed.map((s) => s.text).join('\n'),
+            episodes: sealed.flatMap((s) => s.errorEpisodes ?? []),
+            normalize: normalizeErrorSignature,
+          });
       for (const d of drafts) {
         // Pass 2 on every field; a step/pitfall the redactor drops is removed.
         const steps = d.body.steps.map(pass2).filter(Boolean);
@@ -217,18 +237,32 @@ const distillHeuristic: JobHandler = async (payload, deps) => {
           .filter((p) => p.tried && p.whyFailed);
         const title = pass2(d.title);
         const problem = pass2(d.body.problem);
-        const sig = pass2(d.errorSignature);
-        if (!title || title.length < 8 || !problem || !sig || steps.length === 0 || pitfalls.length === 0) continue;
+        const sig = d.errorSignature ? pass2(d.errorSignature) : '';
+        if (!title || title.length < 8 || !problem || steps.length === 0 || pitfalls.length === 0) continue;
         const body = { ...d.body, problem, steps, pitfalls, verification: pass2(d.body.verification), appliesWhen: pass2(d.body.appliesWhen) };
         const r = await tx.query<{ id: string }>(
           `insert into public.highlights (activity_id, author_agent_id, owner_user_id, team_id, repo_key, kind, title, summary,
              body, tags, search_queries, confidence, status, visibility)
            values ($1, $2, $3, $4, $5, 'fix', $6, $7, $8::jsonb, '{}', $9::text[], $10, 'draft', $11)
            returning id`,
-          [id, a.agent_id, a.owner_user_id, a.team_id, a.repo_key, title, pass2(d.summary), JSON.stringify(body), [sig.slice(0, 200)], d.confidence, a.team_id ? 'team' : 'private'],
+          [
+            id,
+            a.agent_id,
+            a.owner_user_id,
+            a.team_id,
+            a.repo_key,
+            title,
+            pass2(d.summary),
+            JSON.stringify(body),
+            [...new Set([sig, ...d.searchQueries].map((q) => pass2(q).slice(0, 200)).filter(Boolean))].slice(0, 6),
+            d.confidence,
+            a.team_id ? 'team' : 'private',
+          ],
         );
         const hid = r.rows[0]!.id;
-        await tx.query('insert into public.highlight_errors (highlight_id, sig) values ($1, $2) on conflict do nothing', [hid, sig]);
+        for (const e of new Set([sig, ...d.errorSignatures.map(pass2)].filter(Boolean))) {
+          await tx.query('insert into public.highlight_errors (highlight_id, sig) values ($1, $2) on conflict do nothing', [hid, e.slice(0, 300)]);
+        }
         ids.push(hid);
       }
     }

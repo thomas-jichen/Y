@@ -227,7 +227,7 @@ export function registerThreadRoutes(app: App, deps: CoreDeps): void {
       const createdAt = deps.now().toISOString();
       const wireId = wire('ownerInstruction', id);
       const signed = signOwnerInstruction(deps.config, {
-        id: wireId, agentId: target.agent_id, threadId: wire('thread', threadId), body: body.data.body, verifiedVia: 'web', createdAt,
+        id: wireId, agent_id: target.agent_id, thread_id: wire('thread', threadId), body: body.data.body, verified_via: 'web', created_at: createdAt,
       });
       // Stored by core (it holds the signing key) after the ownership checks above.
       const unattended = await deps.db.asService(async (tx) => {
@@ -267,7 +267,7 @@ export function registerThreadRoutes(app: App, deps: CoreDeps): void {
           const allowed = action === 'pause' ? cur === 'open' : cur === 'open' || cur === 'paused_by_owner';
           if (cur === next) return;
           if (!allowed) throw new HttpError('CONFLICT', `cannot ${action} a ${cur} thread`);
-          await tx.query(`update public.threads set state = $2, updated_at = now() where id = $1`, [threadId, next]);
+          await tx.query(`update public.threads set state = $2 where id = $1`, [threadId, next]);
         });
         return c.json(await threadView(deps, caller, threadId));
       } catch (err) { return errorResponse(c, err, deps); }

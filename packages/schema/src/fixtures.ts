@@ -10,9 +10,10 @@
  */
 import type { Activity, ActivityCard, DailyRollup, Highlight, HighlightDraft } from './activity.js';
 import type { AgentBrief } from './brief.js';
+import type { RealtimeChannel } from './hosting.js';
 import type { AgentRef, UserRef } from './common.js';
 import { buildEnvelope, type MessageEnvelope, type MessageEnvelopeContent } from './envelope.js';
-import type { IngestChunk } from './ingest.js';
+import type { IngestChunk, LocalDistill } from './ingest.js';
 import type { Message, OwnerInstruction, Thread } from './messaging.js';
 import type { ChangeRequest, Patch, SetupSuggestion, SignedChangePayload } from './scroll.js';
 import type { SetupCard, SetupSnapshot } from './setup.js';
@@ -37,7 +38,11 @@ export const IDS = {
   sharedComponent: 'cmp_01K8Z0T7Q3W4E5R6T7Y8V9A0QB',
   setupVersion: 'sv_01K8Z0T7Q3W4E5R6T7Y8V9A0QC',
   session: '3d1b4c52-7e1f-4f5e-9d61-2a7b8c9d0e1f',
+  team: '9a4f1d2e-3b5c-4d6e-8f70-1a2b3c4d5e6f',
 } as const;
+
+/** A fixed realtime channel secret. */
+export const CHANNEL_SECRET = 'c'.repeat(64);
 
 /** A fixed SHA-256 (of nothing meaningful). */
 export const SHA = 'a3f1c2d4e5b60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
@@ -306,13 +311,13 @@ export function messageEnvelope(content: Partial<MessageEnvelopeContent> = {}): 
     kind: 'dm',
     id: IDS.message,
     thread: IDS.thread,
-    from: { agent: '@maya-codex', owner: '@maya', relationship: 'teammate', ownerVerified: true },
+    from: { agent: '@maya-codex', owner: '@maya', relationship: 'teammate', owner_verified: true },
     screen: { label: 'clean', layers: ['l0', 'l2'] },
     content: {
       body: "I'll take migrations; you take <tests>?",
       intent: 'coordinate',
       urgency: 'wake',
-      createdAt: T0,
+      created_at: T0,
       ...content,
     },
   });
@@ -322,11 +327,11 @@ export function messageEnvelope(content: Partial<MessageEnvelopeContent> = {}): 
 export function ownerInstruction(o: Partial<OwnerInstruction> = {}): OwnerInstruction {
   return {
     id: IDS.ownerInstruction,
-    agentId: IDS.agent,
-    threadId: IDS.thread,
+    agent_id: IDS.agent,
+    thread_id: IDS.thread,
     body: 'Prioritize the tests; Maya has migrations.',
-    verifiedVia: 'web',
-    createdAt: T0,
+    verified_via: 'web',
+    created_at: T0,
     signature: { alg: 'Ed25519', kid: 'k2026-10', sig: SIG },
     ...o,
   };
@@ -357,25 +362,25 @@ export function setupSuggestion(o: Partial<SetupSuggestion> = {}): SetupSuggesti
     kind: 'add_skill',
     component: {
       name: 'vitest-fixer',
-      versionHash: SHA,
+      version_hash: SHA,
       author: '@lena-claude',
-      capabilityTags: ['test_debugging', 'flaky_test_triage'],
-      appliesToIntents: ['fix_failing_test'],
+      capability_tags: ['test_debugging', 'flaky_test_triage'],
+      applies_to_intents: ['fix_failing_test'],
     },
     evidence: {
       segment: 'fix-failing-test-vitest',
-      sourceSuccessWilson: 0.71,
-      sourceN: 11,
-      yourSuccess: 0.55,
-      yourN: 9,
-      medianTokensDelta: -0.31,
-      distinctOwners: 4,
+      source_success_wilson: 0.71,
+      source_n: 11,
+      your_success: 0.55,
+      your_n: 9,
+      median_tokens_delta: -0.31,
+      distinct_owners: 4,
       scope: 'public-aggregate',
     },
     risk: { static: 'warn', verdict: 'clean' },
     targets: ['user', 'project_pr'],
-    patchPreview: {
-      patchHash: SHA,
+    patch_preview: {
+      patch_hash: SHA,
       files: [{ path: '~/.claude/skills/vitest-fixer/SKILL.md', op: 'create_file', lines: 42, bytes: 1830 }],
     },
     ...o,
@@ -432,11 +437,47 @@ export function agentBrief(o: Partial<AgentBrief> = {}): AgentBrief {
     agent: { id: IDS.agent, handle: '@vivan-claude', harness: 'claude_code' },
     minPluginVersion: '0.1.0',
     killSwitches: { pushPaths: false, networkContent: false, apply: false, ingest: false },
-    pointers: [{ templateId: 'P1', params: { count: 2, handle: '@maya-codex', threadId: IDS.thread } }],
+    pointers: [{ template_id: 'P1', params: { count: 2, handle: '@maya-codex', thread_id: IDS.thread } }],
     pulseToken: { token: 'plt_0123456789abcdef0123', expiresAt: '2026-10-17T16:00:00.000Z' },
-    policy: { shareMode: 'stats', holdMinutes: 30, capture: 'on', wakeOnDm: 'teammates', policyAccepted: true },
+    realtime: realtimeChannel(),
+    policy: {
+      shareMode: 'stats',
+      holdMinutes: 30,
+      capture: 'on',
+      wakeOnDm: 'teammates',
+      policyAccepted: true,
+      distiller: 'local',
+      teamId: IDS.team,
+      repoKeySalt: 'b'.repeat(64),
+    },
     humanNotices: [],
     serverTime: T0,
+    ...o,
+  };
+}
+
+/** The agent's Supabase broadcast channel. */
+export function realtimeChannel(o: Partial<Extract<RealtimeChannel, { provider: 'supabase' }>> = {}): RealtimeChannel {
+  return {
+    provider: 'supabase',
+    url: 'https://project-ref.supabase.co',
+    apiKey: 'sb_publishable_0123456789abcdefghij',
+    topic: `agent:${IDS.agent}:${CHANNEL_SECRET}`,
+    secret: CHANNEL_SECRET,
+    ...o,
+  };
+}
+
+/** A locally distilled result for a closing chunk. */
+export function localDistill(o: Partial<LocalDistill> = {}): LocalDistill {
+  return {
+    mode: 'local',
+    runner: 'claude_cli',
+    model: 'claude-haiku-5-5',
+    promptVersion: 'distill-v1',
+    card: activityCard(),
+    highlights: [highlightDraft()],
+    redaction: { hitsByRule: {}, dropped: false },
     ...o,
   };
 }
@@ -446,6 +487,9 @@ export const fx = {
   IDS,
   SHA,
   SIG,
+  CHANNEL_SECRET,
+  realtimeChannel,
+  localDistill,
   userRef,
   agentRef,
   agentRef2,

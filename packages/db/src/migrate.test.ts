@@ -11,8 +11,10 @@ import {
   isLocalOnlyMigration,
   listAppliedMigrations,
   loadMigrationFiles,
+  LOCAL_SHIM_MARKER,
   migrate,
   migrationStatus,
+  needsLocalShims,
 } from './migrate.js';
 import { createPgliteDb, type PgliteDb } from './pglite.js';
 
@@ -198,6 +200,25 @@ describe('migrate', () => {
     const result = await migrate(db, { migrationsDir: dir, shims: false });
     expect(result.shimsApplied).toBe(false);
     expect((await db.query("select to_regnamespace('auth') is null as missing")).rows).toEqual([{ missing: true }]);
+  });
+
+  it("shims: 'auto' (plain Postgres) applies them when auth is missing, and again over its own shims", async () => {
+    expect(await needsLocalShims(db)).toBe(true);
+    const first = await migrate(db, { migrationsDir: dir, local: false, shims: 'auto' });
+    expect(first.shimsApplied).toBe(true);
+    const marker = await db.query<{ c: string }>("select obj_description(to_regnamespace('auth')::oid, 'pg_namespace') as c");
+    expect(marker.rows[0]!.c.startsWith(LOCAL_SHIM_MARKER)).toBe(true);
+    // The shims can evolve: they are re-applied over their own auth schema.
+    expect(await needsLocalShims(db)).toBe(true);
+    expect((await migrate(db, { migrationsDir: dir, local: false, shims: 'auto' })).shimsApplied).toBe(true);
+  });
+
+  it("shims: 'auto' leaves a real (Supabase) auth schema alone", async () => {
+    await db.exec("create schema auth; comment on schema auth is 'Supabase Auth';");
+    expect(await needsLocalShims(db)).toBe(false);
+    const result = await migrate(db, { migrationsDir: dir, local: false, shims: 'auto' });
+    expect(result.shimsApplied).toBe(false);
+    expect((await db.query("select to_regprocedure('auth.uid()') is null as missing")).rows).toEqual([{ missing: true }]);
   });
 
   it('reports recorded migrations whose file disappeared', async () => {

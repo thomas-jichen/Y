@@ -3,14 +3,20 @@
  * The digest is NOT redacted here; run `@paceline/redact` on `text`.
  * @module digest
  */
-import { lineDelta, splitMcpName } from './stats.js';
+import { lineCount, lineDelta, splitMcpName } from './stats.js';
 import type { ClaudeRecord, Digest, DigestOptions } from './types.js';
 
 const ANSI_RE = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*\u0007|\u001b[@-Z\\-_]/g;
 
 /** Collapse to one line (`\n` → ` ⏎ `) and cut to `max` chars with `…`. */
 function oneLine(text: string, max: number): string {
-  const s = text.replace(ANSI_RE, '').replace(/\r?\n/g, ' ⏎ ').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim();
+  const s = text
+    .replace(ANSI_RE, '')
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '')
+    .replace(/[ \t]*\r?\n\s*/g, ' ⏎ ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+    .replace(/(?: ⏎)+$/, '');
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
@@ -40,8 +46,11 @@ const s = (v: unknown): string => (typeof v === 'string' ? v : '');
 
 function toolArg(name: string, input: Input, projectDir?: string): string {
   switch (name) {
-    case 'Bash':
-      return oneLine(s(input.command), 300);
+    case 'Bash': {
+      const root = projectDir?.replace(/\/+$/, '');
+      const cmd = root ? s(input.command).split(root).join('.') : s(input.command);
+      return oneLine(cmd, 300);
+    }
     case 'Edit':
     case 'MultiEdit':
     case 'Write':
@@ -49,7 +58,7 @@ function toolArg(name: string, input: Input, projectDir?: string): string {
       const path = relPath(s(input.file_path) || s(input.notebook_path) || '?', projectDir);
       let added = 0;
       let removed = 0;
-      if (name === 'Write') added = s(input.content) ? s(input.content).split('\n').length : 0;
+      if (name === 'Write') added = lineCount(input.content);
       else if (name === 'MultiEdit' && Array.isArray(input.edits)) {
         for (const e of input.edits) {
           const d = lineDelta(asInput(e).old_string, asInput(e).new_string);

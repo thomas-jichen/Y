@@ -1,13 +1,15 @@
 /**
  * paceline-db CLI.
  *
- *   tsx src/cli.ts migrate  [--migrations-dir <dir>] [--local]
- *   tsx src/cli.ts status   [--migrations-dir <dir>] [--local]
+ *   tsx src/cli.ts migrate  [--migrations-dir <dir>] [--local] [--flavor <f>]
+ *   tsx src/cli.ts status   [--migrations-dir <dir>] [--local] [--flavor <f>]
  *   tsx src/cli.ts test-sql [--tests-dir <dir>] [--migrations-dir <dir>] [--filter <substring>]
  *
- * `migrate` and `status` use createDb(env): Postgres when DATABASE_URL is
- * set, else PGlite at PACELINE_DATA_DIR. `test-sql` always uses fresh
- * in-memory PGlite databases and exits 1 when any file fails.
+ * `migrate` and `status` use createDb(env): PGlite at PACELINE_DATA_DIR
+ * unless DATABASE_URL is set, then Postgres with PACELINE_DB_FLAVOR
+ * (`supabase` by default: no shims; `postgres`: shims when auth is missing).
+ * `test-sql` always uses fresh in-memory PGlite databases and exits 1 when
+ * any file fails.
  *
  * When run directly, variables from the repo-root `.env` are loaded first
  * (without overriding variables already set).
@@ -20,7 +22,7 @@ import { createDb, type DbEnv } from './create.js';
 import { migrate, migrationStatus } from './migrate.js';
 import { paths, resolveDataDir } from './paths.js';
 import { formatSqlTestRun, runSqlTests } from './sqltest.js';
-import type { Db } from './types.js';
+import type { Db, DbFlavor } from './types.js';
 
 /** Where the CLI writes, and what it reads. Injected by tests. */
 export interface CliIo {
@@ -42,6 +44,7 @@ options:
   --tests-dir <dir>        pgTAP tests directory (default: supabase/tests)
   --filter <text>          test-sql: only files whose name contains <text>
   --local                  treat a Postgres DATABASE_URL as local (shims + _local_ files)
+  --flavor <f>             pglite | postgres | supabase (overrides PACELINE_DB_FLAVOR)
   -h, --help               show this help`;
 
 interface ParsedArgs {
@@ -50,6 +53,7 @@ interface ParsedArgs {
   testsDir: string | undefined;
   filter: string | undefined;
   local: boolean;
+  flavor: string | undefined;
   help: boolean;
 }
 
@@ -61,6 +65,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     testsDir: undefined,
     filter: undefined,
     local: false,
+    flavor: undefined,
     help: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -83,6 +88,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       case '--local':
         args.local = true;
         break;
+      case '--flavor':
+        args.flavor = value();
+        break;
       case '-h':
       case '--help':
         args.help = true;
@@ -96,13 +104,13 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   return args;
 }
 
-function describeTarget(env: DbEnv, cwd: string): string {
-  if (env.DATABASE_URL?.trim()) {
+function describeTarget(env: DbEnv, cwd: string, flavor: DbFlavor): string {
+  if (flavor !== 'pglite' && env.DATABASE_URL?.trim()) {
     try {
       const url = new URL(env.DATABASE_URL.trim());
-      return `postgres ${url.hostname}${url.port ? `:${url.port}` : ''}${url.pathname}`;
+      return `${flavor} ${url.hostname}${url.port ? `:${url.port}` : ''}${url.pathname}`;
     } catch {
-      return 'postgres (DATABASE_URL)';
+      return `${flavor} (DATABASE_URL)`;
     }
   }
   return `pglite ${resolveDataDir(env.PACELINE_DATA_DIR, cwd)}`;
@@ -129,7 +137,11 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
   switch (args.command) {
     case 'migrate':
     case 'status': {
-      const env: DbEnv = args.local ? { ...io.env, PACELINE_DB_LOCAL: '1' } : io.env;
+      const env: DbEnv = {
+        ...io.env,
+        ...(args.local ? { PACELINE_DB_LOCAL: '1' } : {}),
+        ...(args.flavor ? { PACELINE_DB_FLAVOR: args.flavor } : {}),
+      };
       let db: Db;
       try {
         db = await createDb(env, { cwd });
@@ -139,7 +151,7 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<number
       }
       try {
         const local = db.local;
-        io.stdout(`# ${describeTarget(env, cwd)}${local ? ' (local)' : ''}`);
+        io.stdout(`# ${describeTarget(env, cwd, db.flavor)}${local ? ' (local)' : ''}`);
         const options = { local, ...(migrationsDir ? { migrationsDir } : {}) };
         if (args.command === 'migrate') {
           const result = await migrate(db, { ...options, log: (line) => io.stdout(line) });

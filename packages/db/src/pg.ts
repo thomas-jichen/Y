@@ -112,6 +112,12 @@ export interface PgDbOptions {
    * Supabase. Default false.
    */
   local?: boolean;
+  /**
+   * `supabase` (never shims) or `postgres` (shims when the `auth` schema is
+   * missing or is the shims' own). Default: `postgres` when `local`, else
+   * `supabase`.
+   */
+  flavor?: 'postgres' | 'supabase';
   /** Extra pool settings (size, timeouts, ssl, ...). */
   poolConfig?: Omit<pg.PoolConfig, 'connectionString' | 'types'>;
   /** `application_name` reported to Postgres. Default `paceline`. */
@@ -441,6 +447,7 @@ export class PgListener {
 /** A {@link Db} backed by `pg`. */
 export interface PgDb extends Db {
   readonly kind: 'pg';
+  readonly flavor: 'postgres' | 'supabase';
 }
 
 /** Builds the config object for one extended-protocol query. */
@@ -473,6 +480,7 @@ export function createPgDb(options: PgDbOptions): PgDb {
 
 class PgDbImpl implements PgDb {
   readonly kind = 'pg' as const;
+  readonly flavor: 'postgres' | 'supabase';
   readonly local: boolean;
   readonly #pool: PgPoolLike;
   readonly #listener: PgListener;
@@ -484,6 +492,7 @@ class PgDbImpl implements PgDb {
     const report = options.onError ?? defaultErrorReporter;
     const applicationName = options.applicationName ?? 'paceline';
     this.local = options.local ?? false;
+    this.flavor = options.flavor ?? (this.local ? 'postgres' : 'supabase');
     this.#types = new PgTypeParsers();
     this.#pool =
       options.pool ??

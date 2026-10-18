@@ -254,6 +254,39 @@ as $fn$
   )
 $fn$;
 
+-- Whether `p_agent_id` is an agent participant of the thread (for the
+-- assignee guard: assignments may only name a participant agent).
+create or replace function paceline_private.is_agent_participant(p_thread_id text, p_agent_id uuid) returns boolean
+language sql stable security definer parallel safe
+set search_path = ''
+as $fn$
+  select p_thread_id is not null and p_agent_id is not null and exists (
+    select 1 from public.thread_participants p
+    where p.thread_id = p_thread_id and p.p_kind = 'agent' and p.p_id = p_agent_id)
+$fn$;
+
+-- Whether the caller may address realtime events to `p_user_id`
+-- (api.emit_event): themself, teammates, org co-members, accepted friends and
+-- thread co-participants. Stricter than user_is_visible (no public profiles,
+-- no pending friend requests, no follows), so a user context can never ping
+-- arbitrary users.
+create or replace function paceline_private.can_notify_user(p_user_id uuid) returns boolean
+language sql stable security definer parallel safe
+set search_path = ''
+as $fn$
+  select p_user_id is not null and auth.uid() is not null and (
+       p_user_id = auth.uid()
+    or paceline_private.shares_team_with(p_user_id)
+    or exists (select 1 from public.org_members a join public.org_members b on b.org_id = a.org_id
+               where a.user_id = auth.uid() and b.user_id = p_user_id)
+    or exists (select 1 from public.friendships f
+               where f.state = 'accepted'
+                 and ((f.requester_id = auth.uid() and f.addressee_id = p_user_id)
+                      or (f.addressee_id = auth.uid() and f.requester_id = p_user_id)))
+    or exists (select 1 from public.thread_participants a join public.thread_participants b on b.thread_id = a.thread_id
+               where a.owner_user_id = auth.uid() and b.owner_user_id = p_user_id))
+$fn$;
+
 -- ============================================================ visibility helpers
 
 -- The private | repo | team | public rule, without status filtering:
@@ -783,19 +816,30 @@ create policy message_deliveries_update on public.message_deliveries for update 
   using (paceline_private.agent_ok(recipient_agent_id) and state in ('pending', 'pointer_sent', 'seen'))
   with check (paceline_private.agent_ok(recipient_agent_id) and state in ('seen', 'handled'));
 
--- Readable by the owner and by the agent itself (never by another agent).
+-- Readable by the owner and by the agent itself (never by another agent). An
+-- instruction that needs the owner's confirm click (requires_confirm) stays
+-- hidden from the agent until it is confirmed.
 create policy owner_instructions_select on public.owner_instructions for select to authenticated
-  using (paceline_private.agent_ok(agent_id));
+  using (paceline_private.agent_ok(agent_id)
+         and (paceline_private.acting_agent_id() is null or not requires_confirm or confirmed_at is not null));
 create policy owner_instructions_insert on public.owner_instructions for insert to authenticated
   with check (paceline_private.is_human()
               and created_by_user_id = (select auth.uid())
               and paceline_private.owns_agent(agent_id)
               and paceline_private.remote_instructions_on(agent_id)
               and verified_via = paceline_private.jwt_claim('via')
-              and delivered_at is null);
+              and delivered_at is null and confirmed_at is null);
+-- The agent marks its (visible) instruction delivered. Column changes are
+-- further restricted by the guard trigger in 0005.
 create policy owner_instructions_mark_delivered on public.owner_instructions for update to authenticated
-  using (paceline_private.acting_agent_id() = agent_id and paceline_private.owns_agent(agent_id) and delivered_at is null)
+  using (paceline_private.acting_agent_id() = agent_id and paceline_private.owns_agent(agent_id) and delivered_at is null
+         and (not requires_confirm or confirmed_at is not null))
   with check (paceline_private.owns_agent(agent_id) and delivered_at is not null);
+-- The owner's confirm click (web or Slack) for an unattended agent.
+create policy owner_instructions_confirm on public.owner_instructions for update to authenticated
+  using (paceline_private.is_human() and paceline_private.owns_agent(agent_id) and requires_confirm and confirmed_at is null)
+  with check (paceline_private.owns_agent(agent_id) and confirmed_at is not null
+              and confirmed_via = paceline_private.jwt_claim('via'));
 
 -- I4: DM permissions are readable and writable by their owner only, and
 -- writable only in human context (never by an agent or MCP tool).
@@ -920,10 +964,10 @@ grant select on
   to authenticated;
 -- threads: everything except the unscreened requested_subject.
 grant select (id, kind, anchor_kind, anchor_id, product_id, repo_key, team_id, subject, state, created_by_user_id,
-              created_by_agent_id, last_message_at, created_at, updated_at)
+              created_by_agent_id, assigned_agent_id, last_message_at, created_at, updated_at)
   on public.threads to authenticated;
 -- installs: everything except the token hash.
-grant select (id, agent_id, scopes, plugin_version, harness_version, platform, machine_label_hash,
+grant select (id, agent_id, scopes, plugin_version, harness_version, platform, machine_label, machine_label_hash,
               created_at, last_seen_at, revoked_at)
   on public.installs to authenticated;
 
@@ -941,7 +985,8 @@ grant insert (setup_version_id, kind, name, version, content_hash, description_r
 grant insert (slug, name, created_by) on public.teams to authenticated;
 grant insert (team_id, token_hash, role, created_by, expires_at, max_uses) on public.team_invites to authenticated;
 grant insert (id, owner_user_id, handle, harness, variant) on public.agents to authenticated;
-grant insert (id, agent_id, token_hash, scopes, plugin_version, harness_version, platform, machine_label_hash)
+grant insert (id, agent_id, token_hash, scopes, plugin_version, harness_version, platform, machine_label,
+              machine_label_hash)
   on public.installs to authenticated;
 grant insert (slug, name, created_by) on public.orgs to authenticated;
 grant insert (id, agent_id, owner_user_id, session_id, kind, setup_version_id, team_id, source, visibility, status,
@@ -961,7 +1006,7 @@ grant insert (id, kind, anchor_kind, anchor_id, product_id, repo_key, team_id, r
 grant insert (id, thread_id, sender_kind, sender_id, sender_owner_id, trust, intent, urgency, body, refs, state,
               idempotency_key)
   on public.messages to authenticated;
-grant insert (id, agent_id, thread_id, created_by_user_id, body, verified_via, kid, sig)
+grant insert (id, agent_id, thread_id, created_by_user_id, body, verified_via, kid, sig, requires_confirm)
   on public.owner_instructions to authenticated;
 grant insert (id, agent_id, owner_user_id, suggestion_id, target, repo_key, patch, patch_hash, base_hashes, state,
               expires_at)
@@ -987,11 +1032,11 @@ grant update (visibility, status) on public.activities to authenticated;
 grant update (visibility, status) on public.highlights to authenticated;
 grant update (visibility, status) on public.shared_components to authenticated;
 grant update (name, sla_minutes, reply_policy, builder_agent_id) on public.products to authenticated;
-grant update (state) on public.threads to authenticated;
+grant update (state, assigned_agent_id) on public.threads to authenticated;
 grant update (last_read_message_id, muted) on public.thread_participants to authenticated;
 grant update (body, refs, state) on public.messages to authenticated;
 grant update (state, seen_at, handled_at) on public.message_deliveries to authenticated;
-grant update (delivered_at) on public.owner_instructions to authenticated;
+grant update (delivered_at, confirmed_at, confirmed_via) on public.owner_instructions to authenticated;
 grant update (policy, delivery) on public.dm_permissions to authenticated;
 grant update (until) on public.work_claims to authenticated;
 grant update (state, decision, decision_id, decided_by, decided_via, decided_at) on public.review_items to authenticated;
@@ -1020,7 +1065,8 @@ grant execute on function
   paceline_private.thread_created_by_me(text), paceline_private.message_sent_by_me(text),
   paceline_private.remote_instructions_on(uuid), paceline_private.product_team(text),
   paceline_private.user_is_public(uuid), paceline_private.shares_team_with(uuid),
-  paceline_private.user_is_visible(uuid),
+  paceline_private.user_is_visible(uuid), paceline_private.is_agent_participant(text, uuid),
+  paceline_private.can_notify_user(uuid),
   paceline_private.visible_content(uuid, uuid, text, text),
   paceline_private.visible_activity(public.activities), paceline_private.visible_highlight(public.highlights)
   to anon, authenticated, service_role;

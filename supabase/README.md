@@ -11,9 +11,19 @@ The Postgres schema, its tests and the one Edge Function. The same SQL runs on P
 | `migrations/0005_triggers.sql` | Event fan-out (pg_notify plus Realtime broadcast), provisioning, ownership derivation, guards, review-queue events |
 | `migrations/0006_core_role.sql` | `paceline_core` / `paceline_worker` placeholder roles (optional hardening) |
 | `migrations/0007_cron.sql` | pg_cron + pg_net jobs tick and hourly retention, created only where both extensions exist |
-| `tests/*.sql` | pgTAP: isolation, CAS, rate limits, jobs, events, cron (plain SQL, no psql meta-commands) |
+| `tests/*.sql` | pgTAP: schema and invariants (`00`, `05`), identity, RLS isolation, DM permissions, owner instructions, review CAS, service-only plumbing, search, rate limits, jobs, events, cron, social, Slack linking (plain SQL, no psql meta-commands) |
 | `functions/embed/` | gte-small embeddings (384 dims) for core, behind a shared secret |
 | `config.toml` | Supabase CLI settings (local stack, `verify_jwt = false` for `embed`) |
+
+## Database flavors (`PACELINE_DB_FLAVOR`)
+
+| Flavor | When | Supabase shims (`packages/db/src/local-shims.sql`) |
+|---|---|---|
+| `pglite` | default without `DATABASE_URL` (tests, local dev) | always |
+| `postgres` | plain Postgres (`DATABASE_URL` + `PACELINE_DB_FLAVOR=postgres`, or `PACELINE_DB_LOCAL=1`) | when the `auth` schema is missing or is the shims' own (comment `paceline local shim…`) |
+| `supabase` | default with `DATABASE_URL` (hosted project or `supabase start`) | never |
+
+The shims stand in for roles `anon`/`authenticated`/`service_role`, `auth.users` and `auth.uid()`/`jwt()`/`role()`/`email()`, Supabase's default grants, pgcrypto/uuid-ossp, and a **no-op Realtime**: `realtime.send(payload, event, topic, private)` with Supabase's signature, implemented as `pg_notify('paceline_realtime', '{"topic","event","payload","private"}')`. So the events trigger's broadcast path runs everywhere; locally only the `paceline_events` doorbell matters (core's in-process bus). `_local_` migration files run only when `PACELINE_DB_LOCAL=1` (or on PGlite).
 
 ## Commands
 
@@ -51,10 +61,10 @@ Writes start in their initial state (activities `open`, messages `queued`, chang
 ## Realtime and events
 
 - Core (or a trigger) inserts an `events` row with `api.emit_event(type, agent_ids, user_ids, payload)`. Payloads are ids, integers and booleans only (CHECK constraint), at most 16 keys and 100 audience ids per side.
-- The insert trigger always runs `pg_notify('paceline_events', id)`. Server-mode core LISTENs and reads new rows with `api.events_since(cursor)`, which returns the `NotifyPayload` JSON in its `notify` column.
-- Where `realtime.send` exists (Supabase), the trigger also broadcasts `{id, type, payload}` to `agent:<agent_id>:<secret>` and `user:<user_id>:<secret>` on public channels (`private = false`). Secrets live in `realtime_channels`, readable only by their owner. Clients subscribe with `supabase.channel(topic, { config: { private: false } }).on('broadcast', { event: '*' }, ...)`. `api.rotate_channel_secret` rotates one.
+- The insert trigger always runs `pg_notify('paceline_events', id)`. Server-mode core LISTENs and reads new rows with `api.events_since(cursor)`, which returns the `EventRecord` JSON (packages/schema) in its `notify` column.
+- Where `realtime.send` exists (Supabase, or the local shim), the trigger also broadcasts `{id, type, payload}` (`RealtimeBroadcast`) to `agent:<agent_id>:<secret>` and `user:<user_id>:<secret>` on public channels (`private = false`), event name = type. Secrets live in `realtime_channels`, readable only by their owner; core returns them as `RealtimeChannel` in `AgentBrief.realtime` and `Me.realtime`. Clients subscribe with `supabase.channel(topic, { config: { private: false } }).on('broadcast', { event: '*' }, ...)`. `api.rotate_channel_secret` rotates one.
 - `api.my_events(cursor)` is the per-caller catch-up (SSE `Last-Event-ID`, `/pulse`).
-- Do not emit `review.new`, `review.decided` or `change.updated` from core: triggers do.
+- `api.emit_event` is for user contexts only: it refuses system types, the trigger-owned `review.new`/`review.decided`/`change.updated`, and any audience member the caller may not notify (self, teammates, org co-members, accepted friends, thread co-participants, and their agents). The worker uses `api.emit_system_event`.
 - `jobs` inserts run `pg_notify('paceline_jobs', topic)`.
 
 ## Production checklist (Supabase Free)
