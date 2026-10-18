@@ -6,7 +6,7 @@ var __export = (target, all) => {
 };
 
 // src/runtime.ts
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";

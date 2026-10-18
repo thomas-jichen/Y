@@ -16,3 +16,4 @@ eval/results/
 apps/core/api/index.mjs
 apps/core/api/index.mjs.map
 apps/mcp/.deploy-env.*
+supabase/.temp/

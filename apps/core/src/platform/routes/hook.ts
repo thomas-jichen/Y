@@ -67,6 +67,7 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
       return fail(c, 'RATE_LIMITED', 'too many chunks for this session', { retryAfterS: rl.retryAfterS });
     }
 
+    const segment = await resolveSegment(deps, agentId, ch);
     const res = await deps.db.asUser(caller.claims, async (tx): Promise<IngestResponse> => {
       const s = await tx.query<{ id: string; started_at: Date }>(
         `insert into public.sessions (agent_id, install_id, harness_session_id, repo_key, harness_version)
@@ -79,7 +80,15 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
         [agentId, caller.installId, ch.sessionId, ch.repoKey ?? null, ch.harnessVersion.slice(0, 40)],
       );
       const session = s.rows[0]!;
-      const activityId = segmentUlid(session.id, ch.segmentIndex, new Date(session.started_at).getTime());
+      const startedMs = new Date(session.started_at).getTime();
+      const resent = await tx.query<{ activity_id: string }>(
+        'select activity_id from public.activity_chunks where session_id = $1 and seq = $2',
+        [session.id, ch.seq],
+      );
+      if (resent.rows[0]) {
+        return { accepted: false, duplicate: true, activityId: `a_${resent.rows[0].activity_id}`, pulse: { unread: await unreadFor(tx, agentId), cursor: cursorOf(deps) } };
+      }
+      const activityId = segmentUlid(session.id, segment, startedMs);
       const team = await tx.query<{ team_id: string }>(
         'select team_id from public.team_members where user_id = $1 order by joined_at limit 1',
         [caller.userId],
@@ -125,7 +134,7 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
       }
       const duplicate = inserted.rowCount === 0;
       if (!duplicate && ch.close) {
-        await deps.jobs.enqueue('finalize', { activityId }, { dedupeKey: `finalize:${activityId}`, tx });
+        await deps.jobs.enqueue('finalize', { activityId }, { dedupeKey: `finalize:${activityId}:${ch.seq}`, tx });
       }
       return {
         accepted: !duplicate,
@@ -257,5 +266,43 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
       };
     });
     return c.json(out);
+  });
+}
+
+/**
+ * A resumed session keeps sending chunks after its activity was finalized. A warmup
+ * (archived) reopens so the new work counts; a posted one stays as is and the new work
+ * starts the next segment. An empty close marker never starts a segment. Service role:
+ * agents can't change activity status under RLS (I7), and this only moves the caller's
+ * own session forward.
+ */
+async function resolveSegment(deps: CoreDeps, agentId: string, ch: IngestChunk): Promise<number> {
+  const d = ch.statsDelta;
+  const hasWork = d.turns > 0 || d.tokens.total > 0 || d.wallMs > 0 || Object.keys(d.toolCalls).length > 0;
+  return deps.db.asService(async (tx) => {
+    const session = (
+      await tx.query<{ id: string; started_at: Date }>('select id, started_at from public.sessions where agent_id = $1 and harness_session_id = $2', [
+        agentId,
+        ch.sessionId,
+      ])
+    ).rows[0];
+    if (!session) return ch.segmentIndex;
+    const resent = await tx.query('select 1 from public.activity_chunks where session_id = $1 and seq = $2', [session.id, ch.seq]);
+    if (resent.rowCount) return ch.segmentIndex;
+    const startedMs = new Date(session.started_at).getTime();
+    let segment = ch.segmentIndex;
+    for (let hops = 0; hops < 100; hops++) {
+      const id = segmentUlid(session.id, segment, startedMs);
+      const ex = (await tx.query<{ status: string }>('select status from public.activities where id = $1 for update', [id])).rows[0];
+      if (!ex || ex.status === 'open') break;
+      if (ex.status === 'archived') {
+        if (hasWork) await tx.query(`update public.activities set status = 'open', ended_at = null, updated_at = now() where id = $1`, [id]);
+        break;
+      }
+      const next = (await tx.query('select 1 from public.activities where id = $1', [segmentUlid(session.id, segment + 1, startedMs)])).rowCount;
+      if (!next && !hasWork) break;
+      segment++;
+    }
+    return segment;
   });
 }

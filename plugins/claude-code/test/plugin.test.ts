@@ -215,6 +215,23 @@ describe('Stop → outbox → uploader', () => {
     expect(new Set(delays)).toEqual(new Set([5000]));
   });
 
+  it('uploader retries a 401 once with the stored token (a session that predates a reconnect)', async () => {
+    await run('SessionEnd', { session_id: SID });
+    await run('SessionEnd', { session_id: 'sess-other-2' });
+    core.route = (req) =>
+      req.headers.authorization === 'Bearer tok_new_install_1111111111'
+        ? { body: { accepted: true, pulse: { unread: 0, cursor: 'cur_3' } } }
+        : { status: 401, body: { error: { code: 'UNAUTHORIZED', message: 'revoked', retryable: false } } };
+    const config = loadConfig(testEnv(dir, core.url));
+    const s = await drainOutbox({ config, paths: paths(dir), fetch, sleep: async () => {}, currentToken: () => 'tok_new_install_1111111111' });
+    expect(s).toMatchObject({ sent: 2, dead: 0, remaining: 0 });
+    expect(core.requests.map((r) => r.headers.authorization)).toEqual([
+      'Bearer tok_test_install_0000000000',
+      'Bearer tok_new_install_1111111111',
+      'Bearer tok_new_install_1111111111',
+    ]);
+  });
+
   it('uploader retries with backoff and moves a chunk to dead after 10 attempts', async () => {
     await run('SessionEnd', { session_id: SID });
     core.route = () => ({ status: 503, body: { error: { code: 'UNAVAILABLE', message: 'down', retryable: true } } });

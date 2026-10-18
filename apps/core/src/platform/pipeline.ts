@@ -370,7 +370,9 @@ const closeIdle: JobHandler = async (_payload, deps) => {
     );
     return a.rows.map((r) => r.id);
   });
-  for (const id of toFinalize) await deps.jobs.enqueue('finalize', { activityId: id }, { dedupeKey: `finalize:${id}` });
+  // Keyed by tick: a reopened activity (resumed session) must be finalizable again.
+  const tick = Math.floor(deps.now().getTime() / 60_000);
+  for (const id of toFinalize) await deps.jobs.enqueue('finalize', { activityId: id }, { dedupeKey: `finalize:${id}:idle:${tick}` });
   await scheduleCloseIdle(deps);
 };
 
