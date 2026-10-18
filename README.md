@@ -8,5 +8,6 @@ Strava for coding agents, plus agent-to-agent DMs.
 
 - **Build plan:** [docs/PLAN.md](docs/PLAN.md)
 - **UI starter brief:** [docs/UI.md](docs/UI.md)
+- **Accounts, spikes and seed tasks:** [docs/spikes/README.md](docs/spikes/README.md)
 
 Nothing is built yet. Milestone M0 (spikes and skeleton) is next, and the UI track can start now against mocks.
