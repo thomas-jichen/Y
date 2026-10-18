@@ -24,7 +24,7 @@ import { redact } from '@y/redact';
 import { actionFor, l0Scan } from '@y/safety';
 import { normalizeErrorSignature } from '@y/capture';
 import type { CoreDeps, JobHandler } from '../contracts.js';
-import { heuristicDrafts } from './distill.js';
+import { heuristicDrafts, maskDraftEnvironment } from './distill.js';
 import { presenceSweep, schedulePresenceSweep } from './presence.js';
 import { openDigest, toVectorLiteral } from './util.js';
 import { enqueueFeedCard } from '../slack/enqueue.js';
@@ -52,6 +52,10 @@ const DIGEST_BACKSTOP = '23 hours';
 const NEUTRAL_HIGHLIGHT_TITLE = 'Highlight from a captured session';
 const HIGHLIGHT_TITLE_MAX = 90;
 const HIGHLIGHT_SUMMARY_MAX = 400;
+/** Neutral title used when the owner turns the title of an agent's activity draft off. */
+const NEUTRAL_ACTIVITY_TITLE = 'Shared a coding session';
+const ACTIVITY_TITLE_MAX = 120;
+const ACTIVITY_SUMMARY_MAX = 400;
 
 function str(p: Record<string, unknown>, k: string): string {
   const v = p[k];
@@ -80,19 +84,51 @@ export function fitRedacted(text: string, max: number): string {
 const INVISIBLE_G = new RegExp(INVISIBLE_CHARS_SOURCE, 'g');
 /** Unicode tag characters (ASCII smuggling), U+E0000–U+E007F: decoded to ASCII for scanning. */
 const TAG_CHARS_G = /[\u{E0000}-\u{E007F}]/gu;
+/** C0 controls except tab and LF, DEL, and C1 controls (as @y/safety normalizeUntrusted). */
+const CONTROLS_G = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
+/** Bidi-override runs (RLO/LRO … PDF or end of line): scanned in their displayed (reversed) order too. */
+const BIDI_RUN_G = /[\u202D\u202E]([^\u202C\n]*)/g;
+const HTML_COMMENT_G = /<!--([\s\S]*?)(?:-->|$)/g;
+const MD_IMAGE_G = /!\[([^\]\n]*)\]\(([^)\n]*)\)/g;
+const HTML_IMG_G = /<img\b[^>]*>/gi;
 
 /**
- * L0 step 0 (PLAN §10): NFKC, invisible/bidi characters stripped, tag characters decoded.
- * Envelopes NFKC-normalize what agents later read, so the screen must see the same text.
+ * L0 step 0 (PLAN §10), the same steps as @y/safety normalizeUntrusted, which is what agents
+ * later read: NFKC, tag characters decoded, invisible/bidi characters stripped, CR/CRLF → LF
+ * (a lone CR becomes a line start once served), control characters removed, and hidden
+ * constructs (HTML comments, markdown images, `<img>`) removed.
  */
 export function normalizeForScreen(text: string): string {
-  return text
-    .normalize('NFKC')
+  return screenVariants(text)[0]!;
+}
+
+/** The normalized (agent-visible) text first, then the hidden payloads it removed, each scanned on its own. */
+export function screenVariants(text: string): string[] {
+  const hidden: string[] = [];
+  let t = text.normalize('NFKC');
+  for (const m of t.matchAll(BIDI_RUN_G)) if (m[1]) hidden.push([...m[1]].reverse().join(''));
+  t = t
     .replace(TAG_CHARS_G, (ch) => {
       const cp = (ch.codePointAt(0) ?? 0) - 0xe0000;
       return cp >= 0x20 && cp < 0x7f ? String.fromCharCode(cp) : '';
     })
-    .replace(INVISIBLE_G, '');
+    .replace(INVISIBLE_G, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(CONTROLS_G, '');
+  t = t
+    .replace(HTML_COMMENT_G, (_m, body: string) => {
+      if (body.trim()) hidden.push(body);
+      return '';
+    })
+    .replace(MD_IMAGE_G, (_m, alt: string, url: string) => {
+      hidden.push(`${alt} ${url}`.trim());
+      return '';
+    })
+    .replace(HTML_IMG_G, (m) => {
+      hidden.push(m);
+      return '';
+    });
+  return [t, ...hidden];
 }
 
 const LABEL_RANK: Record<string, number> = { clean: 0, warn: 1, sensitive: 2, suspicious: 3, malicious: 4 };
@@ -104,8 +140,7 @@ const LABEL_RANK: Record<string, number> = { clean: 0, warn: 1, sensitive: 2, su
 function screenAction(texts: string | string[], contentClass: 'card' | 'highlight'): { label: string; action: string } {
   let label = 'clean';
   for (const t of Array.isArray(texts) ? texts : [texts]) {
-    const norm = normalizeForScreen(t);
-    for (const variant of norm === t ? [t] : [t, norm]) {
+    for (const variant of new Set([t, ...screenVariants(t)])) {
       const l = l0Scan(variant, contentClass).label;
       if ((LABEL_RANK[l] ?? 4) > (LABEL_RANK[label] ?? 4)) label = l;
     }
@@ -312,7 +347,10 @@ const distillHeuristic: JobHandler = async (payload, deps) => {
           ? []
           : local.highlights
               .map((h) => HighlightDraft.safeParse(h))
-              .flatMap((r) => (r.success && r.data.confidence >= 0.6 ? [{ ...r.data, errorSignature: r.data.errorSignatures[0] ?? '' }] : []))
+              .flatMap((r) =>
+                // Hosts, paths, URLs and credential files in the client's text are masked, as in heuristic drafts.
+                r.success && r.data.confidence >= 0.6 ? [{ ...maskDraftEnvironment(r.data), errorSignature: r.data.errorSignatures[0] ?? '' }] : [],
+              )
               .slice(0, 3)
         : heuristicDrafts({
             digest: sealed.map((s) => s.text).join('\n'),
@@ -383,7 +421,7 @@ const reviewDraft: JobHandler = async (payload, deps) => {
     const rv = (await tx.query<Record<string, unknown>>('select * from public.review_items where id = $1', [reviewId])).rows[0];
     if (!rv || rv.kind !== 'draft') return;
     const ref = String(rv.ref_id);
-    if (ref.startsWith('a_')) return reviewActivityDraft(deps, tx, ref.slice(2), String(rv.state));
+    if (ref.startsWith('a_')) return reviewActivityDraft(deps, tx, ref.slice(2), String(rv.state), payload.edits);
     if (!ref.startsWith('h_')) return;
     const hid = ref.slice(2);
     if (rv.state === 'rejected') {
@@ -410,13 +448,18 @@ const reviewDraft: JobHandler = async (payload, deps) => {
     }
     if (toggles.title === false) title = NEUTRAL_HIGHLIGHT_TITLE;
     if (toggles.summary === false) summary = '';
-    // Team visibility only while the owner still belongs to the highlight's team.
+    // Team visibility only while the owner still belongs to the highlight's team. Otherwise it
+    // publishes private and lets go of the old team (an owner can update visibility but not
+    // team_id, so it cannot be flipped back to that team later).
     const r = await tx.query<{ owner_user_id: string; team_id: string | null; activity_id: string | null; visibility: string }>(
-      `update public.highlights h set status = 'active', published_at = now(),
+      `with member as (
+         select exists (select 1 from public.highlights x join public.team_members m on m.team_id = x.team_id and m.user_id = x.owner_user_id
+                         where x.id = $1) as ok
+       )
+       update public.highlights h set status = 'active', published_at = now(),
           title = coalesce(nullif($2, ''), h.title), summary = coalesce($3, h.summary),
-          visibility = case when h.team_id is not null
-                             and exists (select 1 from public.team_members m where m.team_id = h.team_id and m.user_id = h.owner_user_id)
-                            then 'team' else 'private' end,
+          visibility = case when h.team_id is not null and (select ok from member) then 'team' else 'private' end,
+          team_id = case when (select ok from member) then h.team_id else null end,
           updated_at = now()
         where h.id = $1 and h.status = 'draft' and h.screen_action in ('allow', 'label')
         returning h.owner_user_id, h.team_id, h.activity_id, h.visibility::text as visibility`,
@@ -440,7 +483,7 @@ const reviewDraft: JobHandler = async (payload, deps) => {
  * screen and the publish flow; a DLP-held ('held') post never publishes on a plain approve.
  * Rejecting retires either.
  */
-async function reviewActivityDraft(deps: CoreDeps, tx: Tx, activityId: string, state: string): Promise<void> {
+async function reviewActivityDraft(deps: CoreDeps, tx: Tx, activityId: string, state: string, rawEdits: unknown): Promise<void> {
   if (state === 'rejected') {
     await tx.query(
       `update public.activities set status = 'rejected', updated_at = now()
@@ -450,10 +493,19 @@ async function reviewActivityDraft(deps: CoreDeps, tx: Tx, activityId: string, s
     return;
   }
   if (state !== 'approved') return;
+  // The owner's title/summary edits and field toggles apply before the card screen, so the
+  // screen sees (and the team gets) the final text. A missing toggle means "on".
+  const edits = (rawEdits && typeof rawEdits === 'object' ? rawEdits : {}) as { title?: unknown; summary?: unknown; fieldToggles?: unknown };
+  const toggles = (edits.fieldToggles && typeof edits.fieldToggles === 'object' ? edits.fieldToggles : {}) as Record<string, unknown>;
+  let title = typeof edits.title === 'string' ? fitRedacted(pass2(edits.title), ACTIVITY_TITLE_MAX) : null;
+  const summary = typeof edits.summary === 'string' ? fitRedacted(pass2(edits.summary), ACTIVITY_SUMMARY_MAX) : null;
+  if (toggles.title === false) title = NEUTRAL_ACTIVITY_TITLE;
   const r = await tx.query<{ id: string }>(
-    `update public.activities set status = 'distilling', updated_at = now()
+    `update public.activities set status = 'distilling', updated_at = now(),
+        title = coalesce(nullif($2, ''), title),
+        summary = case when $4 then null else coalesce(nullif($3, ''), summary) end
       where id = $1 and source = 'agent_reported' and status = 'draft' returning id`,
-    [activityId],
+    [activityId, title, summary, toggles.summary === false],
   );
   if (r.rows[0]) await deps.jobs.enqueue('screen', { kind: 'activity', id: r.rows[0].id }, { dedupeKey: `screen:a:${r.rows[0].id}`, tx });
 }
