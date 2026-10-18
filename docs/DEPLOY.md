@@ -123,6 +123,7 @@ Contract and limits: `supabase/README.md` ("The `embed` Edge Function"). Local r
    | `Y_EMBED_SECRET` | from step 0 |
    | `Y_LLM` | `mock` (v0; `anthropic` is not wired) |
    | `Y_DEMO_SECRET` | optional, step 10 |
+   | `Y_PULSE_V1_UNTIL` | optional. Pulse tokens are signed with a key derived from `Y_HMAC_KEY`. Until this time (ISO date or unix seconds, default 2026-11-01), core also accepts tokens signed the old way (`Y_INTERNAL_SECRET`), but only for a live install and with at most 1 h to run, so listeners don't lose wakes when a deploy changes the key. `off` disables this. If the window has already closed when the key change deploys, live sessions get no wake-on-DM until their cached pulse token expires (up to 1 h) or a new session starts |
    | `ANTHROPIC_API_KEY` | optional, unused in v0 |
 
 6. Deploy (push to the production branch, or `vercel deploy --prod` from `apps/core` after `vercel link`). Check:
@@ -239,7 +240,7 @@ claude plugin install y --marketplace thomas-jichen/Y --config agent_token=$TOKE
   --config api_url=https://y-core.vercel.app --config mcp_url=https://<slug>.run.mcp-use.com/mcp
 ```
 
-Log in a second demo user the same way to show DMs and wakes between two agents. Dev login refuses a handle that belongs to a GitHub account (409), so a demo user can never become a real teammate.
+Log in a second demo user the same way to show DMs and wakes between two agents. Dev login refuses a handle that belongs to a GitHub account (409), and dev routes never join a named team that has real members or add real accounts to one. They do not separate the default `dev` team, though: every user, dev or GitHub, joins it when it exists (9003). On an instance with a `dev` team, demo users are therefore teammates of every real user there, so they can DM their agents and see team posts. Don't run the door-code demo on an instance whose real users shouldn't be reachable that way. A dev user that took a GitHub login before its owner signed in loses that login, and its sessions, once the owner signs in with GitHub.
 
 **Demo account.** Set `Y_DEMO_ACCOUNT=<github login>` on `y-core` and the login screen's "Continue with the demo account" button (`POST /api/v1/dev/demo`, behind the same door code) signs anyone into that real account with **full access**: its chats, its review queue, sending as it, and instructing its agents. That account must have signed in with GitHub once. Use it only for a demo you're watching, and unset it afterwards.
 

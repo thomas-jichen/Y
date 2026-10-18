@@ -15,6 +15,13 @@
 --    pulse token is bound to a live install of that agent (#3, #31).
 -- 5. y_private.is_dev_user / y_private.dev_team_open: dev login only reuses
 --    dev users and only joins teams made of dev users (#4, #42).
+-- 6. Install tokens minted from a demo-account session carry the demo login
+--    (y_private.install_demo_accounts), so they stop working with the session
+--    once Y_DEMO_ACCOUNT is unset or changed (#44).
+-- 7. When the real GitHub user signs up, dev users squatting that GitHub login
+--    lose it and their web sessions are revoked (#43).
+-- 8. y_private.is_github_user: /dev/demo signs into a real GitHub account even
+--    when its github_id is null.
 
 -- ------------------------------------------------------------------ helpers
 
@@ -36,6 +43,41 @@ as $fn$
   select p_handle in ('y-team', 'yhq') and coalesce(p_app ->> 'provider', '') <> 'system'
 $fn$;
 revoke all on function y_private.reserved_handle(text, jsonb) from public;
+
+create or replace function y_private.is_github_app(p_app jsonb)
+returns boolean
+language sql immutable
+set search_path = ''
+as $fn$
+  select coalesce(p_app ->> 'provider', '') = 'github' or coalesce(p_app -> 'providers' ? 'github', false)
+$fn$;
+revoke all on function y_private.is_github_app(jsonb) from public;
+
+-- 7. The real GitHub user of p_login just signed up: dev users that took the
+-- login (dev login lets anyone pick one) lose it and their web sessions.
+create or replace function y_private.evict_dev_squatters(p_login text, p_except uuid)
+returns void
+language plpgsql volatile security definer
+set search_path = ''
+as $fn$
+declare
+  v_ids uuid[];
+begin
+  select coalesce(array_agg(u.id), '{}') into v_ids
+  from public.users u
+  join auth.users a on a.id = u.id
+  where lower(u.github_login::text) = lower(p_login)
+    and u.id <> p_except
+    and a.raw_app_meta_data ->> 'provider' = 'dev';
+  if cardinality(v_ids) = 0 then
+    return;
+  end if;
+  update y_private.web_sessions s set revoked_at = now()
+   where s.user_id = any(v_ids) and s.revoked_at is null;
+  update public.users u set github_login = null where u.id = any(v_ids);
+end
+$fn$;
+revoke all on function y_private.evict_dev_squatters(text, uuid) from public;
 
 -- --------------------------------------------------- 1. auth.users trigger
 
@@ -92,6 +134,9 @@ begin
         case when v_trusted then nullif(left(coalesce(v_meta ->> 'avatar_url', ''), 2048), '') end
       )
       on conflict (id) do nothing;
+      if v_login is not null and y_private.is_github_app(v_app) then
+        perform y_private.evict_dev_squatters(v_login, new.id);
+      end if;
       return new;
     exception when unique_violation then
       -- Lost a race for the handle; try the next candidate.
@@ -169,6 +214,9 @@ begin
         case when v_trusted then nullif(left(coalesce(v_meta ->> 'avatar_url', ''), 2048), '') end
       )
       on conflict (id) do nothing;
+      if v_login is not null and y_private.is_github_app(v_app) then
+        perform y_private.evict_dev_squatters(v_login, p_id);
+      end if;
       return true;
     exception when unique_violation then
       if v_attempt > 60 then
@@ -201,15 +249,27 @@ grant execute on function api.resolve_web_session(text) to anon, authenticated, 
 
 -- ------------------------------------------------------- 4. pulse binding
 
-create or replace function api.pulse_install(p_install_id uuid)
-returns table (agent_id uuid, owner_user_id uuid, revoked boolean, agent_status text, user_status text)
+-- 6. Demo-session installs (service role only).
+create table if not exists y_private.install_demo_accounts (
+  install_id uuid primary key references public.installs (id) on delete cascade,
+  demo_account text not null,
+  created_at timestamptz not null default now()
+);
+alter table y_private.install_demo_accounts enable row level security;
+revoke all on y_private.install_demo_accounts from public;
+grant all on y_private.install_demo_accounts to service_role;
+
+drop function if exists api.pulse_install(uuid);
+create function api.pulse_install(p_install_id uuid)
+returns table (agent_id uuid, owner_user_id uuid, revoked boolean, agent_status text, user_status text, demo_account text)
 language sql stable security definer
 set search_path = ''
 as $fn$
-  select i.agent_id, a.owner_user_id, i.revoked_at is not null, a.status, u.status
+  select i.agent_id, a.owner_user_id, i.revoked_at is not null, a.status, u.status, d.demo_account
   from public.installs i
   join public.agents a on a.id = i.agent_id
   join public.users u on u.id = a.owner_user_id
+  left join y_private.install_demo_accounts d on d.install_id = i.id
   where i.id = p_install_id
 $fn$;
 revoke all on function api.pulse_install(uuid) from public;
@@ -253,3 +313,48 @@ as $fn$
 $fn$;
 revoke all on function y_private.dev_team_open(uuid, uuid) from public;
 grant execute on function y_private.dev_team_open(uuid, uuid) to service_role;
+
+-- ------------------------------------------- 6. install tokens: demo tag
+
+-- Same as 0004 plus demo_account (null unless minted from a /dev/demo session).
+drop function if exists api.resolve_install_token(text);
+create function api.resolve_install_token(p_token_hash text)
+returns table (
+  install_id uuid,
+  agent_id uuid,
+  owner_user_id uuid,
+  agent_handle text,
+  harness text,
+  revoked boolean,
+  agent_status text,
+  user_status text,
+  demo_account text
+)
+language sql stable security definer
+set search_path = ''
+as $fn$
+  select i.id, a.id, a.owner_user_id, a.handle::text, a.harness::text, i.revoked_at is not null, a.status, u.status, d.demo_account
+  from public.installs i
+  join public.agents a on a.id = i.agent_id
+  join public.users u on u.id = a.owner_user_id
+  left join y_private.install_demo_accounts d on d.install_id = i.id
+  where i.token_hash = p_token_hash
+$fn$;
+revoke all on function api.resolve_install_token(text) from public;
+grant execute on function api.resolve_install_token(text) to anon, authenticated, service_role;
+
+-- ------------------------------------------- 8. real GitHub accounts
+
+-- A real GitHub sign-up (auth provider github), whatever its github_id.
+create or replace function y_private.is_github_user(p_user_id uuid)
+returns boolean
+language sql stable security definer
+set search_path = ''
+as $fn$
+  select exists (
+    select 1 from auth.users a
+    where a.id = p_user_id and y_private.is_github_app(a.raw_app_meta_data)
+  )
+$fn$;
+revoke all on function y_private.is_github_user(uuid) from public;
+grant execute on function y_private.is_github_user(uuid) to service_role;

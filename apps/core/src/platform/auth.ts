@@ -26,6 +26,13 @@ const CACHE_MS = 60_000;
 export const AUTH_CACHE_MAX = 10_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const PULSE_TOKEN_TTL_S = 3600;
+/**
+ * Default end of the pulse-key transition (CoreConfig.pulseV1Until): until then a
+ * pulse token signed the old way (Y_INTERNAL_SECRET) still works, but only for a
+ * live install of its agent and owner and with at most PULSE_TOKEN_TTL_S to run,
+ * so listeners holding a pre-deploy token keep their wakes until it expires.
+ */
+export const PULSE_V1_SUNSET_S = Date.UTC(2026, 10, 1) / 1000;
 /** EventSource can't send headers: GET /api/v1/stream?token=<this>, valid 60 s. */
 export const STREAM_TOKEN_TTL_S = 60;
 /** Step-up window (I5): review decisions and owner instructions need a web login newer than this. */
@@ -74,6 +81,7 @@ interface InstallRow {
   revoked: boolean;
   agent_status: string;
   user_status: string;
+  demo_account?: string | null;
 }
 
 export function installCaller(userId: string, agentId: string, installId: string): Caller {
@@ -86,9 +94,11 @@ export function installCaller(userId: string, agentId: string, installId: string
   };
 }
 
-export function webCaller(userId: string, via: 'web' | 'dev', authTime: number | null = null): Caller {
+export function webCaller(userId: string, via: 'web' | 'dev', authTime: number | null = null, demoAccount: string | null = null): Caller {
   // claims.via is 'web' for both: is_human() keys on it (dev sessions are human web sessions).
-  return { userId, agentId: null, installId: null, via, claims: { sub: userId, via: 'web' }, authTime };
+  const c: Caller = { userId, agentId: null, installId: null, via, claims: { sub: userId, via: 'web' }, authTime };
+  if (demoAccount) c.demoAccount = demoAccount;
+  return c;
 }
 
 export class PlatformAuth implements AuthService {
@@ -103,6 +113,9 @@ export class PlatformAuth implements AuthService {
   private readonly jwks: JWTVerifyGetKey | null;
   private readonly hsKey: Uint8Array | null;
   private readonly pulseKey: string;
+  /** The pre-rt/auth pulse key, accepted only during the transition (see PULSE_V1_SUNSET_S). */
+  private readonly pulseKeyV1: string;
+  private readonly pulseV1Until: number;
   private readonly streamKey: string;
 
   constructor(
@@ -117,6 +130,8 @@ export class PlatformAuth implements AuthService {
     // calls) but never Y_HMAC_KEY, so it cannot mint pulse or stream tokens.
     this.pulseKey = `y-pulse-v2\n${config.hmacKey}`;
     this.streamKey = `y-stream-v2\n${config.hmacKey}`;
+    this.pulseKeyV1 = `y-pulse-v1\n${config.internalSecret}`;
+    this.pulseV1Until = config.pulseV1Until ?? PULSE_V1_SUNSET_S;
     this.cacheMax = Math.max(1, opts.cacheMax ?? AUTH_CACHE_MAX);
   }
 
@@ -134,10 +149,18 @@ export class PlatformAuth implements AuthService {
     return Boolean(row && !row.revoked && row.agent_status === 'active' && row.user_status === 'active');
   }
 
+  /** Does this server still offer the demo account a credential was minted for? (Untagged: yes.) */
+  private demoOk(tag: string | null | undefined): boolean {
+    if (!tag) return true;
+    return (this.config.demoAccount ?? '').toLowerCase() === tag.toLowerCase();
+  }
+
   /** A 60 s token for GET /api/v1/stream?token= (web callers only). */
   mintStreamToken(caller: Caller): { token: string; expiresAt: string } {
     const exp = Math.floor(this.now().getTime() / 1000) + STREAM_TOKEN_TTL_S;
-    const body = Buffer.from(JSON.stringify({ u: caller.userId, v: caller.via, t: caller.authTime ?? null, e: exp })).toString('base64url');
+    const claims: Record<string, unknown> = { u: caller.userId, v: caller.via, t: caller.authTime ?? null, e: exp };
+    if (caller.demoAccount) claims.d = caller.demoAccount;
+    const body = Buffer.from(JSON.stringify(claims)).toString('base64url');
     return { token: `${STREAM_TOKEN_PREFIX}${body}.${hmacHex(this.streamKey, body)}`, expiresAt: new Date(exp * 1000).toISOString() };
   }
 
@@ -150,9 +173,11 @@ export class PlatformAuth implements AuthService {
     const body = rest.slice(0, dot);
     if (!safeEqual(hmacHex(this.streamKey, body), rest.slice(dot + 1))) return null;
     try {
-      const p = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as { u: string; v: string; t: number | null; e: number };
+      const p = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as { u: string; v: string; t: number | null; e: number; d?: unknown };
       if (typeof p.e !== 'number' || p.e * 1000 < this.now().getTime() || typeof p.u !== 'string' || !p.u) return null;
-      return webCaller(p.u, p.v === 'dev' ? 'dev' : 'web', typeof p.t === 'number' ? p.t : null);
+      const demo = typeof p.d === 'string' && p.d ? p.d : null;
+      if (!this.demoOk(demo)) return null;
+      return webCaller(p.u, p.v === 'dev' ? 'dev' : 'web', typeof p.t === 'number' ? p.t : null, demo);
     } catch {
       return null;
     }
@@ -171,7 +196,8 @@ export class PlatformAuth implements AuthService {
     const r = rows.rows[0];
     let value: InstallResolution;
     if (!r) value = { state: 'unknown_install' };
-    else if (r.revoked || r.agent_status !== 'active' || r.user_status !== 'active') value = { state: 'revoked' };
+    // A token minted from a /dev/demo session ends with that demo account (#44).
+    else if (r.revoked || r.agent_status !== 'active' || r.user_status !== 'active' || !this.demoOk(r.demo_account)) value = { state: 'revoked' };
     else
       value = {
         state: 'ok',
@@ -205,10 +231,18 @@ export class PlatformAuth implements AuthService {
     const dot = rest.lastIndexOf('.');
     if (dot <= 0) return null;
     const body = rest.slice(0, dot);
-    if (!safeEqual(hmacHex(this.pulseKey, body), rest.slice(dot + 1))) return null;
+    const sig = rest.slice(dot + 1);
+    const nowS = this.now().getTime() / 1000;
+    let v1 = false;
+    if (!safeEqual(hmacHex(this.pulseKey, body), sig)) {
+      // Transition: a pre-deploy token, while the window is open (callers still check the install binding).
+      if (!(nowS < this.pulseV1Until && safeEqual(hmacHex(this.pulseKeyV1, body), sig))) return null;
+      v1 = true;
+    }
     try {
       const p = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as { u: string; a: string; i: string; e: number };
       if (typeof p.e !== 'number' || p.e * 1000 < this.now().getTime()) return null;
+      if (v1 && (p.e > this.pulseV1Until || p.e - nowS > PULSE_TOKEN_TTL_S + 60)) return null;
       if (typeof p.u !== 'string' || typeof p.a !== 'string' || typeof p.i !== 'string') return null;
       if (!UUID_RE.test(p.u) || !UUID_RE.test(p.a) || !UUID_RE.test(p.i)) return null;
       return installCaller(p.u, p.a, p.i);
@@ -224,7 +258,7 @@ export class PlatformAuth implements AuthService {
     const hit = this.pulseCache.get(key);
     if (hit && t - hit.at < CACHE_MS) return hit.value;
     const r = await this.db.asService((tx) =>
-      tx.query<{ agent_id: string; owner_user_id: string; revoked: boolean; agent_status: string; user_status: string }>(
+      tx.query<{ agent_id: string; owner_user_id: string; revoked: boolean; agent_status: string; user_status: string; demo_account: string | null }>(
         'select * from api.pulse_install($1)',
         [caller.installId],
       ),
@@ -236,7 +270,8 @@ export class PlatformAuth implements AuthService {
         row.owner_user_id === caller.userId &&
         !row.revoked &&
         row.agent_status === 'active' &&
-        row.user_status === 'active',
+        row.user_status === 'active' &&
+        this.demoOk(row.demo_account),
     );
     setBounded(this.pulseCache, key, { at: t, value: ok }, this.cacheMax);
     return ok;
@@ -257,9 +292,8 @@ export class PlatformAuth implements AuthService {
     const r = rows.rows[0];
     // A /dev/demo session lives only as long as the server still offers that demo account.
     const demo = r?.demo_account ?? null;
-    const demoOk = demo === null || (this.config.demoAccount ?? '').toLowerCase() === demo.toLowerCase();
     const value =
-      r && r.user_status === 'active' && demoOk ? webCaller(r.user_id, 'dev', Math.floor(new Date(r.created_at).getTime() / 1000)) : null;
+      r && r.user_status === 'active' && this.demoOk(demo) ? webCaller(r.user_id, 'dev', Math.floor(new Date(r.created_at).getTime() / 1000), demo) : null;
     setBounded(this.webCache, hash, { at: t, value }, this.cacheMax);
     return value;
   }

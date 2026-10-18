@@ -41,6 +41,12 @@ export interface CoreConfig {
    * anyone into, with full access (the hosted hackathon demo). Null = off.
    */
   demoAccount?: string | null;
+  /**
+   * Y_PULSE_V1_UNTIL: until when (unix seconds) pulse tokens signed the pre-rt/auth
+   * way (Y_INTERNAL_SECRET) are still accepted, bound to a live install, so live
+   * listeners survive the key change. 0 = never. Unset = PULSE_V1_SUNSET_S.
+   */
+  pulseV1Until?: number;
   /** Y_WEB_ORIGIN (comma list): CORS + Origin check for browser callers. */
   webOrigins?: string[];
   /** gte embedder (Y_EMBEDDINGS=gte): Y_EMBED_URL (or SUPABASE_URL) + Y_EMBED_SECRET. */
@@ -69,6 +75,8 @@ export interface Caller {
    * Dev sessions: web_sessions.created_at; Supabase: the latest `amr` timestamp. Null = unknown (fails step-up).
    */
   authTime?: number | null;
+  /** /dev/demo sessions: the Y_DEMO_ACCOUNT login they were minted for; credentials they mint carry it too. */
+  demoAccount?: string | null;
 }
 
 export interface AuthService {

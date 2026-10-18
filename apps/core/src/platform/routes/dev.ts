@@ -97,8 +97,15 @@ export function registerDevRoutes(app: Hono, deps: CoreDeps): void {
     if (!login) return fail(c, 'NOT_FOUND', 'no demo account on this server');
     const found = await deps.db.asService((tx) =>
       // Only the real GitHub account: never a dev user (or another provider) squatting its login.
+      // Its github_id may be null (provisioned from a JWT, or a github_id collision), so the
+      // GitHub auth provider counts too.
       tx.query<{ id: string; handle: string }>(
-        'select id, handle from public.users where lower(github_login::text) = lower($1) and github_id is not null',
+        `select id, handle from public.users
+          where lower(github_login::text) = lower($1)
+            and not y_private.is_dev_user(id)
+            and (github_id is not null or y_private.is_github_user(id))
+          order by (github_id is not null) desc
+          limit 1`,
         [login],
       ),
     );

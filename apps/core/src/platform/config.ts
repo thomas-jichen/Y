@@ -82,6 +82,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
     teamId: slackTeam,
     webUrl: (str(env.Y_WEB_URL) ?? 'https://y-web-beta.vercel.app').replace(/\/+$/, ''),
   };
+  const pv1 = str(env.Y_PULSE_V1_UNTIL);
+  let pulseV1Until: number | undefined;
+  if (pv1) {
+    const n = pv1 === 'off' ? 0 : /^\d+$/.test(pv1) ? Number(pv1) : Math.floor(Date.parse(pv1) / 1000);
+    if (!Number.isFinite(n)) throw new Error('Y_PULSE_V1_UNTIL must be unix seconds, an ISO date, or off');
+    pulseV1Until = n;
+  }
   const rt = env.Y_REALTIME_REST?.trim();
   const realtimeRest = rt === 'on' || rt === 'off' ? rt : 'auto';
 
@@ -101,6 +108,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
     cronSecret,
     demoSecret,
     demoAccount: str(env.Y_DEMO_ACCOUNT),
+    ...(pulseV1Until !== undefined ? { pulseV1Until } : {}),
     webOrigins,
     embed,
     realtimeRest,

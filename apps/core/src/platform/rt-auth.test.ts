@@ -108,7 +108,8 @@ describe('pulse and stream tokens (#3, #31)', () => {
   let agent: string;
   let pulse: string;
   beforeAll(async () => {
-    ctx = await appFor(loadConfig(env()));
+    // Transition window closed: only v2 (Y_HMAC_KEY) pulse tokens.
+    ctx = await appFor(loadConfig(env({ Y_PULSE_V1_UNTIL: 'off' })));
     const web = (await req(ctx.f, 'POST', '/api/v1/dev/login', { body: { githubLogin: `pls-${rnd()}` }, headers: H })).json!.token as string;
     agent = ConnectToken.parse((await req(ctx.f, 'POST', '/api/v1/connect/token', { token: web, body: { harness: 'claude_code' } })).json).token;
     pulse = (await req(ctx.f, 'GET', '/api/v1/agent/brief?pluginVersion=0.1.0&harness=claude_code', { token: agent })).json!.pulseToken.token as string;
@@ -134,6 +135,32 @@ describe('pulse and stream tokens (#3, #31)', () => {
     expect(await auth.verifyBearer(`Bearer ${otherAgent}`)).toBeNull();
     const otherUser = auth.mintPulseToken({ ...real, userId: randomUUID() }).token;
     expect(await auth.verifyBearer(`Bearer ${otherUser}`)).toBeNull();
+  });
+
+  it('during the key transition a pre-deploy (v1) pulse token works only for its live install, until the cutoff', async () => {
+    const real = (await ctx.deps.auth.verifyBearer(`Bearer ${pulse}`))!;
+    const nowS = Math.floor(Date.now() / 1000);
+    const v1 = (claims: Record<string, unknown>) => {
+      const body = Buffer.from(JSON.stringify(claims)).toString('base64url');
+      return `${PULSE_TOKEN_PREFIX}${body}.${hmacHex(`y-pulse-v1\n${INTERNAL}`, body)}`;
+    };
+    const legit = v1({ u: real.userId, a: real.agentId, i: real.installId, e: nowS + 3000 });
+    const open = new PlatformAuth({ ...ctx.deps.config, pulseV1Until: nowS + 7200 }, db, () => new Date(), { jwks });
+    expect((await open.verifyBearer(`Bearer ${legit}`))?.installId).toBe(real.installId);
+    // Still bound to a live install of that agent and owner.
+    expect(await open.verifyBearer(`Bearer ${v1({ u: real.userId, a: real.agentId, i: randomUUID(), e: nowS + 3000 })}`)).toBeNull();
+    expect(await open.verifyBearer(`Bearer ${v1({ u: real.userId, a: randomUUID(), i: real.installId, e: nowS + 3000 })}`)).toBeNull();
+    // No long-lived v1 tokens, none outliving the cutoff.
+    expect(await open.verifyBearer(`Bearer ${v1({ u: real.userId, a: real.agentId, i: real.installId, e: nowS + 5 * 3600 })}`)).toBeNull();
+    const closing = new PlatformAuth({ ...ctx.deps.config, pulseV1Until: nowS + 600 }, db, () => new Date(), { jwks });
+    expect(await closing.verifyBearer(`Bearer ${legit}`)).toBeNull();
+    const closed = new PlatformAuth({ ...ctx.deps.config, pulseV1Until: nowS - 1 }, db, () => new Date(), { jwks });
+    expect(await closed.verifyBearer(`Bearer ${legit}`)).toBeNull();
+    // v2 tokens are unaffected by the window.
+    expect((await closed.verifyBearer(`Bearer ${pulse}`))?.installId).toBe(real.installId);
+    expect(loadConfig(env({ Y_PULSE_V1_UNTIL: '2026-11-01T00:00:00Z' })).pulseV1Until).toBe(Date.UTC(2026, 10, 1) / 1000);
+    expect(loadConfig(env()).pulseV1Until).toBeUndefined();
+    expect(() => loadConfig(env({ Y_PULSE_V1_UNTIL: 'soon' }))).toThrow(/Y_PULSE_V1_UNTIL/);
   });
 
   it('revoking the install stops its pulse token on every route, not only /pulse', async () => {
@@ -302,8 +329,15 @@ describe('dev and demo login guards (#4, #42, #43, #44)', () => {
     const cto = `futurecto-${rnd()}`;
     const squat = await login(cto);
     expect(squat.status).toBe(200);
+    const squatId = squat.json!.user.id as string;
+    expect((await req(ctx.f, 'GET', '/api/v1/me', { token: squat.json!.token })).status).toBe(200);
     const real = await githubUser(cto, 4_000_000 + Math.floor(Math.random() * 1e6));
     expect((await login(cto)).status).toBe(409);
+    // The squatter keeps its handle but no longer claims the GitHub login, and its sessions end.
+    expect((await userRow(squatId))!).toMatchObject({ handle: cto, github_login: null });
+    expect((await userRow(real))!.github_login).toBe(cto);
+    const cold = await appFor(loadConfig(env()));
+    expect((await req(cold.f, 'GET', '/api/v1/me', { token: squat.json!.token })).status).toBe(401);
     const demo = await appFor(loadConfig(env({ Y_DEMO_ACCOUNT: cto })));
     const d = await req(demo.f, 'POST', '/api/v1/dev/demo', { headers: H });
     expect(d.status).toBe(200);
@@ -313,6 +347,51 @@ describe('dev and demo login guards (#4, #42, #43, #44)', () => {
     await login(only);
     const none = await appFor(loadConfig(env({ Y_DEMO_ACCOUNT: only })));
     expect((await req(none.f, 'POST', '/api/v1/dev/demo', { headers: H })).status).toBe(404);
+  }, 60_000);
+
+  it('/dev/demo signs into a real GitHub account whose github_id is null', async () => {
+    const owner = `nullid-${rnd()}`;
+    const sub = randomUUID();
+    // Provisioned from its first access token (local shim): no github_id from user_metadata.
+    const token = await sign({ sub, user_metadata: { user_name: owner, provider_id: '31337' }, app_metadata: { provider: 'github', providers: ['github'] } });
+    expect((await req(ctx.f, 'GET', '/api/v1/me', { token })).status).toBe(200);
+    expect((await userRow(sub))!).toMatchObject({ github_login: owner, github_id: null });
+    const demo = await appFor(loadConfig(env({ Y_DEMO_ACCOUNT: owner.toUpperCase() })));
+    const d = await req(demo.f, 'POST', '/api/v1/dev/demo', { headers: H });
+    expect(d.status).toBe(200);
+    expect(d.json!.user.id).toBe(sub);
+  }, 60_000);
+
+  it('install, pulse and stream tokens minted from a demo session end with the demo account', async () => {
+    const owner = `judge2-${rnd()}`;
+    await githubUser(owner, 2_500_000 + Math.floor(Math.random() * 1e6));
+    const on = await appFor(loadConfig(env({ Y_DEMO_ACCOUNT: owner })));
+    const d = await req(on.f, 'POST', '/api/v1/dev/demo', { headers: H });
+    expect(d.status).toBe(200);
+    const agent = ConnectToken.parse((await req(on.f, 'POST', '/api/v1/connect/token', { token: d.json!.token, body: { harness: 'claude_code' } })).json).token;
+    const brief = await req(on.f, 'GET', '/api/v1/agent/brief?pluginVersion=0.1.0&harness=claude_code', { token: agent });
+    expect(brief.status).toBe(200);
+    const pulse = brief.json!.pulseToken.token as string;
+    expect((await on.deps.auth.verifyBearer(`Bearer ${pulse}`))?.via).toBe('install');
+    const webCaller = (await on.deps.auth.verifyBearer(`Bearer ${d.json!.token}`))!;
+    expect(webCaller.demoAccount).toBe(owner);
+    const stream = (on.deps.auth as PlatformAuth).mintStreamToken(webCaller).token;
+    expect((on.deps.auth as PlatformAuth).verifyStreamToken(stream)?.userId).toBe(webCaller.userId);
+    // A plain dev session's install token is untagged.
+    const dev = await login(`plain2-${rnd()}`);
+    const devAgent = ConnectToken.parse((await req(on.f, 'POST', '/api/v1/connect/token', { token: dev.json!.token, body: { harness: 'claude_code' } })).json).token;
+
+    const off = await appFor(loadConfig(env()));
+    expect(await off.deps.auth.verifyBearer(`Bearer ${agent}`)).toBeNull();
+    expect(await off.deps.auth.verifyBearer(`Bearer ${pulse}`)).toBeNull();
+    expect((off.deps.auth as PlatformAuth).verifyStreamToken(stream)).toBeNull();
+    expect((await req(off.f, 'POST', '/api/v1/ingest', { token: agent, body: fx.ingestChunk({ sessionId: `demo-${rnd()}`, seq: 0 }) })).status).toBe(401);
+    expect((await off.deps.auth.verifyBearer(`Bearer ${devAgent}`))?.via).toBe('install');
+    const other = await appFor(loadConfig(env({ Y_DEMO_ACCOUNT: `someone-${rnd()}` })));
+    expect(await other.deps.auth.verifyBearer(`Bearer ${agent}`)).toBeNull();
+    const same = await appFor(loadConfig(env({ Y_DEMO_ACCOUNT: owner.toUpperCase() })));
+    expect((await same.deps.auth.verifyBearer(`Bearer ${agent}`))?.via).toBe('install');
+    expect((await same.deps.auth.verifyBearer(`Bearer ${pulse}`))?.via).toBe('install');
   }, 60_000);
 
   it('demo-account sessions end when Y_DEMO_ACCOUNT is unset or changed; dev sessions do not', async () => {
