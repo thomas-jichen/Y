@@ -53,13 +53,13 @@ export async function issueOwnerInstruction(
   }
   const key = a.idempotencyKey;
   if (key) {
-    const prior = await priorInstruction(deps, a.userId, key);
+    const prior = await priorInstruction(deps, a, key);
     if (prior) return prior;
     try {
       return await issueNew(deps, a, target, key);
     } catch (err) {
       // A concurrent request with the same key won the insert: return its instruction.
-      const won = await priorInstruction(deps, a.userId, key);
+      const won = await priorInstruction(deps, a, key);
       if (won) return won;
       throw err;
     }
@@ -67,16 +67,26 @@ export async function issueOwnerInstruction(
   return issueNew(deps, a, target, null);
 }
 
-/** The instruction already issued for (user, Idempotency-Key), if any (service role). */
-async function priorInstruction(deps: CoreDeps, userId: string, key: string): Promise<(InstructResponse & { agentId: string; handle: string }) | null> {
+/**
+ * The instruction already issued for (user, Idempotency-Key), if any (service role). A key is
+ * bound to what it first issued: replaying it for another thread, agent or body is a CONFLICT,
+ * never a silent "already done".
+ */
+async function priorInstruction(
+  deps: CoreDeps, a: { userId: string; threadId: string; agentId?: string; body: string; via: 'web' | 'slack' }, key: string,
+): Promise<(InstructResponse & { agentId: string; handle: string }) | null> {
   return deps.db.asService(async (tx) => {
-    const r = await tx.query<{ id: string; agent_id: string; handle: string; requires_confirm: boolean; confirmed_at: Date | string | null }>(
-      `select o.id, o.agent_id, a.handle::text as handle, o.requires_confirm, o.confirmed_at
+    const r = await tx.query<{ id: string; agent_id: string; handle: string; requires_confirm: boolean; confirmed_at: Date | string | null;
+      thread_id: string | null; body: string; verified_via: string }>(
+      `select o.id, o.agent_id, a.handle::text as handle, o.requires_confirm, o.confirmed_at, o.thread_id, o.body, o.verified_via
          from y_private.owner_instruction_keys k join public.owner_instructions o on o.id = k.owner_instruction_id
          join public.agents a on a.id = o.agent_id
-        where k.user_id = $1 and k.idempotency_key = $2`, [userId, key]);
+        where k.user_id = $1 and k.idempotency_key = $2`, [a.userId, key]);
     const row = r.rows[0];
     if (!row) return null;
+    if (row.thread_id !== a.threadId || row.body !== a.body || row.verified_via !== a.via || (a.agentId && row.agent_id !== a.agentId)) {
+      throw new HttpError('CONFLICT', 'Idempotency-Key was already used for a different instruction');
+    }
     const state: InstructResponse['state'] = row.requires_confirm && !row.confirmed_at ? 'awaiting_confirm' : 'queued';
     return { id: wire('ownerInstruction', row.id) as InstructResponse['id'], state, agentId: row.agent_id, handle: row.handle };
   });

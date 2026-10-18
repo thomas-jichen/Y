@@ -209,24 +209,10 @@ async function hasPrivateTable(deps: CoreDeps, name: 'thread_pauses' | 'owner_in
     (await s.query<{ ok: boolean }>(`select to_regclass($1) is not null as ok`, [`y_private.${name}`])).rows[0]?.ok === true);
 }
 
-async function pausedBy(deps: CoreDeps, threadId: string): Promise<string | null> {
-  if (!(await hasPrivateTable(deps, 'thread_pauses'))) return null;
-  return deps.db.asService(async (s) =>
-    (await s.query<{ paused_by: string }>(`select paused_by from y_private.thread_pauses where thread_id = $1`, [threadId])).rows[0]?.paused_by ?? null);
-}
-
-/** Record (or clear, with null) who paused the thread. */
-async function recordPause(deps: CoreDeps, threadId: string, userId: string | null): Promise<void> {
-  if (!(await hasPrivateTable(deps, 'thread_pauses'))) return;
-  await deps.db.asService(async (s) => {
-    if (userId) {
-      await s.query(
-        `insert into y_private.thread_pauses (thread_id, paused_by) values ($1, $2)
-         on conflict (thread_id) do update set paused_by = excluded.paused_by, paused_at = now()`, [threadId, userId]);
-    } else {
-      await s.query(`delete from y_private.thread_pauses where thread_id = $1`, [threadId]);
-    }
-  });
+/** The 9103 pause trigger refusing a human who is not the pauser (or a teammate of theirs). */
+function isPauseOwnerError(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown } | null;
+  return !!e && e.code === '42501' && typeof e.message === 'string' && e.message.includes('only the owner who paused this thread');
 }
 
 export function registerThreadRoutes(app: App, deps: CoreDeps): void {
@@ -354,9 +340,9 @@ export function registerThreadRoutes(app: App, deps: CoreDeps): void {
       try {
         const caller = await human(c.req.header('authorization'));
         const threadId = bare('thread', c.req.param('id'));
-        // Who paused it (service-only bookkeeping, 9103): only they or a teammate of theirs lift the pause.
-        const pauser = action === 'pause' ? null : await pausedBy(deps, threadId);
-        const moved = await deps.db.asUser(caller.claims, async (tx) => {
+        // Who paused it is recorded by the database (9103 trigger, same statement): only they or a
+        // teammate of theirs lift the pause, whichever way the row is updated.
+        await deps.db.asUser(caller.claims, async (tx) => {
           const t = await tx.query<{ state: string }>(`select state from public.threads where id = $1`, [threadId]);
           const cur = t.rows[0]?.state;
           if (!cur) throw new HttpError('NOT_FOUND', 'thread not found');
@@ -364,18 +350,17 @@ export function registerThreadRoutes(app: App, deps: CoreDeps): void {
           const allowed = action === 'pause' ? cur === 'open'
             : action === 'resolve' ? cur === 'open' || cur === 'paused_by_owner'
               : cur === 'paused_by_owner' || cur === 'resolved';
-          if (cur === next) return null;
+          if (cur === next) return;
           if (!allowed) throw new HttpError('CONFLICT', `cannot ${action} a ${cur} thread`);
-          if (cur === 'paused_by_owner' && pauser && pauser !== caller.userId) {
-            const rel = await relationshipBetween(tx, caller.userId, pauser);
-            if (rel !== 'self' && rel !== 'teammate') {
+          try {
+            await tx.query(`update public.threads set state = $2 where id = $1`, [threadId, next]);
+          } catch (err) {
+            if (isPauseOwnerError(err)) {
               throw new HttpError('SCOPE_FORBIDDEN', 'only the owner who paused this thread (or a teammate of theirs) can lift the pause');
             }
+            throw err;
           }
-          await tx.query(`update public.threads set state = $2 where id = $1`, [threadId, next]);
-          return { from: cur, to: next };
         });
-        if (moved) await recordPause(deps, threadId, moved.to === 'paused_by_owner' ? caller.userId : null);
         return c.json(await threadView(deps, caller, threadId));
       } catch (err) { return errorResponse(c, err, deps); }
     });

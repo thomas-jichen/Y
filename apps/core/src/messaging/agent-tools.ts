@@ -212,7 +212,6 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
   const senderAgentIds = [...new Set(rows.filter((x) => x.sender_kind === 'agent' && x.sender_id).map((x) => x.sender_id!))];
   const senderUserIds = [...new Set(rows.filter((x) => x.sender_kind === 'user' && x.sender_id).map((x) => x.sender_id!))];
   const { infos, users } = await deps.db.asService(async (s) => ({ infos: await agentInfos(s, senderAgentIds), users: await userInfos(s, senderUserIds) }));
-  const threads = await buildSummaries(deps, caller, agentId, loaded);
 
   const messages: InboxOutput['messages'] = [];
   const returned: InboxRow[] = [];
@@ -279,6 +278,19 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
     ownerInstructions.push(item);
     returnedOi.push(o);
   }
+
+  // Thread summaries report what is still unread AFTER this read (phase 3 marks the returned
+  // deliveries seen), as they did when marking ran before the counts were loaded.
+  const seenNow = new Map<string, number>();
+  for (const row of returned) {
+    const t = deliveryTransition(row.delivery_state as 'pending', 'seen');
+    if ((row.delivery_state === 'pending' || row.delivery_state === 'pointer_sent') && t.ok && t.state !== row.delivery_state) {
+      seenNow.set(row.thread_id, (seenNow.get(row.thread_id) ?? 0) + 1);
+    }
+  }
+  const threads = await buildSummaries(deps, caller, agentId, {
+    ...loaded, threads: loaded.threads.map((th) => ({ ...th, unread: Math.max(0, th.unread - (seenNow.get(th.id) ?? 0)) })),
+  });
 
   const out: InboxOutput = { messages, owner_instructions: ownerInstructions, threads };
   const last = rows[rows.length - 1];
