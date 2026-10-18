@@ -24507,21 +24507,85 @@ function addGeneric(text, taken, out) {
 }
 var SECRET_KEY_RUN_RE = /[A-Za-z0-9_.-]+/g;
 var SECRET_KEY_HINT_RE = /pass|pwd|secret|token|key|cred|auth/i;
-var PASSWORD_WORDS = /* @__PURE__ */ new Set(["pwd", "pass"]);
+var PASSWORD_SHORT_WORDS = /* @__PURE__ */ new Set(["pwd", "pass"]);
+var PASS_NON_SECRET_QUALIFIERS = /* @__PURE__ */ new Set([
+  "test",
+  "tests",
+  "spec",
+  "specs",
+  "all",
+  "first",
+  "second",
+  "third",
+  "final",
+  "last",
+  "next",
+  "one",
+  "two",
+  "single",
+  "multi",
+  "ci",
+  "lint",
+  "check",
+  "checks",
+  "build",
+  "unit",
+  "e2e",
+  "render",
+  "compile",
+  "by",
+  "no",
+  "day",
+  "season",
+  "boarding",
+  "bus",
+  "hall",
+  "free",
+  "can",
+  "did",
+  "will",
+  "should",
+  "must",
+  "to",
+  "on",
+  "if"
+]);
 var PASSWORD_SUFFIX_RE = /(?:password|passwd|passphrase)$/;
 var SECRET_WORDS = /* @__PURE__ */ new Set(["secret", "token", "auth", "credential", "credentials", "apikey"]);
 var SECRET_ONE_WORDS = /(?:secret|apikey|accesskey|privatekey|secretkey|signingkey|authtoken|accesstoken|refreshtoken|apitoken|credentials?)$/;
 var KEY_QUALIFIERS = /* @__PURE__ */ new Set(["api", "access", "private", "secret", "client", "auth", "signing", "encryption", "master"]);
-var BARE_CHAR = String.raw`[^\s"'` + "`" + String.raw`;&|()<>{}[\],⏎]`;
+var KEY_SUFFIX_QUALIFIERS = /* @__PURE__ */ new Set([
+  "prod",
+  "production",
+  "dev",
+  "development",
+  "staging",
+  "stage",
+  "test",
+  "qa",
+  "local",
+  "primary",
+  "replica",
+  "ro",
+  "rw",
+  "old",
+  "new",
+  "current",
+  "next",
+  "prev",
+  "previous",
+  "base",
+  "value",
+  "default"
+]);
 var QUOTED_TAIL_RE = new RegExp(
   String.raw`(?:\\?["'])?[ \t]*(?::=|=>|=(?![=~])|:(?!:))[ \t]*(?:"((?:[^"\\\n\r⏎]|\\.){1,512})"|'([^'\n\r⏎]{1,512})'|\\"((?:[^"\\\n\r⏎]|\\(?!")){1,512})\\")`,
   "dy"
 );
-var ENV_TAIL_RE = new RegExp(String.raw`=(` + BARE_CHAR + String.raw`{1,512})(?=$|[\s;&|)⏎])`, "dy");
-var INI_TAIL_RE = new RegExp(String.raw`[ \t]*=(?![=>~])[ \t]*(` + BARE_CHAR + String.raw`{1,512})[ \t]*(?:#[^\n\r⏎]*)?(?=$|[\r\n⏎])`, "dy");
-var YAML_TAIL_RE = /["']?[ \t]*:[ \t]+([^\n\r⏎]{1,512})(?=$|[\r\n⏎])/dy;
+var ENV_TAIL_RE = new RegExp(String.raw`=(?![=~])([^\s"'` + "`" + String.raw`⏎]{1,512})(?=$|[\s⏎])`, "dy");
+var LINE_TAIL_RE = /["']?[ \t]*(=(?![=>~])|:(?=[ \t]))[ \t]*([^\n\r⏎]{1,512})(?=$|[\r\n⏎])/dy;
 var LINE_PREFIX_RE = /^[ \t]*(?:(?:OK|ERROR|TOOL) [A-Za-z0-9_.:-]{1,64}: )?[ \t+>-]*(?:export[ \t]+)?["']?$/;
-var REFERENCE_RE = /^\$|\$\{|\{\{|^%|^<.*>$|process\.env|^env\.|os\.environ|getenv|^@/;
+var REFERENCE_RE = /^\$|\$\{|\{\{|^%|^<|process\.env|^env\.|os\.environ|getenv|^@/;
 var LITERAL_WORD_RE = /^(?:true|false|null|nil|none|undefined|yes|no|on|off)$/i;
 var TYPE_WORDS = /* @__PURE__ */ new Set([
   "string",
@@ -24551,20 +24615,196 @@ var TYPE_WORDS = /* @__PURE__ */ new Set([
   "secretstr",
   "null",
   "none",
-  "undefined"
+  "undefined",
+  "buffer",
+  "keyobject",
+  "cryptokey"
+]);
+var STATUS_WORDS = /* @__PURE__ */ new Set([
+  "hashed",
+  "hashing",
+  "encrypted",
+  "encrypt",
+  "masked",
+  "hidden",
+  "omitted",
+  "removed",
+  "set",
+  "unset",
+  "missing",
+  "invalid",
+  "valid",
+  "empty",
+  "blank",
+  "generated",
+  "random",
+  "rotated",
+  "expired",
+  "reset",
+  "changed",
+  "updated",
+  "stored",
+  "saved",
+  "secure",
+  "insecure",
+  "weak",
+  "strong",
+  "ok",
+  "pass",
+  "passed",
+  "passing",
+  "fail",
+  "failed",
+  "failing",
+  "green",
+  "red",
+  "see",
+  "below",
+  "above",
+  "same",
+  "prompt",
+  "prompted",
+  "ask",
+  "tbd",
+  "default",
+  "env",
+  "environment",
+  "vault",
+  "keychain",
+  "keyring",
+  "ignored",
+  "disabled",
+  "enabled",
+  "provided",
+  "supplied",
+  "needed",
+  "input",
+  "getpass",
+  "unchanged",
+  "none",
+  "n/a",
+  "na",
+  "hash",
+  "digest",
+  "value",
+  "plain",
+  "plaintext",
+  "cleartext",
+  "raw",
+  "salted"
+]);
+var PROSE_WORDS = /* @__PURE__ */ new Set([
+  "the",
+  "a",
+  "an",
+  "it",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "to",
+  "via",
+  "with",
+  "without",
+  "see",
+  "use",
+  "using",
+  "must",
+  "should",
+  "will",
+  "can",
+  "could",
+  "may",
+  "now",
+  "of",
+  "for",
+  "in",
+  "on",
+  "and",
+  "or",
+  "not",
+  "from",
+  "by",
+  "at",
+  "as",
+  "this",
+  "that",
+  "these",
+  "those",
+  "your",
+  "our",
+  "my",
+  "its",
+  "their",
+  "if",
+  "when",
+  "then",
+  "than",
+  "into",
+  "only",
+  "also",
+  "please",
+  "each",
+  "every",
+  "any",
+  "all",
+  "more",
+  "less",
+  "least",
+  "most",
+  "reset",
+  "set",
+  "stored",
+  "hashed",
+  "hashing",
+  "encrypted",
+  "required"
+]);
+var PLACEHOLDER_WORDS = /* @__PURE__ */ new Set([
+  "example",
+  "examples",
+  "placeholder",
+  "changeme",
+  "redacted",
+  "dummy",
+  "sample",
+  "fake",
+  "test",
+  "todo",
+  "secret",
+  "password",
+  "here",
+  "replace",
+  "replaceme",
+  "insert"
 ]);
 var SLUG_RE = /^[a-z]+(?:-[a-z]+)+$/;
+var DIGIT_SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
+var UPPER_SNAKE_RE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/;
+var ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+var ALGORITHM_RE = /^(?:sha-?(?:1|224|256|384|512)|sha3-?\d{3}|md5|hmac[-_]?sha-?\d{1,3}|[hre]s(?:256|384|512)|ps(?:256|384|512)|eddsa|ed25519|bcrypt|scrypt|argon2(?:id|i|d)?|pbkdf2(?:[-_]sha-?\d{1,3})?|base64(?:url)?|hex|utf-?8|aes-?\d{3}(?:-[a-z]{3})?)$/i;
 function secretKeyKind(run) {
   const segs = run.split(".").filter((s2) => /[A-Za-z0-9]/.test(s2));
   const key = segs[segs.length - 1];
   if (!key) return void 0;
   const words = key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").split(/[-_]+/).filter(Boolean).map((w) => w.toLowerCase());
+  for (let n = 0; n < 2 && words.length > 1 && (KEY_SUFFIX_QUALIFIERS.has(words[words.length - 1]) || /^\d+$/.test(words[words.length - 1])); n++) {
+    words.pop();
+  }
   const last = words[words.length - 1];
   if (!last) return void 0;
   const upper = /^[A-Z][A-Z0-9_]*$/.test(key);
-  if (PASSWORD_WORDS.has(last) || PASSWORD_SUFFIX_RE.test(last)) return { kind: "password", noun: last, upper };
-  if (SECRET_WORDS.has(last) || words.length === 1 && SECRET_ONE_WORDS.test(last)) return { kind: "other", noun: last, upper };
-  if (last === "key" && words.length >= 2 && KEY_QUALIFIERS.has(words[words.length - 2])) return { kind: "other", noun: last, upper };
+  const sentence = /^[A-Z][a-z]+$/.test(key);
+  const prev = words.length >= 2 ? words[words.length - 2] : void 0;
+  if (PASSWORD_SHORT_WORDS.has(last)) {
+    if (prev === void 0 || PASS_NON_SECRET_QUALIFIERS.has(prev) || /^\d+$/.test(prev)) return void 0;
+    return { kind: "password", noun: last, upper, sentence };
+  }
+  if (PASSWORD_SUFFIX_RE.test(last)) return { kind: "password", noun: last, upper, sentence };
+  if (SECRET_WORDS.has(last) || words.length === 1 && SECRET_ONE_WORDS.test(last)) return { kind: "other", noun: last, upper, sentence };
+  if (last === "key" && prev !== void 0 && KEY_QUALIFIERS.has(prev)) return { kind: "other", noun: last, upper, sentence };
   return void 0;
 }
 function atLineStart(text, pos) {
@@ -24574,22 +24814,55 @@ function atLineStart(text, pos) {
   if (i === stop2 && i !== -1) return false;
   return LINE_PREFIX_RE.test(text.slice(i + 1, pos));
 }
+function quotedBranchKey(text, start) {
+  const q = text[start - 1];
+  if (q !== '"' && q !== "'" && q !== "`") return false;
+  let i = start - 2;
+  const stop2 = Math.max(-1, start - 18);
+  while (i > stop2 && (text[i] === " " || text[i] === "	")) i--;
+  if (i <= stop2) return false;
+  if (text[i] === "?") return true;
+  return text.slice(Math.max(0, i - 3), i + 1) === "case" && (i - 4 < 0 || !/[\w$]/.test(text[i - 4]));
+}
 var codeIdentifier = (v) => IDENTIFIER_LIKE_RE.test(v) && v.includes(".") || /^[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*$/.test(v) || /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/.test(v) || /^[$_]/.test(v);
-function secretValueOk(k, v, form) {
+function hasPlaceholderWord(v) {
+  if (/x{3,}/i.test(v) || /change[-_. ]?me/i.test(v)) return true;
+  const words = v.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w.toLowerCase().replace(/\d+$/, ""));
+  return words[0] === "your" || words.some((w) => PLACEHOLDER_WORDS.has(w));
+}
+function proseValue(v) {
+  const words = v.split(/[ \t]+/).filter(Boolean);
+  if (words.length === 1) return STATUS_WORDS.has(v.toLowerCase());
+  if (words.length > 3 || /[.!?:]$/.test(v)) return true;
+  if (/^\d/.test(words[0])) return true;
+  return words.some((w) => PROSE_WORDS.has(w.toLowerCase()));
+}
+function secretValueOk(k, v, form, lineOp = "") {
   if (v.length < (k.kind === "password" ? 4 : 6)) return false;
-  if (REFERENCE_RE.test(v) || LITERAL_WORD_RE.test(v) || PLACEHOLDER_WORD_RE.test(v)) return false;
-  if (/^(?:x+|\*+|\.+|_+|-+)$/i.test(v) || SLUG_RE.test(v)) return false;
+  if (REFERENCE_RE.test(v) || LITERAL_WORD_RE.test(v) || hasPlaceholderWord(v)) return false;
+  if (/^(?:x+|\*+|\.+|_+|-+)$/i.test(v) || SLUG_RE.test(v) || ALGORITHM_RE.test(v)) return false;
   if (k.noun.length >= 3 && v.toLowerCase().includes(k.noun)) return false;
   if (/:\/\//.test(v) || /^(?:\/|\.\.?\/|~)/.test(v)) return false;
+  const unquoted = form !== "quoted";
+  if (unquoted && (UUID_RE.test(v) || ULID_RE2.test(v) || PREFIXED_ID_RE.test(v) || ISO_DATE_RE.test(v))) return false;
   if (k.kind === "other") {
-    if (!hasDigit(v) || /\s/.test(v) || /^v?\d+(?:\.\d+)+$/.test(v)) return false;
+    if (/\s/.test(v) || /^v?\d+(?:\.\d+)+$/.test(v)) return false;
+    if (unquoted && (/^\d+$/.test(v) || DIGIT_SLUG_RE.test(v))) return false;
+    const tokenish = k.noun === "auth" || k.noun.endsWith("token");
+    if (!hasDigit(v)) {
+      if (tokenish || form === "line" || v.length < 8) return false;
+      if (UPPER_SNAKE_RE.test(v) || codeIdentifier(v) || TYPE_WORDS.has(v.toLowerCase()) || STATUS_WORDS.has(v.toLowerCase())) return false;
+    }
   }
   if (form === "line") {
+    if (lineOp === ":" && k.sentence) return false;
     const first = v.split(/[\s|]/)[0].toLowerCase();
     if (TYPE_WORDS.has(first) || /[(){}[\]<>;]|\s=\s|[,;]$/.test(v) || /^["'|>&*!%:]/.test(v)) return false;
+    if (/\s(?:[-+*/%^?]|&&|\|\||[=!]==?|[<>]=?)\s/.test(v)) return false;
+    if (k.kind === "password" && proseValue(v)) return false;
   }
-  if (form !== "quoted" && !(form === "env" || k.upper) && codeIdentifier(v)) return false;
-  if (form !== "quoted" && IDENTIFIER_LIKE_RE.test(v) && v.includes(".")) return false;
+  if (unquoted && !(form === "env" || k.upper) && codeIdentifier(v)) return false;
+  if (unquoted && IDENTIFIER_LIKE_RE.test(v) && v.includes(".")) return false;
   return true;
 }
 function addSecretKeyValues(text, taken, out) {
@@ -24601,15 +24874,22 @@ function addSecretKeyValues(text, taken, out) {
     if (!k) continue;
     const runEnd = m.index + run.length;
     let hit;
-    const tryTail = (re, form, trim = false) => {
+    const tryTail = (re, form, groups) => {
       re.lastIndex = runEnd;
       const t = re.exec(text);
       if (!t) return false;
-      const g = [1, 2, 3].find((n) => t[n] !== void 0);
+      const g = groups.find((n) => t[n] !== void 0);
       const idx = g === void 0 ? void 0 : t.indices?.[g];
       if (!idx) return true;
       let [start, end] = idx;
-      if (trim) {
+      if (form === "env") {
+        let open3 = 0;
+        for (let i = start; i < end; i++) open3 += text[i] === "(" ? 1 : text[i] === ")" ? -1 : 0;
+        while (end > start && (/[;&|]/.test(text[end - 1]) || text[end - 1] === ")" && open3 < 0)) {
+          if (text[end - 1] === ")") open3++;
+          end--;
+        }
+      } else if (form === "line") {
         const raw = text.slice(start, end);
         const hash2 = raw.search(/[ \t]#/);
         const cut = hash2 >= 0 ? raw.slice(0, hash2) : raw;
@@ -24617,13 +24897,14 @@ function addSecretKeyValues(text, taken, out) {
         end = start + cut.trim().length;
       }
       const v = text.slice(start, end);
-      if (v && secretValueOk(k, v, form)) hit = { start, end, matchEnd: t.index + t[0].length };
+      if (v && secretValueOk(k, v, form, form === "line" ? t[1] : "")) hit = { start, end, matchEnd: t.index + t[0].length };
       return true;
     };
-    if (!tryTail(QUOTED_TAIL_RE, "quoted")) {
+    if (quotedBranchKey(text, m.index)) continue;
+    if (!tryTail(QUOTED_TAIL_RE, "quoted", [1, 2, 3])) {
       const before = m.index > 0 ? text[m.index - 1] : "";
-      const envOk = k.upper && (before === "" || /[\s;&|(⏎]/.test(before)) && tryTail(ENV_TAIL_RE, "env");
-      if (!hit && !envOk && atLineStart(text, m.index) && !tryTail(INI_TAIL_RE, "line")) tryTail(YAML_TAIL_RE, "line", true);
+      const envOk = k.upper && (before === "" || /[\s;&|(⏎]/.test(before)) && tryTail(ENV_TAIL_RE, "env", [1]);
+      if (!hit && !envOk && atLineStart(text, m.index)) tryTail(LINE_TAIL_RE, "line", [2]);
     }
     if (!hit || overlaps(taken, hit.start, hit.end)) continue;
     const span = { start: hit.start, end: hit.end, ruleId: GENERIC_ID };
