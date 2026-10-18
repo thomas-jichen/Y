@@ -60,8 +60,11 @@ export function LoginScreen() {
 
           {DEV_LOGIN && (
             <form onSubmit={onDev}>
+              <p className="mb-5 border-l-2 border-text pl-3 text-ui">
+                <span className="font-medium">Judging the hackathon?</span> No account needed. Type any new handle below and you'll land in our team with our real history.
+              </p>
               <label htmlFor="dev-login" className="block text-caption text-text-2">
-                GitHub login (demo)
+                Pick any handle (demo)
               </label>
               <div className="mt-1 flex items-end gap-3 border-b border-rule focus-within:border-text">
                 <input
@@ -70,7 +73,7 @@ export function LoginScreen() {
                   onChange={(e) => setLogin(e.target.value)}
                   autoComplete="username"
                   spellCheck={false}
-                  placeholder="octocat"
+                  placeholder="judge-sam"
                   className="h-11 min-w-0 flex-1 bg-transparent text-body text-text outline-none placeholder:text-text placeholder:opacity-60"
                 />
                 <Button type="submit" variant={authConfig.github ? 'secondary' : 'primary'} className="mb-1.5" disabled={busy !== null}>
