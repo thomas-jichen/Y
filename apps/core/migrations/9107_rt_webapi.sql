@@ -33,9 +33,16 @@
 --   the COMMIT; a wait long enough to hit it means the ceiling above is
 --   reached.
 -- - A re-draw is a non-HOT update (new primary key, GIN audience and
---   created_at index entries, one dead tuple). It happens only when another
---   transaction drew a later id first (concurrent writers, several events in
---   one transaction); a lone writer keeps its id and pays nothing extra.
+--   created_at index entries, one dead tuple). A transaction keeps all of its
+--   ids, and pays nothing extra, when they are a gap-free run that ends at the
+--   newest id handed out: then nobody else drew an id since its first event,
+--   so every visible row is lower. A plain AFTER INSERT trigger
+--   (events_commit_order_note) records the run in transaction-local settings
+--   (y.ev_lo, y.ev_hi, y.ev_n; a rolled-back savepoint rolls them back too),
+--   and the first deferred firing decides for the whole run. Otherwise (a
+--   concurrent writer drew in between, an explicit id, a gap) each row is
+--   re-drawn unless it is the newest id handed out, as before. Rows inserted
+--   after a SET CONSTRAINTS ... IMMEDIATE start a new run.
 --
 -- Watching for contention (lock key 7931150214632601033 shows in pg_locks as
 -- an advisory lock with classid 1846614809, objid 1668314569, objsubid 1):
@@ -55,19 +62,65 @@
 -- stream and pulse until it ends. Commit-time ordering keeps every reader
 -- unchanged.
 
+-- Records this transaction's run of new event ids (see the cost notes above).
+create or replace function y_private.events_commit_order_note()
+returns trigger
+language plpgsql volatile security definer
+set search_path = ''
+as $fn$
+declare
+  v_lo bigint := nullif(pg_catalog.current_setting('y.ev_lo', true), '')::bigint;
+  v_hi bigint := nullif(pg_catalog.current_setting('y.ev_hi', true), '')::bigint;
+  v_n bigint := coalesce(nullif(pg_catalog.current_setting('y.ev_n', true), '')::bigint, 0);
+begin
+  perform pg_catalog.set_config('y.ev_lo', least(coalesce(v_lo, new.id), new.id)::text, true);
+  perform pg_catalog.set_config('y.ev_hi', greatest(coalesce(v_hi, new.id), new.id)::text, true);
+  perform pg_catalog.set_config('y.ev_n', (v_n + 1)::text, true);
+  return null;
+end
+$fn$;
+revoke all on function y_private.events_commit_order_note() from public, anon, authenticated, service_role;
+
 create or replace function y_private.events_commit_order()
 returns trigger
 language plpgsql volatile security definer
 set search_path = ''
 set lock_timeout = 0
 as $fn$
+declare
+  v_lo bigint;
+  v_hi bigint;
+  v_n bigint;
+  v_last bigint;
 begin
   -- One lock for every event-writing commit (key: 'y.events.commit_order').
   perform pg_catalog.pg_advisory_xact_lock(7931150214632601033);
+  v_last := pg_catalog.pg_sequence_last_value('public.events_id_seq'::pg_catalog.regclass);
+  -- First firing of a run: decide for every row of it at once.
+  v_lo := nullif(pg_catalog.current_setting('y.ev_lo', true), '')::bigint;
+  v_hi := nullif(pg_catalog.current_setting('y.ev_hi', true), '')::bigint;
+  v_n := nullif(pg_catalog.current_setting('y.ev_n', true), '')::bigint;
+  if v_lo is not null and new.id between v_lo and v_hi then
+    if v_hi = v_last and v_n = v_hi - v_lo + 1 then
+      -- A gap-free run ending at the newest id: nobody else drew since its first id.
+      perform pg_catalog.set_config('y.ev_keep_lo', v_lo::text, true);
+      perform pg_catalog.set_config('y.ev_keep_hi', v_hi::text, true);
+    else
+      perform pg_catalog.set_config('y.ev_keep_lo', '', true);
+      perform pg_catalog.set_config('y.ev_keep_hi', '', true);
+    end if;
+    perform pg_catalog.set_config('y.ev_lo', '', true);
+    perform pg_catalog.set_config('y.ev_hi', '', true);
+    perform pg_catalog.set_config('y.ev_n', '', true);
+  end if;
+  if new.id between nullif(pg_catalog.current_setting('y.ev_keep_lo', true), '')::bigint
+                and nullif(pg_catalog.current_setting('y.ev_keep_hi', true), '')::bigint then
+    return null;
+  end if;
   -- Already the newest id handed out: every visible row is lower and every later commit re-draws
   -- above it, so it may keep its id. Otherwise (a concurrent writer or a later row of this
   -- transaction drew after it, or an explicit id) re-draw.
-  if new.id is distinct from pg_catalog.pg_sequence_last_value('public.events_id_seq'::pg_catalog.regclass) then
+  if new.id is distinct from v_last then
     update public.events
        set id = pg_catalog.nextval('public.events_id_seq'::pg_catalog.regclass)
      where id = new.id;
@@ -78,6 +131,11 @@ $fn$;
 revoke all on function y_private.events_commit_order() from public, anon, authenticated, service_role;
 comment on function y_private.events_commit_order() is
   'Deferred: at commit, under an advisory lock, re-draws events.id unless it is the newest id handed out, so event ids follow commit order (cursor safety).';
+
+drop trigger if exists events_commit_order_note on public.events;
+create trigger events_commit_order_note
+  after insert on public.events
+  for each row execute function y_private.events_commit_order_note();
 
 drop trigger if exists events_commit_order on public.events;
 create constraint trigger events_commit_order

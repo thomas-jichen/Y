@@ -4,7 +4,7 @@
  * and the apps/mcp → core internal HMAC (`X-Y-Internal`).
  */
 import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
-import type { Db } from '@y/db';
+import { isSqlState, type Db } from '@y/db';
 import {
   INTERNAL_SIGNATURE_MAX_SKEW_S,
   internalSigningString,
@@ -258,12 +258,22 @@ export class PlatformAuth implements AuthService {
     const t = this.now().getTime();
     const hit = this.pulseCache.get(key);
     if (hit && t - hit.at < CACHE_MS) return hit.value;
-    const r = await this.db.asService((tx) =>
-      tx.query<{ agent_id: string; owner_user_id: string; revoked: boolean; agent_status: string; user_status: string; demo_account: string | null }>(
-        'select * from api.pulse_install($1)',
-        [caller.installId],
-      ),
-    );
+    let r;
+    try {
+      r = await this.db.asService((tx) =>
+        tx.query<{ agent_id: string; owner_user_id: string; revoked: boolean; agent_status: string; user_status: string; demo_account: string | null }>(
+          'select * from api.pulse_install($1)',
+          [caller.installId],
+        ),
+      );
+    } catch (e) {
+      // 9101 not applied yet (core deployed before `pnpm migrate`): the pre-9101 install check,
+      // so live listeners keep working instead of getting a 500 on every pulse.
+      if (!isSqlState(e, '42883')) throw e;
+      const active = caller.installId ? await this.installActive(caller.installId) : false;
+      setBounded(this.pulseCache, key, { at: t, value: active }, this.cacheMax);
+      return active;
+    }
     const row = r.rows[0];
     const ok = Boolean(
       row &&

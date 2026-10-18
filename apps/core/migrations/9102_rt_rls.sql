@@ -2,10 +2,14 @@
 -- membership guards. Applied after every other migration. Every statement is
 -- create-or-replace / drop-if-exists, so the file is safe to re-run.
 --
--- 1. join_default_team (9003): a 'dev' team made by dev login (the hosted
---    demo, local dev) no longer auto-enrolls real GitHub sign-ups. Dev-login
---    users are placed by /api/v1/dev/login itself (its `team`, or none with
---    team:null). An operator-made 'dev' team keeps the 9003 behaviour.
+-- 1. Default team (9003). Every new user that dev login did not create
+--    (GitHub, or any other provider) still joins the team with slug 'dev'
+--    when it exists: one team for everyone, as in 9003. Dev-login users are
+--    placed by /api/v1/dev/login itself ('dev' by default, its `team`, or no
+--    team with team:null). API roles cannot create a team with slug 'dev'
+--    (only service code, i.e. dev login, can), so no signed-in user can make
+--    itself the owner of the team every sign-up joins. On the hosted
+--    door-code demo (Y_DEMO_SECRET), dev login creates 'dev' with no owner.
 -- 2. thread_participants: API roles add participants only while the thread
 --    is a new 'request', and at most ONE participant they do not own (the
 --    addressee agent; the product's builder for support threads). No
@@ -45,39 +49,40 @@ returns trigger
 language plpgsql security definer
 set search_path = ''
 as $fn$
-declare
-  v_team uuid;
-  v_creator uuid;
 begin
-  select t.id, t.created_by into v_team, v_creator from public.teams t where t.slug = 'dev';
-  if v_team is null then
-    return new;
-  end if;
   -- Dev login places its own users ('dev' by default, a named team, or none).
   if y_private.is_dev_login_user(new.id) then
     return new;
   end if;
-  -- A real GitHub account (github_id, or a GitHub identity on auth.users) is
-  -- never auto-enrolled into a 'dev' team that dev login made or uses: its
-  -- members and owner are anonymous door-code logins.
-  if (new.github_id is not null or exists (
-        select 1 from auth.users a
-         where a.id = new.id
-           and (coalesce(a.raw_app_meta_data, '{}'::jsonb) ->> 'provider' = 'github'
-                or coalesce(a.raw_app_meta_data, '{}'::jsonb) -> 'providers' ? 'github')
-           and (coalesce(a.raw_user_meta_data, '{}'::jsonb) ->> 'provider_id') ~ '^[0-9]{1,18}$'))
-     and (y_private.is_dev_login_user(v_creator)
-          or exists (select 1 from public.team_members m
-                      where m.team_id = v_team and y_private.is_dev_login_user(m.user_id))) then
-    return new;
-  end if;
   insert into public.team_members (team_id, user_id)
-  values (v_team, new.id)
+  select t.id, new.id from public.teams t where t.slug = 'dev'
   on conflict do nothing;
   return new;
 end
 $fn$;
 revoke all on function y_private.join_default_team() from public;
+
+-- Only service code (dev login) creates the default team: an API-role caller
+-- creating 'dev' would own the team that every sign-up joins.
+create or replace function y_private.guard_default_team_insert()
+returns trigger
+language plpgsql volatile
+set search_path = ''
+as $fn$
+begin
+  if current_user in ('authenticated', 'anon') and lower(new.slug::text) = 'dev' then
+    raise exception using errcode = '42501',
+      message = 'teams: the default team ''dev'' is created by the server only';
+  end if;
+  return new;
+end
+$fn$;
+revoke all on function y_private.guard_default_team_insert() from public;
+
+drop trigger if exists teams_guard_default_team on public.teams;
+create trigger teams_guard_default_team
+  before insert on public.teams
+  for each row execute function y_private.guard_default_team_insert();
 
 -- ===================================================== 2. thread participants
 

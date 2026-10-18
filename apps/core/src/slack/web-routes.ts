@@ -81,6 +81,9 @@ export function registerSlackWebRoutes(app: Hono, deps: CoreDeps): void {
   app.post('/api/v1/slack/link', async (c) => {
     const caller = await authenticate(c, deps, 'web');
     if (caller instanceof Response) return caller;
+    // A /dev/demo session ends with the demo (#44); a Slack link would not, and it lets that
+    // Slack user approve, release and instruct for the real account. Not from the demo account.
+    if (caller.demoAccount) return fail(c, 'SCOPE_FORBIDDEN', 'The demo account cannot link Slack. Sign in with GitHub to link your own account.');
     // A link lets that Slack user approve, release and instruct for this account (I5): recent login only.
     const stepUp = await requireRecentLogin(c, deps);
     if (stepUp) return stepUp;

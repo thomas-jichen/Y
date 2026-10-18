@@ -54,11 +54,11 @@ describe('default team (9003) and real GitHub accounts (#0)', () => {
       appMetadata: { provider: 'github', providers: ['github'] },
     });
 
-  it('a GitHub sign-up does not join a dev-login dev team; dev logins honour `team`', async () => {
+  it('a GitHub sign-up joins a dev-login dev team (9003); dev logins honour `team`', async () => {
     const devUser = await devLogin('judge-dev');
     expect(await teamsOf(devUser)).toEqual(['dev']);
 
-    expect(await teamsOf(await githubSignUp('late-real', '5550001'))).toEqual([]);
+    expect(await teamsOf(await githubSignUp('late-real', '5550001'))).toEqual(['dev']);
 
     // A user with no GitHub identity (local dev / test fixtures) keeps the old behaviour.
     const local = await createAuthUser(env.db, { userMetadata: { user_name: 'local-dev' } });
