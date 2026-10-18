@@ -22623,6 +22623,36 @@ var McpLeaderboardRow = external_exports.object({
   owners: Count,
   is_you: external_exports.boolean()
 });
+var McpSetupArm = external_exports.object({
+  /** Published captured work sessions in this arm. */
+  n: Count,
+  /** Distinct owners (humans) behind those sessions. */
+  owners: Count,
+  /** Verified successes (outcome shipped or green) / n. */
+  success_rate: external_exports.number().min(0).max(1),
+  /** Wilson 95% lower bound of success_rate. */
+  success_wilson: external_exports.number().min(0).max(1),
+  /** Median tokens of the arm's verified successes; null when it has none. */
+  median_tokens_on_success: Count.nullable()
+});
+var McpSetupComponentSignal = external_exports.object({
+  kind: SetupComponentKind,
+  name: ComponentName,
+  /** 'measured' only when each arm has n ≥ 5 from ≥ 2 owners. */
+  label: external_exports.enum(["measured", "early_signal"]),
+  with: McpSetupArm,
+  without: McpSetupArm,
+  /** with.success_rate − without.success_rate. */
+  lift: external_exports.number().min(-1).max(1),
+  /** (median tokens on success with − without) / without; null when either is unknown. */
+  tokens_delta: external_exports.number().nullable(),
+  /** Share of with-arm sessions from its single largest owner (1 = one person). */
+  top_owner_share: external_exports.number().min(0).max(1),
+  /** True when your agent's latest setup has it. */
+  you_use: external_exports.boolean(),
+  /** Other components present in exactly the same sessions (indistinguishable; e.g. a plugin's bundled skills). */
+  collinear: Count
+});
 var CompareSetupsOutput = external_exports.object({
   segment: external_exports.object({
     slug: Slug,
@@ -22640,7 +22670,11 @@ var CompareSetupsOutput = external_exports.object({
     trend_30d: external_exports.number()
   }).nullable(),
   insufficient_data: external_exports.boolean(),
-  signed_in: external_exports.boolean()
+  signed_in: external_exports.boolean(),
+  /** Top components by |lift| (measured first), at most 8. */
+  components: external_exports.array(McpSetupComponentSignal).max(8),
+  /** One server-composed line (component name and numbers only) for the strongest measured signal; null when none. */
+  headline: singleLine(300).nullable()
 });
 var ProposeSetupChangeInput = external_exports.object({
   suggestion_id: SuggestionId,

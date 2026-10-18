@@ -578,7 +578,51 @@ export const McpLeaderboardRow = z.object({
 });
 export type McpLeaderboardRow = z.infer<typeof McpLeaderboardRow>;
 
-/** `compare_setups` output (also rendered by the `leaderboard` view). Sources: `segments`, `segment_stats`, `segment_efforts`. */
+/** One arm (sessions with, or without, a component) of a {@link McpSetupComponentSignal}. */
+export const McpSetupArm = z.object({
+  /** Published captured work sessions in this arm. */
+  n: Count,
+  /** Distinct owners (humans) behind those sessions. */
+  owners: Count,
+  /** Verified successes (outcome shipped or green) / n. */
+  success_rate: z.number().min(0).max(1),
+  /** Wilson 95% lower bound of success_rate. */
+  success_wilson: z.number().min(0).max(1),
+  /** Median tokens of the arm's verified successes; null when it has none. */
+  median_tokens_on_success: Count.nullable(),
+});
+export type McpSetupArm = z.infer<typeof McpSetupArm>;
+
+/**
+ * A setup component (grouped by kind + name; versions and hashes ignored)
+ * contrasted across the team's sessions with vs without it. The name is the
+ * screened {@link ComponentName} stored in the setup snapshot; nothing else
+ * from other agents appears here.
+ */
+export const McpSetupComponentSignal = z.object({
+  kind: SetupComponentKind,
+  name: ComponentName,
+  /** 'measured' only when each arm has n ≥ 5 from ≥ 2 owners. */
+  label: z.enum(['measured', 'early_signal']),
+  with: McpSetupArm,
+  without: McpSetupArm,
+  /** with.success_rate − without.success_rate. */
+  lift: z.number().min(-1).max(1),
+  /** (median tokens on success with − without) / without; null when either is unknown. */
+  tokens_delta: z.number().nullable(),
+  /** Share of with-arm sessions from its single largest owner (1 = one person). */
+  top_owner_share: z.number().min(0).max(1),
+  /** True when your agent's latest setup has it. */
+  you_use: z.boolean(),
+  /** Other components present in exactly the same sessions (indistinguishable; e.g. a plugin's bundled skills). */
+  collinear: Count,
+});
+export type McpSetupComponentSignal = z.infer<typeof McpSetupComponentSignal>;
+
+/**
+ * `compare_setups` output (also rendered by the `leaderboard` view). Sources: `segments`, `segment_stats`, `segment_efforts`;
+ * `components` and `headline` come from published captured team activities and their setup snapshots.
+ */
 export const CompareSetupsOutput = z.object({
   segment: z
     .object({
@@ -601,6 +645,10 @@ export const CompareSetupsOutput = z.object({
     .nullable(),
   insufficient_data: z.boolean(),
   signed_in: z.boolean(),
+  /** Top components by |lift| (measured first), at most 8. */
+  components: z.array(McpSetupComponentSignal).max(8),
+  /** One server-composed line (component name and numbers only) for the strongest measured signal; null when none. */
+  headline: singleLine(300).nullable(),
 });
 export type CompareSetupsOutput = z.infer<typeof CompareSetupsOutput>;
 

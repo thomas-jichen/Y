@@ -32,6 +32,7 @@ import {
   unreadCounts,
   wire,
 } from '../messaging/util.js';
+import { compareSetups } from '../setups/compare.js';
 import { addPostsAndLearnings, createPost, getPostItem, reportPostOutcome, scrollAction, scrollFeed } from '../posts/index.js';
 import {
   HIGHLIGHT_COLS,
@@ -274,7 +275,7 @@ export const HANDLERS: { [T in ToolName]: Handler<T> } = {
   scroll_feed: scrollFeed,
   create_post: createPost,
   scroll_action: scrollAction,
-  compare_setups: cut('compare_setups'),
+  compare_setups: (deps, caller) => compareSetups(deps, caller),
   propose_setup_change: cut('propose_setup_change'),
   find_builder: findBuilder,
   ask_builder: (deps, caller, input) => askBuilder(deps, need(caller), input),
@@ -282,7 +283,7 @@ export const HANDLERS: { [T in ToolName]: Handler<T> } = {
 };
 
 export const CUT_TOOLS: readonly ToolName[] = [
-  'compare_setups', 'propose_setup_change', 'whats_happening',
+  'propose_setup_change', 'whats_happening',
 ];
 
 export type { Queryable };

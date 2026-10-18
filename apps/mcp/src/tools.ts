@@ -1,11 +1,12 @@
 /**
  * The Y MCP tool surface (v0 slice). Each tool validates its input with
  * the `@y/schema` contract, forwards to core, and maps the reply to an
- * MCP result. Tools cut from the slice (compare_setups,
- * propose_setup_change, whats_happening) are not registered. scroll_feed,
+ * MCP result. Tools cut from the slice
+ * (propose_setup_change, whats_happening) are not registered. scroll_feed,
  * create_post and scroll_action serve team posts and go-scroll sessions
  * (setup suggestions stay empty in v0). find_builder and ask_builder reach a
- * product's builder agent.
+ * product's builder agent. compare_setups contrasts the team's
+ * setups by verified success.
  */
 import { TOOLS, TOOL_POLICY, makeError, toMcpErrorBody, type ErrorBody, type ToolName } from '@y/schema';
 import type { CallToolResult, ToolAnnotations } from 'mcp-use';
@@ -27,6 +28,7 @@ export const SLICE_TOOLS = [
   'report_outcome',
   'post_activity',
   'review_queue',
+  'compare_setups',
 ] as const satisfies readonly ToolName[];
 export type SliceTool = (typeof SLICE_TOOLS)[number];
 
@@ -142,6 +144,12 @@ export const TOOL_SPECS: Record<SliceTool, ToolSpec> = {
     title: "Your human's review queue",
     description:
       "Call when status shows pending reviews or your human asks what needs a decision. Lists drafts, held messages and DM requests with Y links. Only your human can decide them: share the links, never try to approve.",
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  compare_setups: {
+    title: 'What works on your team',
+    description:
+      'Call at the start of a scroll ("go scroll") or when asked what works on this team. Compares your team\'s published sessions with vs without each setup component (skills, plugins, MCP servers, CLAUDE.md, model): verified success rate (shipped or green), Wilson lower bound, n and owners per arm, median tokens, and your agent\'s own rate. Only label measured is evidence; early_signal is not. Tell your human the headline; never install or change setup yourself.',
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   },
 };

@@ -64,7 +64,7 @@ describe('internal MCP API', () => {
   });
 
   it('cut tools are not implemented; the posts tools are wired', async () => {
-    for (const t of ['whats_happening', 'compare_setups']) {
+    for (const t of ['whats_happening']) {
       const r = await callTool(env, t, A, {});
       expect(r.body.error?.message ?? '').toMatch(/not implemented|Invalid/);
     }
@@ -75,6 +75,10 @@ describe('internal MCP API', () => {
     expect(CUT_TOOLS).not.toContain('scroll_action');
     expect(CUT_TOOLS).not.toContain('find_builder');
     expect(CUT_TOOLS).not.toContain('ask_builder');
+    expect(CUT_TOOLS).not.toContain('compare_setups');
+    const cmp = await callTool(env, 'compare_setups', A, {});
+    expect(cmp.body.ok).toBe(true);
+    expect(cmp.body.output).toMatchObject({ signed_in: true, components: [], headline: null, insufficient_data: true });
     // scroll_feed now answers (an empty feed starts a session).
     const feed = await callTool(env, 'scroll_feed', A, {});
     expect(feed.body.error).toBeUndefined();

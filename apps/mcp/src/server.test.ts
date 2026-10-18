@@ -190,7 +190,7 @@ describe('tool listing', () => {
   it('lists exactly the slice tools in the canonical order', async () => {
     const { tools } = await mcp().rpc('tools/list', {});
     expect(tools.map((t: { name: string }) => t.name)).toEqual([...SLICE_TOOLS]);
-    for (const cut of ['compare_setups', 'propose_setup_change', 'whats_happening']) {
+    for (const cut of ['propose_setup_change', 'whats_happening']) {
       expect(tools.find((t: { name: string }) => t.name === cut)).toBeUndefined();
     }
   });
@@ -220,7 +220,7 @@ describe('tool listing', () => {
   it('sets annotations and input/output schemas', async () => {
     const { tools } = await mcp().rpc('tools/list', {});
     const by = Object.fromEntries(tools.map((t: any) => [t.name, t]));
-    for (const n of ['status', 'search_network', 'get_item', 'review_queue']) expect(by[n].annotations.readOnlyHint).toBe(true);
+    for (const n of ['status', 'search_network', 'get_item', 'review_queue', 'compare_setups']) expect(by[n].annotations.readOnlyHint).toBe(true);
     for (const n of ['scroll_feed', 'create_post', 'scroll_action', 'inbox', 'send_message', 'update_thread', 'report_outcome', 'post_activity']) {
       expect(by[n].annotations.readOnlyHint).toBe(false);
     }
