@@ -216,8 +216,8 @@ async function failOpen(ctx, name, fn) {
 }
 
 // src/listener.ts
-import * as fs2 from "node:fs";
-import * as path3 from "node:path";
+import * as fs3 from "node:fs";
+import * as path4 from "node:path";
 
 // ../../node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -1036,10 +1036,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path4) {
-  if (!path4)
+function getElementAtPath(obj, path5) {
+  if (!path5)
     return obj;
-  return path4.reduce((acc, key) => acc?.[key], obj);
+  return path5.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -1379,11 +1379,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path4, issues) {
+function prefixIssues(path5, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path4);
+    iss.path.unshift(path5);
     return iss;
   });
 }
@@ -1845,16 +1845,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path4 = []) => {
+  const processError = (error63, path5 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path4, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path5, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
       } else {
-        const fullpath = [...path4, ...issue2.path];
+        const fullpath = [...path5, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -1893,17 +1893,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path4 = []) => {
+  const processError = (error63, path5 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path4, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path5, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
       } else {
-        const fullpath = [...path4, ...issue2.path];
+        const fullpath = [...path5, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1942,8 +1942,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path4 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path4) {
+  const path5 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path5) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -19081,13 +19081,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path4 = ref.slice(1).split("/").filter(Boolean);
-  if (path4.length === 0) {
+  const path5 = ref.slice(1).split("/").filter(Boolean);
+  if (path5.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path4[0] === defsKey) {
-    const key = path4[1] === void 0 ? void 0 : decodeJSONPointerSegment(path4[1]);
+  if (path5[0] === defsKey) {
+    const key = path5[1] === void 0 ? void 0 : decodeJSONPointerSegment(path5[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -20167,7 +20167,8 @@ var AgentRef = external_exports.object({
   id: AgentId,
   handle: Handle,
   harness: Harness,
-  owner: UserRef
+  owner: UserRef,
+  presence: Presence.optional()
 });
 var TeamRole = external_exports.enum(["owner", "admin", "member"]);
 var TeamRef = external_exports.object({
@@ -20244,11 +20245,18 @@ var Pointer = external_exports.discriminatedUnion("template_id", [
 
 // ../../packages/schema/src/pulse.ts
 var PULSE_MAX_WAIT_S = 25;
+var PULSE_ACTIVE_EVERY_S = 60;
 var PulseQuery = external_exports.object({
   cursor: CursorString.optional(),
   wait: external_exports.coerce.number().int().min(0).max(PULSE_MAX_WAIT_S).default(20),
   /** The listening session, so a targeted wake can be addressed to it. */
-  sessionId: HarnessSessionId.optional()
+  sessionId: HarnessSessionId.optional(),
+  /**
+   * Turn state of that session (presence): `1` while a turn is in progress
+   * (prompt submitted, Stop not yet fired), `0` when idle. Older plugins omit
+   * it; core then falls back to recent ingests.
+   */
+  active: external_exports.enum(["0", "1"]).optional()
 });
 var UnreadCounts = external_exports.object({
   dm: Count,
@@ -20918,8 +20926,8 @@ var STRIPPED_KEYWORDS = /* @__PURE__ */ new Set([
   "minProperties",
   "maxProperties"
 ]);
-function reduce(node2, path4) {
-  if (Array.isArray(node2)) return node2.map((n, i) => reduce(n, `${path4}[${i}]`));
+function reduce(node2, path5) {
+  if (Array.isArray(node2)) return node2.map((n, i) => reduce(n, `${path5}[${i}]`));
   if (node2 === null || typeof node2 !== "object") return node2;
   const src2 = node2;
   const out = {};
@@ -20930,22 +20938,22 @@ function reduce(node2, path4) {
       continue;
     }
     if (key === "oneOf") {
-      out.anyOf = reduce(value, `${path4}.anyOf`);
+      out.anyOf = reduce(value, `${path5}.anyOf`);
       continue;
     }
     if (key === "properties" && value && typeof value === "object") {
       const props = {};
       for (const [prop, sub] of Object.entries(value)) {
-        props[prop] = reduce(sub, `${path4}.properties.${prop}`);
+        props[prop] = reduce(sub, `${path5}.properties.${prop}`);
       }
       out.properties = props;
       continue;
     }
-    out[key] = reduce(value, `${path4}.${key}`);
+    out[key] = reduce(value, `${path5}.${key}`);
   }
   if (out.type === "object") {
     if (src2.additionalProperties !== void 0 && src2.additionalProperties !== false) {
-      throw new TypeError(`toStructuredOutputSchema: open object (record) at ${path4}; use an array instead`);
+      throw new TypeError(`toStructuredOutputSchema: open object (record) at ${path5}; use an array instead`);
     }
     out.additionalProperties = false;
     const props = Object.keys(out.properties ?? {});
@@ -20953,7 +20961,7 @@ function reduce(node2, path4) {
     const missing = props.filter((p) => !required2.has(p));
     if (missing.length > 0) {
       throw new TypeError(
-        `toStructuredOutputSchema: optional properties at ${path4} (${missing.join(", ")}); make them required and nullable`
+        `toStructuredOutputSchema: optional properties at ${path5} (${missing.join(", ")}); make them required and nullable`
       );
     }
   }
@@ -22452,7 +22460,8 @@ var ReportOutcomeOutput = external_exports.object({
 });
 var PostActivityInput = external_exports.object({
   title: singleLine(90, 8),
-  summary: singleLine(600),
+  /** ≤400: `activities.summary` has `check (char_length(summary) <= 400)`. */
+  summary: singleLine(400),
   task_intent: TaskIntent,
   outcome: OutcomeStatus,
   visibility: external_exports.enum(["private", "team"]).default("private")
@@ -23230,15 +23239,52 @@ function fallbackText() {
   return FALLBACK_POINTER_TEXT;
 }
 
-// src/wake-budget.ts
+// src/turn.ts
+import * as fs2 from "node:fs";
 import * as path2 from "node:path";
+var TURN_IDLE_MS = 10 * 6e4;
+function turnFile(p, sid) {
+  return path2.join(p.state, `turn-${safeSid(sid)}.json`);
+}
+function endedFile(p, sid) {
+  return path2.join(p.state, `ended-${safeSid(sid)}.json`);
+}
+function startTurn(p, sid, now) {
+  writeJsonAtomic(turnFile(p, sid), { since: now });
+}
+function endTurn(p, sid) {
+  fs2.rmSync(turnFile(p, sid), { force: true });
+}
+function mtimeMs(file2) {
+  if (!file2) return 0;
+  try {
+    return fs2.statSync(file2).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+function turnActive(p, sid, now, transcriptPath2) {
+  const m = readJson(turnFile(p, sid));
+  if (!m) return false;
+  const since = typeof m.since === "number" && Number.isFinite(m.since) ? m.since : 0;
+  return now - Math.max(since, mtimeMs(transcriptPath2)) < TURN_IDLE_MS;
+}
+function sessionEnded(p, sid) {
+  return fs2.existsSync(endedFile(p, sid));
+}
+function clearSessionEnded(p, sid) {
+  fs2.rmSync(endedFile(p, sid), { force: true });
+}
+
+// src/wake-budget.ts
+import * as path3 from "node:path";
 var WAKE_MIN_INTERVAL_MS = 6e4;
 var WAKE_MAX_PER_HOUR = 6;
 var WAKE_MAX_PER_DAY = 30;
 var HOUR_MS = 36e5;
 var DAY_MS = 24 * HOUR_MS;
 function budgetFile(p) {
-  return path2.join(p.state, "wake-budget.json");
+  return path3.join(p.state, "wake-budget.json");
 }
 function readWakes(p, now) {
   const f = readJson(budgetFile(p));
@@ -23260,7 +23306,7 @@ function takeWake(p, now) {
   return v;
 }
 function pendingFile(p, sid) {
-  return path2.join(p.state, `pending-wake-${safeSid(sid)}.json`);
+  return path3.join(p.state, `pending-wake-${safeSid(sid)}.json`);
 }
 function parkPendingWake(p, sid, pointer, now) {
   const v = Pointer.safeParse(pointer);
@@ -23275,12 +23321,14 @@ var BACKOFF_MIN_MS = 5e3;
 var BACKOFF_MAX_MS = 6e4;
 var SAFETY_POLL_MS = 3e5;
 var SLOW_POLL_MS = 6e4;
+var ACTIVE_POLL_MS = PULSE_ACTIVE_EVERY_S * 1e3;
+var TURN_CHECK_MS = 15e3;
 var SID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 function listenerFile(ctx, sid) {
-  return path3.join(ctx.paths.state, `listener-${safeSid(sid)}.json`);
+  return path4.join(ctx.paths.state, `listener-${safeSid(sid)}.json`);
 }
 function needsListenerFile(ctx, sid) {
-  return path3.join(ctx.paths.state, `needs-listener-${safeSid(sid)}.json`);
+  return path4.join(ctx.paths.state, `needs-listener-${safeSid(sid)}.json`);
 }
 function sessionId(ctx) {
   const sid = typeof ctx.input.session_id === "string" ? ctx.input.session_id : void 0;
@@ -23302,7 +23350,7 @@ function claimListener(ctx, sid) {
 function release(ctx, sid, mine) {
   const file2 = listenerFile(ctx, sid);
   const cur = readJson(file2);
-  if (cur && cur.pid === mine.pid && cur.generation === mine.generation) fs2.rmSync(file2, { force: true });
+  if (cur && cur.pid === mine.pid && cur.generation === mine.generation) fs3.rmSync(file2, { force: true });
 }
 function superseded(ctx, sid, mine) {
   const cur = readJson(listenerFile(ctx, sid));
@@ -23317,13 +23365,33 @@ function pulseBearer(ctx) {
 function listeningEnabled(ctx) {
   return !!ctx.config.token && ctx.config.wakeOnDm !== "off" && !ctx.config.headless;
 }
+function transcriptPath(ctx) {
+  const t = ctx.input.transcript_path;
+  return typeof t === "string" && t.length > 0 && t.length < 4096 ? t : void 0;
+}
+function isTurnActive(ctx, sid) {
+  return turnActive(ctx.paths, sid, ctx.now(), transcriptPath(ctx));
+}
+async function reportTurn(ctx, sid) {
+  const q = new URLSearchParams({ wait: "0", sessionId: sid, active: "1" });
+  try {
+    await httpJson(ctx.fetch, "GET", `${ctx.config.apiUrl}/api/v1/pulse?${q}`, {
+      token: pulseBearer(ctx),
+      timeoutMs: 1e4,
+      headers: { "x-y-session": sid }
+    });
+  } catch {
+  }
+}
 function markNeedsListener(ctx) {
   return failOpen(ctx, "listen-mark", async () => {
     const sid = sessionId(ctx);
-    if (!sid || !listeningEnabled(ctx)) return OK;
+    if (!sid) return OK;
+    endTurn(ctx.paths, sid);
+    if (!listeningEnabled(ctx)) return OK;
     const file2 = needsListenerFile(ctx, sid);
     if (liveListener(ctx, sid)) {
-      fs2.rmSync(file2, { force: true });
+      fs3.rmSync(file2, { force: true });
       return OK;
     }
     if (!readJson(file2)) writeJsonAtomic(file2, { since: ctx.now() });
@@ -23346,13 +23414,19 @@ function listen(ctx, o = {}) {
   return failOpen(ctx, "listen", async () => {
     const sid = sessionId(ctx);
     if (!sid || !listeningEnabled(ctx)) return OK;
+    clearSessionEnded(ctx.paths, sid);
+    if (ctx.input.hook_event_name === "UserPromptSubmit") startTurn(ctx.paths, sid, ctx.now());
     const mine = claimListener(ctx, sid);
-    if (!mine) return OK;
-    fs2.rmSync(needsListenerFile(ctx, sid), { force: true });
+    if (!mine) {
+      if (isTurnActive(ctx, sid)) await reportTurn(ctx, sid);
+      return OK;
+    }
+    fs3.rmSync(needsListenerFile(ctx, sid), { force: true });
     const wait = o.sleep ?? sleep;
     const endAt = ctx.now() + (o.runMs ?? LISTEN_TIMEOUT_MS - EXIT_MARGIN_MS);
     const backoffMin = o.backoffMinMs ?? BACKOFF_MIN_MS;
     const safetyMs = o.safetyPollMs ?? SAFETY_POLL_MS;
+    const turnCheckMs = o.turnCheckMs ?? TURN_CHECK_MS;
     const mode = pickMode(ctx, o);
     let bell;
     const openBell = () => {
@@ -23367,10 +23441,16 @@ function listen(ctx, o = {}) {
     try {
       while (ctx.now() < endAt) {
         if (superseded(ctx, sid, mine)) return OK;
+        if (sessionEnded(ctx.paths, sid)) {
+          clearSessionEnded(ctx.paths, sid);
+          return OK;
+        }
         const left = endAt - ctx.now();
         const waitS = mode.kind === "longpoll" ? Math.min(PULSE_MAX_WAIT_S, Math.floor((left - 2e3) / 1e3)) : 0;
         if (mode.kind === "longpoll" && waitS < 1) break;
-        const q = new URLSearchParams({ wait: String(waitS), sessionId: sid });
+        const active = isTurnActive(ctx, sid);
+        const polledAt = ctx.now();
+        const q = new URLSearchParams({ wait: String(waitS), sessionId: sid, active: active ? "1" : "0" });
         const cursor = readPulse(ctx.paths).cursor;
         if (cursor) q.set("cursor", cursor);
         let delay = 0;
@@ -23430,7 +23510,16 @@ function listen(ctx, o = {}) {
             bellBackoff = Math.min(BACKOFF_MAX_MS, bellBackoff * 2);
             openBell();
           }
-          const r = await bell.wait(Math.max(0, Math.min(safetyMs, endAt - ctx.now() - 2e3)));
+          let r = "timeout";
+          for (; ; ) {
+            const nowActive = isTurnActive(ctx, sid);
+            if (nowActive !== active) break;
+            const dueAt = polledAt + (nowActive ? Math.min(safetyMs, ACTIVE_POLL_MS) : safetyMs);
+            const until = Math.min(dueAt, endAt - 2e3);
+            if (ctx.now() >= until) break;
+            r = await bell.wait(Math.max(0, Math.min(turnCheckMs, until - ctx.now())));
+            if (r !== "timeout") break;
+          }
           if (r === "ring") bellBackoff = backoffMin;
           if (r === "timeout" && endAt - ctx.now() <= 2e3) break;
           continue;

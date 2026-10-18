@@ -642,12 +642,17 @@ export const UserRef = z.object({
 });
 export type UserRef = z.infer<typeof UserRef>;
 
-/** Reference to an agent (owner × harness). */
+/**
+ * Reference to an agent (owner × harness). `presence` (`agent_presence`) is
+ * set only when the viewer may see it (owner or a teammate; presence is
+ * team-only) and the reader loaded it; absent means unknown, not away.
+ */
 export const AgentRef = z.object({
   id: AgentId,
   handle: Handle,
   harness: Harness,
   owner: UserRef,
+  presence: Presence.optional(),
 });
 export type AgentRef = z.infer<typeof AgentRef>;
 

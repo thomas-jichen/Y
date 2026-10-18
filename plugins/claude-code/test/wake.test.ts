@@ -14,6 +14,7 @@ import { HANDLERS } from '../src/hooks/index.js';
 import { listen, markNeedsListener } from '../src/listener.js';
 import { realtimeSocketUrl, type WsLike } from '../src/realtime.js';
 import { paths } from '../src/runtime.js';
+import { startTurn, TURN_IDLE_MS, turnActive } from '../src/turn.js';
 import {
   checkBudget,
   parkPendingWake,
@@ -47,6 +48,12 @@ afterEach(async () => {
 function ctxFor(sid = SID, now?: () => number) {
   return makeCtx('Stop', JSON.stringify({ session_id: sid }), { env: testEnv(dir, core.url), ...(now ? { now } : {}) });
 }
+
+function upsCtx(sid = SID, extra: Record<string, unknown> = {}) {
+  return makeCtx('Stop', JSON.stringify({ session_id: sid, hook_event_name: 'UserPromptSubmit', ...extra }), { env: testEnv(dir, core.url) });
+}
+
+const activeOf = (url: string) => new URL(url, 'http://x').searchParams.get('active');
 
 function stateFile(name: string): string {
   return path.join(dir, 'state', name);
@@ -242,6 +249,75 @@ describe('Stop marker (sync, no spawn)', () => {
   });
 });
 
+describe('presence: turn reports on the pulse', () => {
+  it('reports active=1 during a turn (UserPromptSubmit spawn) and active=0 once Stop marks the turn over', async () => {
+    let n = 0;
+    core.route = () => {
+      n++;
+      if (n === 1) void markNeedsListener(ctxFor()); // Stop fires: the turn is over
+      return { body: n === 2 ? wakeBody() : { ...wakeBody(), wake: undefined } };
+    };
+    const r = await listen(upsCtx(), { runMs: 10_000, sleep: async () => {} });
+    expect(r.exitCode).toBe(2);
+    expect(core.requests.map((q) => activeOf(q.url))).toEqual(['1', '0']);
+    expect(fs.existsSync(stateFile(`turn-${SID}.json`))).toBe(false);
+  });
+
+  it('a SessionStart spawn reports idle', async () => {
+    core.route = () => ({ body: wakeBody() });
+    await listen(ctxFor(), { runMs: 10_000, sleep: async () => {} });
+    expect(activeOf(core.requests[0]!.url)).toBe('0');
+  });
+
+  it('a UserPromptSubmit spawn that finds a live listener reports the turn once (no cursor) and exits', async () => {
+    fs.mkdirSync(path.join(dir, 'state'), { recursive: true });
+    fs.writeFileSync(stateFile(`listener-${SID}.json`), JSON.stringify({ pid: process.ppid, generation: 3, startedAt: Date.now() }));
+    fs.writeFileSync(stateFile('pulse.json'), JSON.stringify({ cursor: 'cur_9' }));
+    core.route = () => ({ body: wakeBody() });
+    expect(await listen(upsCtx(), { runMs: 10_000 })).toEqual({ exitCode: 0 });
+    expect(core.requests).toHaveLength(1);
+    const u = new URL(core.requests[0]!.url, 'http://x');
+    expect(Object.fromEntries(u.searchParams)).toEqual({ wait: '0', sessionId: SID, active: '1' });
+    expect(core.requests[0]!.headers['x-y-session']).toBe(SID);
+    // The holder's slot is untouched, and nothing exits 2 from the reporter.
+    expect(JSON.parse(fs.readFileSync(stateFile(`listener-${SID}.json`), 'utf8')).generation).toBe(3);
+  });
+
+  it('an interrupted turn (Esc: no Stop) stops counting once the transcript is idle for 10 min', () => {
+    const p = paths(dir);
+    const transcript = path.join(dir, 'transcript.jsonl');
+    fs.writeFileSync(transcript, '{}\n');
+    const now = Date.now();
+    startTurn(p, SID, now - TURN_IDLE_MS - 60_000);
+    const old = (now - TURN_IDLE_MS - 60_000) / 1000;
+    fs.utimesSync(transcript, old, old);
+    expect(turnActive(p, SID, now, transcript)).toBe(false);
+    // A long turn keeps writing its transcript: still active.
+    fs.utimesSync(transcript, now / 1000, now / 1000);
+    expect(turnActive(p, SID, now, transcript)).toBe(true);
+    expect(turnActive(p, SID, now)).toBe(false); // marker alone is too old
+    expect(turnActive(p, 'other-session', now, transcript)).toBe(false);
+  });
+
+  it('SessionEnd stops a live listener (no stale "listening"); a resumed session listens again', async () => {
+    let n = 0;
+    core.route = () => {
+      if (++n === 1) void HANDLERS.SessionEnd(makeCtx('SessionEnd', JSON.stringify({ session_id: SID, reason: 'other' }), { env: testEnv(dir, core.url) }));
+      return { body: { ...wakeBody(), wake: undefined } };
+    };
+    expect(await listen(ctxFor(), { runMs: 10_000, sleep: async () => {} })).toEqual({ exitCode: 0 });
+    expect(n).toBe(1);
+    expect(fs.existsSync(stateFile(`ended-${SID}.json`))).toBe(false);
+    // SessionEnd with no listener holding the slot leaves no marker behind.
+    await HANDLERS.SessionEnd(makeCtx('SessionEnd', JSON.stringify({ session_id: SID, reason: 'other' }), { env: testEnv(dir, core.url) }));
+    expect(fs.existsSync(stateFile(`ended-${SID}.json`))).toBe(false);
+    // Resume: a stale marker from a crashed listener does not stop the next one.
+    fs.writeFileSync(stateFile(`ended-${SID}.json`), JSON.stringify({ at: Date.now() }));
+    core.route = () => ({ body: wakeBody() });
+    expect((await listen(ctxFor(), { runMs: 10_000, sleep: async () => {} })).exitCode).toBe(2);
+  });
+});
+
 describe('hooks.json arming points (S1)', () => {
   const hooks = JSON.parse(fs.readFileSync(path.join(here, '..', 'hooks', 'hooks.json'), 'utf8')).hooks as Record<
     string,
@@ -340,6 +416,18 @@ describe('serverless doorbell', () => {
     expect(join.topic).toBe(`realtime:${ch.topic}`);
     expect(join.payload).toMatchObject({ config: { private: false } });
     expect(FakeWs.last!.readyState).toBe(3); // closed on exit
+  });
+  it('reports a turn that starts mid-wait without waiting for the 5 min safety poll', async () => {
+    writeBriefCache(brief([], { realtime: ch }));
+    let n = 0;
+    core.route = () => {
+      n++;
+      if (n === 1) setTimeout(() => startTurn(paths(dir), SID, Date.now()), 30);
+      return { body: n === 2 ? wakeBody() : { ...wakeBody(), wake: undefined } };
+    };
+    const r = await listen(ctxFor(), { runMs: 20_000, sleep: async () => {}, webSocket: FakeWs, safetyPollMs: 600_000, turnCheckMs: 10 });
+    expect(r.exitCode).toBe(2);
+    expect(core.requests.map((q) => activeOf(q.url))).toEqual(['0', '1']);
   });
 });
 

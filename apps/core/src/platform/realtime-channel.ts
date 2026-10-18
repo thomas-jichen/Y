@@ -8,6 +8,15 @@ import type { Queryable } from '@y/db';
 import { RealtimeChannel, realtimeTopic, type RealtimeOwnerKind } from '@y/schema';
 import type { CoreConfig } from '../contracts.js';
 
+/**
+ * True when core hands out `supabase` channels (it knows the project URL and
+ * publishable key, whatever its run mode). Agents then listen on the doorbell
+ * and poll /pulse only on a ring or every 5 min, which presence must allow for.
+ */
+export function usesRealtimeDoorbell(config: Pick<CoreConfig, 'supabase'>): boolean {
+  return Boolean(config.supabase.url && config.supabase.publishableKey);
+}
+
 export async function realtimeChannelFor(
   tx: Queryable,
   config: CoreConfig,
@@ -27,7 +36,7 @@ export async function realtimeChannelFor(
     return undefined;
   }
   const { url, publishableKey } = config.supabase;
-  const ch = url && publishableKey ? { provider: 'supabase', url, apiKey: publishableKey, topic, secret } : { provider: 'local', topic, secret };
+  const ch = usesRealtimeDoorbell(config) ? { provider: 'supabase', url, apiKey: publishableKey, topic, secret } : { provider: 'local', topic, secret };
   const parsed = RealtimeChannel.safeParse(ch);
   return parsed.success ? parsed.data : undefined;
 }

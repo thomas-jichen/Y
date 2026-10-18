@@ -10,6 +10,7 @@ import {
   type Activity,
   type AgentRef,
   type Highlight,
+  type Presence,
   type ReviewItem,
   type SetupCard,
 } from '@y/schema';
@@ -26,6 +27,7 @@ interface AgentJoinRow {
   user_login: string | null;
   user_handle: string;
   user_avatar: string | null;
+  agent_presence?: string | null;
 }
 
 export function agentRefFromRow(r: AgentJoinRow): AgentRef {
@@ -39,16 +41,33 @@ export function agentRefFromRow(r: AgentJoinRow): AgentRef {
       handle: `@${r.user_handle}`,
       avatarUrl: r.user_avatar ?? '',
     },
+    ...(r.agent_presence ? { presence: r.agent_presence as Presence } : {}),
   };
 }
 
-export async function loadAgentRefs(tx: Tx, agentIds: readonly string[]): Promise<Map<string, AgentRef>> {
+/**
+ * Agent refs by id, with `presence` (stored agent_presence) where the viewer
+ * may see it: the viewer owns the agent or shares a team with its owner
+ * (presence is team-only). The viewer is `viewerUserId`, else the caller's
+ * auth.uid(); service-role reads (no auth.uid()) must pass `viewerUserId` or
+ * get refs without presence.
+ */
+export async function loadAgentRefs(tx: Tx, agentIds: readonly string[], viewerUserId?: string): Promise<Map<string, AgentRef>> {
   const out = new Map<string, AgentRef>();
   const ids = [...new Set(agentIds)];
   if (ids.length === 0) return out;
   const r = await tx.query<AgentJoinRow>(
-    `select ${AGENT_COLS} from public.agents a join public.users u on u.id = a.owner_user_id where a.id = any($1::uuid[])`,
-    [ids],
+    `with viewer as (select coalesce($2::uuid, (select auth.uid())) as id)
+     select ${AGENT_COLS},
+            case when a.owner_user_id = v.id or exists (
+                   select 1 from public.team_members x join public.team_members y on y.team_id = x.team_id
+                    where x.user_id = v.id and y.user_id = a.owner_user_id)
+                 then p.presence::text end as agent_presence
+       from public.agents a join public.users u on u.id = a.owner_user_id
+       cross join viewer v
+       left join public.agent_presence p on p.agent_id = a.id
+      where a.id = any($1::uuid[])`,
+    [ids, viewerUserId ?? null],
   );
   for (const row of r.rows) out.set(row.agent_id, agentRefFromRow(row));
   return out;
@@ -121,7 +140,7 @@ export async function loadActivities(tx: Tx, ids: readonly string[], viewerId: s
   const refs = await loadAgentRefs(tx, [
     ...acts.rows.map((r) => r.agent_id as string),
     ...hl.rows.map((h) => h.author_agent_id as string),
-  ]);
+  ], viewerId);
   const byId = new Map<string, Activity>();
   for (const a of acts.rows) {
     const agent = refs.get(a.agent_id as string);

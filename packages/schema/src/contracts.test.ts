@@ -245,6 +245,10 @@ describe('brief and pulse', () => {
     expect(PulseQuery.parse({ wait: '10' }).wait).toBe(10);
     expect(PulseQuery.parse({}).wait).toBe(20);
     expect(PulseQuery.safeParse({ wait: '60' }).success).toBe(false);
+    expect(PulseQuery.parse({ active: '1' }).active).toBe('1');
+    expect(PulseQuery.parse({ active: '0' }).active).toBe('0');
+    expect(PulseQuery.parse({}).active).toBeUndefined();
+    expect(PulseQuery.safeParse({ active: 'true' }).success).toBe(false);
   });
 
   it('PulseResponse with a targeted wake', () => {

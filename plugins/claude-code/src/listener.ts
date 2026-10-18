@@ -18,6 +18,14 @@
  *   records `state/needs-listener-<sid>.json` when no listener is live, so
  *   the gap is visible (doctor, logs) until the next UserPromptSubmit arms one.
  *
+ * Presence: each pulse carries `active=1` while a turn is in progress
+ * (turn.ts: UserPromptSubmit's spawn writes the marker, Stop's `mark` and
+ * SessionEnd remove it) and `active=0` otherwise, at least every
+ * PULSE_ACTIVE_EVERY_S during a turn in every transport. A UserPromptSubmit
+ * spawn that finds a live listener sends one `/pulse?wait=0&active=1` before
+ * exiting, so the turn shows at once. A listener whose session ended
+ * (`ended-<sid>.json`) exits.
+ *
  * Transport: in server mode `GET /api/v1/pulse?cursor&wait` long-polls. When
  * the cached brief carries a Supabase realtime channel (serverless core), the
  * listener waits on the broadcast doorbell and calls `/pulse?wait=0` when it
@@ -28,11 +36,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { KillSwitches } from '@y/schema/common';
 import { Pointer } from '@y/schema/pointers';
-import { PULSE_MAX_WAIT_S, UnreadCounts } from '@y/schema/pulse';
+import { PULSE_ACTIVE_EVERY_S, PULSE_MAX_WAIT_S, UnreadCounts } from '@y/schema/pulse';
 import { failOpen, OK, type HookCtx, type HookResult } from './context.js';
 import { Doorbell, globalWebSocket, type SupabaseChannel, type WsCtor } from './realtime.js';
 import { httpJson, logLine, pidAlive, readJson, safeSid, sleep, writeJsonAtomic } from './runtime.js';
 import { fallbackText, readBrief, readPulse, renderOne, updatePulse } from './state.js';
+import { clearSessionEnded, endTurn, sessionEnded, startTurn, turnActive } from './turn.js';
 import { parkPendingWake, takeWake } from './wake-budget.js';
 
 /** Hook timeout is 3300 s; leave a margin so we exit 0 before the harness kills us. */
@@ -44,6 +53,10 @@ const BACKOFF_MAX_MS = 60_000;
 export const SAFETY_POLL_MS = 300_000;
 /** Serverless without WebSocket support: plain polling interval. */
 export const SLOW_POLL_MS = 60_000;
+/** During a turn, report `active=1` at least this often (doorbell mode would otherwise wait 5 min). */
+export const ACTIVE_POLL_MS = PULSE_ACTIVE_EVERY_S * 1000;
+/** Doorbell waits are sliced this fine so a turn that starts mid-wait is reported promptly. */
+const TURN_CHECK_MS = 15_000;
 
 const SID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 
@@ -57,6 +70,8 @@ export interface ListenOpts {
   webSocket?: WsCtor | null;
   /** Override the serverless safety-poll interval (tests). */
   safetyPollMs?: number;
+  /** Override how often a doorbell wait re-checks the turn marker (tests). */
+  turnCheckMs?: number;
 }
 
 interface ListenerFile {
@@ -118,6 +133,29 @@ function listeningEnabled(ctx: HookCtx): boolean {
   return !!ctx.config.token && ctx.config.wakeOnDm !== 'off' && !ctx.config.headless;
 }
 
+function transcriptPath(ctx: HookCtx): string | undefined {
+  const t = ctx.input.transcript_path;
+  return typeof t === 'string' && t.length > 0 && t.length < 4096 ? t : undefined;
+}
+
+function isTurnActive(ctx: HookCtx, sid: string): boolean {
+  return turnActive(ctx.paths, sid, ctx.now(), transcriptPath(ctx));
+}
+
+/** One immediate turn report (no cursor: it consumes no events, so it can't swallow a wake). */
+async function reportTurn(ctx: HookCtx, sid: string): Promise<void> {
+  const q = new URLSearchParams({ wait: '0', sessionId: sid, active: '1' });
+  try {
+    await httpJson(ctx.fetch, 'GET', `${ctx.config.apiUrl}/api/v1/pulse?${q}`, {
+      token: pulseBearer(ctx),
+      timeoutMs: 10_000,
+      headers: { 'x-y-session': sid },
+    });
+  } catch {
+    /* best effort: the live listener reports the turn on its next poll */
+  }
+}
+
 /**
  * Stop (synchronous, local only, no output): record that this session has no
  * live listener. Never spawns or re-arms anything (S1 §5).
@@ -125,7 +163,9 @@ function listeningEnabled(ctx: HookCtx): boolean {
 export function markNeedsListener(ctx: HookCtx): Promise<HookResult> {
   return failOpen(ctx, 'listen-mark', async () => {
     const sid = sessionId(ctx);
-    if (!sid || !listeningEnabled(ctx)) return OK;
+    if (!sid) return OK;
+    endTurn(ctx.paths, sid); // the turn is over (presence: no longer live)
+    if (!listeningEnabled(ctx)) return OK;
     const file = needsListenerFile(ctx, sid);
     if (liveListener(ctx, sid)) {
       fs.rmSync(file, { force: true });
@@ -157,13 +197,21 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
   return failOpen(ctx, 'listen', async () => {
     const sid = sessionId(ctx);
     if (!sid || !listeningEnabled(ctx)) return OK;
+    // Spawned by SessionStart or UserPromptSubmit: the session is alive (again, after a resume).
+    clearSessionEnded(ctx.paths, sid);
+    if (ctx.input.hook_event_name === 'UserPromptSubmit') startTurn(ctx.paths, sid, ctx.now());
     const mine = claimListener(ctx, sid);
-    if (!mine) return OK;
+    if (!mine) {
+      // Another listener is live, maybe mid-wait for minutes: report the new turn now.
+      if (isTurnActive(ctx, sid)) await reportTurn(ctx, sid);
+      return OK;
+    }
     fs.rmSync(needsListenerFile(ctx, sid), { force: true });
     const wait = o.sleep ?? sleep;
     const endAt = ctx.now() + (o.runMs ?? LISTEN_TIMEOUT_MS - EXIT_MARGIN_MS);
     const backoffMin = o.backoffMinMs ?? BACKOFF_MIN_MS;
     const safetyMs = o.safetyPollMs ?? SAFETY_POLL_MS;
+    const turnCheckMs = o.turnCheckMs ?? TURN_CHECK_MS;
     const mode = pickMode(ctx, o);
     let bell: Doorbell | undefined;
     const openBell = () => {
@@ -178,10 +226,16 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
     try {
       while (ctx.now() < endAt) {
         if (superseded(ctx, sid, mine)) return OK; // a newer listener for this session → step aside
+        if (sessionEnded(ctx.paths, sid)) {
+          clearSessionEnded(ctx.paths, sid); // SessionEnd ran: stop heartbeating a session that's gone
+          return OK;
+        }
         const left = endAt - ctx.now();
         const waitS = mode.kind === 'longpoll' ? Math.min(PULSE_MAX_WAIT_S, Math.floor((left - 2_000) / 1000)) : 0;
         if (mode.kind === 'longpoll' && waitS < 1) break;
-        const q = new URLSearchParams({ wait: String(waitS), sessionId: sid });
+        const active = isTurnActive(ctx, sid);
+        const polledAt = ctx.now();
+        const q = new URLSearchParams({ wait: String(waitS), sessionId: sid, active: active ? '1' : '0' });
         const cursor = readPulse(ctx.paths).cursor;
         if (cursor) q.set('cursor', cursor);
         let delay = 0;
@@ -243,7 +297,18 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
             bellBackoff = Math.min(BACKOFF_MAX_MS, bellBackoff * 2);
             openBell();
           }
-          const r = await bell!.wait(Math.max(0, Math.min(safetyMs, endAt - ctx.now() - 2_000)));
+          // Wait for a ring, the safety poll, or (during a turn) the next turn report; in slices, so a
+          // turn that starts or ends mid-wait is reported within TURN_CHECK_MS.
+          let r: Awaited<ReturnType<Doorbell['wait']>> = 'timeout';
+          for (;;) {
+            const nowActive = isTurnActive(ctx, sid);
+            if (nowActive !== active) break; // a turn started or ended since the poll: report it now
+            const dueAt = polledAt + (nowActive ? Math.min(safetyMs, ACTIVE_POLL_MS) : safetyMs);
+            const until = Math.min(dueAt, endAt - 2_000);
+            if (ctx.now() >= until) break;
+            r = await bell!.wait(Math.max(0, Math.min(turnCheckMs, until - ctx.now())));
+            if (r !== 'timeout') break;
+          }
           if (r === 'ring') bellBackoff = backoffMin;
           if (r === 'timeout' && endAt - ctx.now() <= 2_000) break;
           continue;

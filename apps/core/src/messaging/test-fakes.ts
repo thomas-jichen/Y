@@ -63,6 +63,12 @@ const ORDER = ['pending', 'pointer_sent', 'seen', 'handled'];
 
 export const domain = {
   LEASE_STALE_MS: 10 * 60 * 1000,
+  PRESENCE_SWEEP_EVERY_MS: 60_000,
+  presenceWindows: (opts: { doorbell: boolean }) => ({ liveMs: 150_000, ingestLiveMs: 600_000, listeningMs: opts.doorbell ? 630_000 : 70_000 }),
+  recurringSlot: (nowMs: number, everyMs: number) => {
+    const slot = Math.floor((nowMs + everyMs / 2) / everyMs) + 1;
+    return { slot, runAfterMs: Math.max(1, slot * everyMs - nowMs - 5_000) };
+  },
   LEASE_ACK_TIMEOUT_MS: 30_000,
   transition,
   deliveryTransition: (state: string, event: string) => {

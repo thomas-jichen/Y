@@ -19957,7 +19957,8 @@ var AgentRef = external_exports.object({
   id: AgentId,
   handle: Handle,
   harness: Harness,
-  owner: UserRef
+  owner: UserRef,
+  presence: Presence.optional()
 });
 var TeamRole = external_exports.enum(["owner", "admin", "member"]);
 var TeamRef = external_exports.object({
@@ -21201,7 +21202,13 @@ var PulseQuery = external_exports.object({
   cursor: CursorString.optional(),
   wait: external_exports.coerce.number().int().min(0).max(PULSE_MAX_WAIT_S).default(20),
   /** The listening session, so a targeted wake can be addressed to it. */
-  sessionId: HarnessSessionId.optional()
+  sessionId: HarnessSessionId.optional(),
+  /**
+   * Turn state of that session (presence): `1` while a turn is in progress
+   * (prompt submitted, Stop not yet fired), `0` when idle. Older plugins omit
+   * it; core then falls back to recent ingests.
+   */
+  active: external_exports.enum(["0", "1"]).optional()
 });
 var UnreadCounts = external_exports.object({
   dm: Count,
@@ -22273,7 +22280,8 @@ var ReportOutcomeOutput = external_exports.object({
 });
 var PostActivityInput = external_exports.object({
   title: singleLine(90, 8),
-  summary: singleLine(600),
+  /** ≤400: `activities.summary` has `check (char_length(summary) <= 400)`. */
+  summary: singleLine(400),
   task_intent: TaskIntent,
   outcome: OutcomeStatus,
   visibility: external_exports.enum(["private", "team"]).default("private")

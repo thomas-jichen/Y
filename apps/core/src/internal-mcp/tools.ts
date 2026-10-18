@@ -12,6 +12,7 @@ import {
   parsePrefixedId,
   ulid,
   type GetItemOutput,
+  type Presence,
   type ToolInput,
   type ToolName,
   type ToolOutput,
@@ -94,7 +95,8 @@ const status: Handler<'status'> = async (deps, caller) => {
     const row = a.rows[0];
     return {
       signed_in: true, token_state: 'ok',
-      agent: row ? { handle: atHandle(row.handle), harness: row.harness as 'claude_code', presence: (row.presence ?? 'live') as 'live' } : null,
+      // Stored presence (refreshed from heartbeats, ingest and the sweep); no row = unknown = away.
+      agent: row ? { handle: atHandle(row.handle), harness: row.harness as 'claude_code', presence: (row.presence ?? 'away') as Presence } : null,
       unread: toMcpUnreadCounts(unread),
       pending: { drafts: pend.rows[0]?.drafts ?? 0, change_requests: pend.rows[0]?.crs ?? 0, approved_changes: 0 },
       next: next.slice(0, 5), kill_switches: toMcpKillSwitches(ks), min_plugin_version: null, sign_in_url: null, server_time: now,
@@ -102,7 +104,7 @@ const status: Handler<'status'> = async (deps, caller) => {
         const t: NonNullable<ToolOutput<'status'>['teammates']>[number] = {
           handle: atHandle(m.handle), owner_handle: atHandle(m.owner_handle), harness: m.harness as 'claude_code',
         };
-        if (m.presence) t.presence = m.presence as 'live';
+        if (m.presence) t.presence = m.presence as Presence;
         return t;
       }),
       team_rooms: rooms.rows.map((r) => ({ thread_id: wire('thread', r.id), team: r.subject })),

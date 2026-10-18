@@ -14,3 +14,4 @@ export * from './lease.js';
 export * from './quality.js';
 export * from './titles.js';
 export * from './posting.js';
+export * from './presence.js';

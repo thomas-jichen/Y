@@ -27,7 +27,9 @@ import {
 import { fx } from '@y/schema/fixtures';
 import type { CoreDeps } from '../contracts.js';
 
-vi.mock('@y/domain', () => ({
+vi.mock('@y/domain', async (importOriginal) => ({
+  // Real presence windows etc.; the title/size/warmup rules are stubbed.
+  ...(await importOriginal<typeof import('@y/domain')>()),
   templatedTitle: (stats: { toolCalls: Record<string, number> }, setup: { model: string }) =>
     `${Object.values(stats.toolCalls).reduce((a, b) => a + b, 0)} tool calls · ${setup.model.replace(/^claude-/, '')}`,
   sizeBucketFor: () => 'M',

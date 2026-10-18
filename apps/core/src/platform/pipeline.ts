@@ -1,6 +1,7 @@
 /**
  * Worker jobs (db.asService only here): finalize → screen → publish, distill_heuristic →
- * screen (highlight) → review item, review.draft (approval publishes), embed, close_idle.
+ * screen (highlight) → review item, review.draft (approval publishes), embed, close_idle,
+ * presence_sweep (presence.ts).
  */
 import type { Tx } from '@y/db';
 import {
@@ -13,12 +14,13 @@ import {
   type Lap,
   type LocalDistill,
 } from '@y/schema';
-import { isWarmup, sizeBucketFor, templatedTitle } from '@y/domain';
+import { isWarmup, recurringSlot, sizeBucketFor, templatedTitle } from '@y/domain';
 import { redact } from '@y/redact';
 import { actionFor, l0Scan } from '@y/safety';
 import { normalizeErrorSignature } from '@y/capture';
 import type { CoreDeps, JobHandler } from '../contracts.js';
 import { heuristicDrafts } from './distill.js';
+import { presenceSweep, schedulePresenceSweep } from './presence.js';
 import { openDigest, toVectorLiteral } from './util.js';
 import { enqueueFeedCard } from '../slack/enqueue.js';
 
@@ -380,8 +382,15 @@ const closeIdle: JobHandler = async (_payload, deps) => {
 };
 
 export async function scheduleCloseIdle(deps: CoreDeps): Promise<void> {
-  const bucket = Math.floor(deps.now().getTime() / CLOSE_IDLE_EVERY_MS) + 1;
-  await deps.jobs.enqueue('close_idle', {}, { dedupeKey: `close_idle:${bucket}`, runAfterMs: CLOSE_IDLE_EVERY_MS });
+  // Due just before a tick boundary: `now + period` would land after the cron tick and wait one more.
+  const { slot, runAfterMs } = recurringSlot(deps.now().getTime(), CLOSE_IDLE_EVERY_MS);
+  await deps.jobs.enqueue('close_idle', {}, { dedupeKey: `close_idle:${slot}`, runAfterMs });
+}
+
+/** Arm every self-rescheduling job: close_idle and presence_sweep (deduped per bucket). */
+export async function scheduleRecurring(deps: CoreDeps): Promise<void> {
+  await scheduleCloseIdle(deps);
+  await schedulePresenceSweep(deps);
 }
 
 export const PLATFORM_JOBS: Record<string, JobHandler> = {
@@ -392,4 +401,5 @@ export const PLATFORM_JOBS: Record<string, JobHandler> = {
   'review.draft': reviewDraft,
   embed,
   close_idle: closeIdle,
+  presence_sweep: presenceSweep,
 };

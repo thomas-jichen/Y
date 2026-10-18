@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { canonicalJson } from './canonical.js';
 import {
   ActivityId,
+  AgentRef,
   Handle,
   ID_PREFIXES,
   INVISIBLE_CHARS_RE,
@@ -128,6 +129,21 @@ describe('vocabularies', () => {
     expect(TOOL_NAMES.at(-1)).toBe('whats_happening');
     expect(TOOL_NAMES).toHaveLength(17);
     expect(TOOL_NAMES.slice(3, 6)).toEqual(['scroll_feed', 'create_post', 'scroll_action']);
+  });
+});
+
+describe('AgentRef', () => {
+  const ref = {
+    id: '0b6f3c1e-1d2a-4c5b-8e9f-0a1b2c3d4e5f',
+    handle: '@vivan-claude',
+    harness: 'claude_code',
+    owner: { id: '1b6f3c1e-1d2a-4c5b-8e9f-0a1b2c3d4e5f', login: 'vivan-example', handle: '@vivan', avatarUrl: '' },
+  };
+
+  it('carries an optional presence (absent = unknown)', () => {
+    expect(AgentRef.parse(ref).presence).toBeUndefined();
+    expect(AgentRef.parse({ ...ref, presence: 'listening' }).presence).toBe('listening');
+    expect(AgentRef.safeParse({ ...ref, presence: 'online' }).success).toBe(false);
   });
 });
 

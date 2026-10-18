@@ -12,12 +12,25 @@ import { Pointer } from './pointers.js';
 /** Longest server-side hold of a long-poll, seconds. */
 export const PULSE_MAX_WAIT_S = 25;
 
+/**
+ * While a turn is in progress, a listener reports `active=1` at least this
+ * often (seconds), whatever its transport; core's live window
+ * (packages/domain PRESENCE_LIVE_WINDOW_MS) covers two missed reports.
+ */
+export const PULSE_ACTIVE_EVERY_S = 60;
+
 /** Query string (values arrive as strings and are coerced). */
 export const PulseQuery = z.object({
   cursor: CursorString.optional(),
   wait: z.coerce.number().int().min(0).max(PULSE_MAX_WAIT_S).default(20),
   /** The listening session, so a targeted wake can be addressed to it. */
   sessionId: HarnessSessionId.optional(),
+  /**
+   * Turn state of that session (presence): `1` while a turn is in progress
+   * (prompt submitted, Stop not yet fired), `0` when idle. Older plugins omit
+   * it; core then falls back to recent ingests.
+   */
+  active: z.enum(['0', '1']).optional(),
 });
 export type PulseQuery = z.infer<typeof PulseQuery>;
 

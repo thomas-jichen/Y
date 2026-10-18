@@ -19,6 +19,7 @@ import type { Caller, CoreDeps } from '../../contracts.js';
 import { PlatformAuth } from '../auth.js';
 import { PgPushBus } from '../bus.js';
 import { authenticate } from '../http.js';
+import { refreshAgentPresence } from '../presence.js';
 import { realtimeChannelFor } from '../realtime-channel.js';
 import type { SealedChunk } from '../pipeline.js';
 import { INGEST_BUCKET, takeToken } from '../rate-limit.js';
@@ -27,6 +28,8 @@ import { fail, parseOr, readJson, sealDigest, segmentUlid } from '../util.js';
 export const MIN_PLUGIN_VERSION = '0.1.0';
 /** P2 push threshold (packages/retrieval THRESHOLDS.push). */
 export const PUSH_MATCH_THRESHOLD = 0.6;
+/** Segment close reasons that also end the harness session (the rest only close a segment). */
+const SESSION_ENDING_REASONS: ReadonlySet<string> = new Set(['session_end', 'clear']);
 
 function cursorOf(deps: CoreDeps): string {
   return deps.bus instanceof PgPushBus ? deps.bus.cursor : '0';
@@ -75,7 +78,11 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
          on conflict (agent_id, harness_session_id) do update
            set last_event_at = now(), harness_version = excluded.harness_version,
                repo_key = coalesce(excluded.repo_key, public.sessions.repo_key),
-               status = 'open', close_reason = null, ended_at = null
+               -- Reopen (idle-closed, resumed) sessions, but not ones the harness ended: a retried or
+               -- late chunk must not undo SessionEnd / clear. A newer chunk reopens those below.
+               status = case when public.sessions.close_reason in ('session_end', 'clear') then public.sessions.status else 'open' end,
+               close_reason = case when public.sessions.close_reason in ('session_end', 'clear') then public.sessions.close_reason end,
+               ended_at = case when public.sessions.close_reason in ('session_end', 'clear') then public.sessions.ended_at end
          returning id, started_at`,
         [agentId, caller.installId, ch.sessionId, ch.repoKey ?? null, ch.harnessVersion.slice(0, 40)],
       );
@@ -136,6 +143,27 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
       if (!duplicate && ch.close) {
         await deps.jobs.enqueue('finalize', { activityId }, { dedupeKey: `finalize:${activityId}:${ch.seq}`, tx });
       }
+      // A resumed session (a chunk newer than every other, after SessionEnd / clear) is open again.
+      if (!duplicate) {
+        await tx.query(
+          `update public.sessions set status = 'open', close_reason = null, ended_at = null
+            where id = $1 and close_reason in ('session_end', 'clear')
+              and not exists (select 1 from public.activity_chunks c where c.session_id = $1 and c.seq > $2)`,
+          [session.id, ch.seq],
+        );
+      }
+      // The harness session itself ended (SessionEnd, /clear): it no longer counts as live, and its
+      // listener is gone (presence must not keep showing it as listening until the lease goes stale).
+      if (!duplicate && ch.close && SESSION_ENDING_REASONS.has(ch.close.reason)) {
+        await tx.query(
+          `update public.sessions set status = 'closed', close_reason = $2, ended_at = now() where id = $1`,
+          [session.id, ch.close.reason],
+        );
+        await tx.query(
+          `update public.session_leases set listening = 'none', active_at = null where agent_id = $1 and session_id = $2`,
+          [agentId, ch.sessionId],
+        );
+      }
       return {
         accepted: !duplicate,
         ...(duplicate ? { duplicate: true } : {}),
@@ -143,6 +171,8 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
         pulse: { unread: await unreadFor(tx, agentId), cursor: cursorOf(deps) },
       };
     });
+    // sessions.last_event_at moved (or the session ended): recompute presence (fail-open).
+    await refreshAgentPresence(deps, agentId);
     return c.json(res);
   });
 

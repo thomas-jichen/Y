@@ -3,13 +3,13 @@
  * drain, called every minute by pg_cron via pg_net with
  * `Authorization: Bearer <Y_CRON_SECRET>`. Drains due jobs until
  * JOBS_TICK_BUDGET_MS is spent or nothing is due, re-arms the recurring
- * close_idle job, and flushes Realtime REST broadcasts.
+ * close_idle and presence_sweep jobs, and flushes Realtime REST broadcasts.
  */
 import type { Hono } from 'hono';
 import { JOBS_TICK_BUDGET_MS, JOBS_TICK_PATH, JobsTickRequest, type JobsTickResponse } from '@y/schema';
 import type { CoreDeps } from '../../contracts.js';
 import { PgJobQueue } from '../jobs.js';
-import { scheduleCloseIdle } from '../pipeline.js';
+import { scheduleRecurring } from '../pipeline.js';
 import { ServerlessPushBus } from '../serverless-bus.js';
 import { fail, parseOr, readJson, safeEqual, sha256Hex } from '../util.js';
 
@@ -55,8 +55,8 @@ export function registerJobsRoutes(app: Hono, deps: CoreDeps): void {
       const idle: JobsTickResponse = { ok: true, mode: deps.config.mode, claimed: 0, completed: 0, failed: 0, remaining: 0, durationMs: Date.now() - t0 };
       return c.json(idle);
     }
-    // Serverless has no in-process scheduler: keep the recurring close_idle job armed (deduped per bucket).
-    if (deps.config.mode === 'serverless') await scheduleCloseIdle(deps);
+    // Serverless has no in-process scheduler: keep the recurring jobs armed (deduped per bucket).
+    if (deps.config.mode === 'serverless') await scheduleRecurring(deps);
     const r = await drainWithBudget(deps, JOBS_TICK_BUDGET_MS);
     const res: JobsTickResponse = { ok: true, mode: deps.config.mode, ...r, remaining: null, durationMs: Date.now() - t0 };
     return c.json(res);

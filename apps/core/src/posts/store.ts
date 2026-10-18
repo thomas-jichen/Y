@@ -197,7 +197,7 @@ async function webReactions(deps: CoreDeps, caller: Caller, postIds: string[]): 
   const rows = await deps.db.asUser(caller.claims, async (tx) => (await tx.query<{ post_id: string; reactor_kind: 'agent' | 'user'; reactor_id: string; kind: ReactionKind }>(
     `select post_id, reactor_kind, reactor_id, kind from public.post_reactions where post_id = any($1::text[]) order by created_at desc`, [postIds])).rows);
   const agentIds = [...new Set(rows.filter((r) => r.reactor_kind === 'agent').map((r) => r.reactor_id))];
-  const refs = await deps.db.asService((s) => loadAgentRefs(s, agentIds));
+  const refs = await deps.db.asService((s) => loadAgentRefs(s, agentIds, caller.userId));
   for (const r of rows) {
     const sum = out.get(r.post_id)?.[r.kind];
     if (!sum) continue;
@@ -221,7 +221,7 @@ export async function webComments(deps: CoreDeps, caller: Caller, rows: CommentR
   const agentIds = [...new Set(rows.map((r) => r.author_agent_id).filter((x): x is string => !!x))];
   const userIds = [...new Set(rows.map((r) => r.author_user_id).filter((x): x is string => !!x))];
   const { refs, users, rels } = await deps.db.asService(async (s) => {
-    const refs = await loadAgentRefs(s, agentIds);
+    const refs = await loadAgentRefs(s, agentIds, caller.userId);
     const users = await userInfos(s, userIds);
     const rels = new Map<string, string>();
     for (const o of new Set(rows.filter((r) => r.author_kind === 'agent').map((r) => r.owner_user_id))) rels.set(o, await relationshipBetween(s, caller.userId, o));
@@ -302,7 +302,7 @@ export async function loadWebPosts(deps: CoreDeps, caller: Caller, ids: readonly
   const published = loaded.posts.filter((p) => p.status === 'published').map((p) => p.id);
   const reactions = await webReactions(deps, caller, published);
   const { refs, seen } = await deps.db.asService(async (s) => {
-    const refs = await loadAgentRefs(s, loaded.posts.map((p) => p.author_agent_id));
+    const refs = await loadAgentRefs(s, loaded.posts.map((p) => p.author_agent_id), caller.userId);
     const seen = published.length ? (await s.query<{ post_id: string; n: number }>(
       `select substr(e.content_id, 4) as post_id, count(distinct e.agent_id)::int as n from public.content_exposures e
         where e.content_kind = 'post' and e.content_id = any($1::text[]) group by 1`, [published.map((id) => wire('post', id))])).rows : [];
@@ -360,7 +360,7 @@ export async function loadWebScrolls(deps: CoreDeps, caller: Caller, rows: Scrol
   const meta = await deps.db.asService(async (s) => {
     const posts = postIds.length ? (await s.query<{ id: string; kind: string; author_agent_id: string }>(
       `select id, kind, author_agent_id from public.posts where id = any($1::text[])`, [postIds])).rows : [];
-    const refs = await loadAgentRefs(s, [...rows.map((r) => r.agent_id), ...posts.map((p) => p.author_agent_id)]);
+    const refs = await loadAgentRefs(s, [...rows.map((r) => r.agent_id), ...posts.map((p) => p.author_agent_id)], caller.userId);
     return { posts: new Map(posts.map((p) => [p.id, p])), refs };
   });
   const comments = new Map(own.comments.map((c) => [c.id, c]));

@@ -1,6 +1,6 @@
 /**
- * Listener long-poll: GET /api/v1/pulse?cursor&wait and POST /api/v1/pulse/ack.
- * Heartbeats the session lease, waits on the bus, and returns a wake only
+ * Listener long-poll: GET /api/v1/pulse?cursor&wait&active and POST /api/v1/pulse/ack.
+ * Heartbeats the session lease (and its turn state, for presence), waits on the bus, and returns a wake only
  * when a wake-worthy event targets THIS session (pickLeaseSession) and the
  * wake budget allows it. The wake carries a pointer template only (I3).
  */
@@ -8,6 +8,7 @@ import type { App, CoreDeps, PushEvent } from '../contracts.js';
 import { LEASE_STALE_MS, pickLeaseSession, wakeBudget, type LeaseCandidate } from '@y/domain';
 import { HarnessSessionId, PulseQuery, WakeAck, makePointer, validationError, type PulseResponse } from '@y/schema';
 import { PlatformAuth } from '../platform/auth.js';
+import { refreshAgentPresence } from '../platform/presence.js';
 import { HttpError, agentInfos, errorResponse, killSwitches, requireAgent, requireCaller, unreadCounts } from './util.js';
 
 const SESSION_HEADER = 'x-y-session';
@@ -120,13 +121,20 @@ export function registerPulse(app: App, deps: CoreDeps): void {
       if (!sid.success) throw new HttpError('VALIDATION', 'X-Y-Session header (harness session id) is required');
       const sessionId = sid.data;
 
-      // Heartbeat: this session is listening.
+      // Heartbeat: this session is listening. `active` (newer listeners) reports whether a turn is in
+      // progress: 1 stamps active_at (presence: live), 0 clears it; omitted leaves it alone.
+      const active = q.data.active ?? null;
       await deps.db.asUser(caller.claims, (tx) => tx.query(
-        `insert into public.session_leases (agent_id, session_id, install_id, listening, last_heartbeat_at)
-         values ($1, $2, $3, 'listening', now())
+        `insert into public.session_leases (agent_id, session_id, install_id, listening, last_heartbeat_at, active_at, reports_turns)
+         values ($1, $2, $3, 'listening', now(), case when $4::text = '1' then now() end, $4::text is not null)
          on conflict (agent_id, session_id) do update set listening = 'listening', last_heartbeat_at = now(),
-           install_id = coalesce(excluded.install_id, public.session_leases.install_id)`,
-        [agentId, sessionId, caller.installId]));
+           install_id = coalesce(excluded.install_id, public.session_leases.install_id),
+           active_at = case when $4::text is null then public.session_leases.active_at
+                            when $4::text = '1' then now() end,
+           reports_turns = public.session_leases.reports_turns or $4::text is not null`,
+        [agentId, sessionId, caller.installId, active]));
+      // The heartbeat may make the agent listening or live (fail-open; one event only on a change).
+      await refreshAgentPresence(deps, agentId);
 
       const waitMs = q.data.wait * 1000;
       const { events, cursor } = await deps.bus.waitForAgent(agentId, q.data.cursor ?? null, waitMs);

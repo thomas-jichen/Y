@@ -15,7 +15,7 @@ import { ServerlessPushBus } from './serverless-bus.js';
 import { registerJobsRoutes } from './routes/jobs.js';
 import { registerStreamTokenRoute } from './routes/stream-token.js';
 import { PgJobQueue } from './jobs.js';
-import { PLATFORM_JOBS, scheduleCloseIdle } from './pipeline.js';
+import { PLATFORM_JOBS, scheduleRecurring } from './pipeline.js';
 import { registerConnectRoutes } from './routes/connect.js';
 import { registerDevRoutes } from './routes/dev.js';
 import { registerHookRoutes } from './routes/hook.js';
@@ -41,12 +41,13 @@ export { drainWithBudget } from './routes/jobs.js';
 export { registerWebGuards } from './web-guard.js';
 export { heuristicDrafts } from './distill.js';
 export { PLATFORM_JOBS } from './pipeline.js';
+export { refreshPresence, presenceAudience } from './presence.js';
 
 /** apps/core/migrations: applied after supabase/migrations (dev web sessions). */
 export const CORE_MIGRATIONS_DIR = fileURLToPath(new URL('../../migrations/', import.meta.url));
 
 export interface CreateDepsOptions {
-  /** Skip the recurring close_idle schedule (tests). */
+  /** Skip the recurring close_idle / presence_sweep schedule (tests). */
   scheduleRecurring?: boolean;
   now?: () => Date;
   log?: CoreDeps['log'];
@@ -90,7 +91,7 @@ export async function createDeps(
   const embedder = createCoreEmbedder(config, opts.fetch ? { fetch: opts.fetch } : {}, log);
   const deps: CoreDeps = { config, db, auth, bus, jobs, embedder, now, log };
   jobs.bind(deps);
-  if (opts.scheduleRecurring ?? config.mode === 'server') await scheduleCloseIdle(deps);
+  if (opts.scheduleRecurring ?? config.mode === 'server') await scheduleRecurring(deps);
   return deps;
 }
 

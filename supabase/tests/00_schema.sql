@@ -99,17 +99,19 @@ select set_eq(
 select is_empty(
   $$ select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
      where n.nspname = 'api'
-       and p.proname in ('claim_jobs', 'complete_job', 'fail_job', 'emit_system_event', 'events_since', 'purge_expired')
+       and p.proname in ('claim_jobs', 'complete_job', 'fail_job', 'emit_system_event', 'events_since', 'purge_expired',
+                         'refresh_agent_presence')
        and has_function_privilege('authenticated', p.oid, 'EXECUTE') $$,
-  'job, system-event and purge functions are service_role only');
+  'job, system-event, purge and presence-refresh functions are service_role only');
 
 select is_empty(
   $$ select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
      where n.nspname = 'y_private'
-       and p.proname in ('broadcast', 'jobs_tick', 'config_value', 'handle_new_auth_user', 'on_event_insert')
+       and p.proname in ('broadcast', 'jobs_tick', 'config_value', 'handle_new_auth_user', 'on_event_insert',
+                         'derive_presence')
        and (has_function_privilege('authenticated', p.oid, 'EXECUTE')
             or has_function_privilege('anon', p.oid, 'EXECUTE')) $$,
-  'broadcast, jobs_tick, config_value and trigger functions are not callable by API roles');
+  'broadcast, jobs_tick, config_value, derive_presence and trigger functions are not callable by API roles');
 
 -- Seeds and helpers -----------------------------------------------------------------
 select results_eq(

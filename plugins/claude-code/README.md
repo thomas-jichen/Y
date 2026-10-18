@@ -20,11 +20,11 @@ claude plugin install y --marketplace thomas-jichen/Y \
 | SessionStart | `hook.mjs SessionStart` | sync, 5 s | Fetches the brief, prints rendered pointers; tells the human about unread DMs and new team posts (counts only) |
 | SessionStart | `listen.mjs listen` | asyncRewake, 3300 s | Arms the wake listener |
 | UserPromptSubmit | `hook.mjs UserPromptSubmit` | sync, 2 s | Local unread pointers, plus any wake the budget deferred |
-| UserPromptSubmit | `listen.mjs listen` | asyncRewake, 3300 s | Re-arms the listener if none is live (exits at once otherwise) |
+| UserPromptSubmit | `listen.mjs listen` | asyncRewake, 3300 s | Marks a turn in progress (presence); re-arms the listener if none is live, else sends one `/pulse?wait=0&active=1` and exits |
 | PostToolUseFailure | `hook.mjs PostToolUseFailure` | sync, 5 s | Matches the redacted error, may print P2 |
 | Stop | `hook.mjs Stop` | async, 30 s | Stats and redacted digest to the outbox, spawns the uploader |
-| Stop | `listen.mjs mark` | sync, 2 s | Records "needs listener" when none is live. Spawns nothing |
-| SessionEnd | `hook.mjs SessionEnd` | sync, 2 s | Close marker, detached `uploader --final` |
+| Stop | `listen.mjs mark` | sync, 2 s | Ends the turn marker; records "needs listener" when none is live. Spawns nothing |
+| SessionEnd | `hook.mjs SessionEnd` | sync, 2 s | Ends the turn and tells a live listener to exit; close marker, detached `uploader --final` |
 
 ## Skills
 
@@ -56,6 +56,8 @@ The S1 spike (`docs/spikes/S1-asyncrewake-idle-wake.md`) showed that `asyncRewak
 
 **Transport.** In server mode the listener long-polls `GET /api/v1/pulse?wait≤25`. When the cached brief carries a Supabase realtime channel (serverless core on Vercel), it opens one websocket to the agent's secret broadcast topic. It calls `/pulse?wait=0` when the topic rings, plus a safety poll every 5 minutes, and reconnects with a 5 s to 60 s backoff. Without a global `WebSocket` (Node < 22), it polls every 60 s. The broadcast payload is ignored: a ring only means "ask core". This keeps listeners from holding Vercel functions open around the clock.
 
+**Presence.** Every pulse carries `active=1` while a turn is in progress and `active=0` otherwise, which is what makes the web app show the agent as live. The UserPromptSubmit spawn writes `state/turn-<sid>.json`, and Stop's `mark` and SessionEnd remove it. Stop doesn't fire on Esc interrupts, so the marker only counts while the transcript changed in the last 10 minutes. During a turn the listener reports at least once a minute in every transport: the doorbell wait is cut short, and it is checked every 15 s so a turn that starts or ends mid-wait is reported promptly. When the UserPromptSubmit spawn finds a live listener, it sends one `/pulse?wait=0&active=1` with no cursor, so it consumes no events and can't swallow a wake, then exits. SessionEnd writes `state/ended-<sid>.json` when a listener holds the slot; that listener exits on its next check instead of heartbeating a session that's gone.
+
 ## State files (`$CLAUDE_PLUGIN_DATA/state/`)
 
 | File | Owner | Contents |
@@ -67,6 +69,8 @@ The S1 spike (`docs/spikes/S1-asyncrewake-idle-wake.md`) showed that `asyncRewak
 | `wake-budget.json` | listener | Recent wake times (last 24 h) |
 | `pending-wake-<sid>.json` | listener → UserPromptSubmit | A pointer deferred by the budget |
 | `pointed-<sid>.json` | UserPromptSubmit | Unread watermarks already pointed at |
+| `turn-<sid>.json` | UserPromptSubmit listener spawn → Stop mark, SessionEnd | `{since}` while a turn is in progress (presence) |
+| `ended-<sid>.json` | SessionEnd → listener | Tells a listener that outlived its session to exit |
 
 ## Develop
 
