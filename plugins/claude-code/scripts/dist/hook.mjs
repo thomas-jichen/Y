@@ -20252,7 +20252,7 @@ function date4(params) {
 // ../../packages/schema/src/common.ts
 var CONTROL_SINGLE_LINE = /[\u0000-\u001F\u007F]/;
 var CONTROL_MULTI_LINE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
-var INVISIBLE_CHARS_SOURCE = "[\\u00AD\\u180E\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF]";
+var INVISIBLE_CHARS_SOURCE = "[\\u00AD\\u061C\\u17B4\\u17B5\\u180E\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\u3164\\uFEFF\\uFFA0]";
 var INVISIBLE_CHARS_RE = new RegExp(INVISIBLE_CHARS_SOURCE);
 function singleLine(max, min = 0) {
   return external_exports.string().min(min).max(max).refine((s2) => !CONTROL_SINGLE_LINE.test(s2), {
@@ -22657,9 +22657,12 @@ var McpSetupArm = external_exports.object({
   /** Median tokens of the arm's verified successes; null when it has none. */
   median_tokens_on_success: Count.nullable()
 });
+var SetupSignalName = external_exports.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:@/+[\]-]{0,159}$/, {
+  error: "invalid setup component name"
+});
 var McpSetupComponentSignal = external_exports.object({
   kind: SetupComponentKind,
-  name: ComponentName,
+  name: SetupSignalName,
   /** 'measured' only when each arm has n ≥ 5 from ≥ 2 owners. */
   label: external_exports.enum(["measured", "early_signal"]),
   with: McpSetupArm,
@@ -22670,6 +22673,8 @@ var McpSetupComponentSignal = external_exports.object({
   tokens_delta: external_exports.number().nullable(),
   /** Share of with-arm sessions from its single largest owner (1 = one person). */
   top_owner_share: external_exports.number().min(0).max(1),
+  /** The same share for the without arm (optional; older servers omit it). */
+  without_top_owner_share: external_exports.number().min(0).max(1).optional(),
   /** True when your agent's latest setup has it. */
   you_use: external_exports.boolean(),
   /** Other components present in exactly the same sessions (indistinguishable; e.g. a plugin's bundled skills). */
@@ -22987,7 +22992,11 @@ var InternalMcpMeta = external_exports.object({
     version: external_exports.string().max(40).optional()
   }).optional(),
   /** The harness session, when the MCP client forwards it (used for exposures and leases). */
-  harnessSessionId: HarnessSessionId.optional()
+  harnessSessionId: HarnessSessionId.optional(),
+  /** Random per-request value; core accepts a signed request carrying one only once (replay guard). */
+  nonce: external_exports.string().regex(/^[A-Za-z0-9_-]{16,64}$/).optional(),
+  /** Hash of the MCP client's network address (never the address): the rate-limit key for signed-out calls. */
+  clientKey: external_exports.string().regex(/^[a-f0-9]{16,64}$/).optional()
 });
 var InternalMcpRequest = external_exports.object({
   input: external_exports.unknown(),
@@ -23034,7 +23043,12 @@ var Product = external_exports.object({
   replyPolicy: ReplyPolicy,
   status: ProductStatus,
   claims: external_exports.array(ProductClaimView).max(50),
-  createdAt: IsoTimestamp
+  createdAt: IsoTimestamp,
+  /**
+   * Present (true) when the product's name or slug no longer passes the label screen (a row stored before it,
+   * or a rule update): `find_builder` does not show the product to agents until it is renamed.
+   */
+  labelHidden: external_exports.literal(true).optional()
 });
 var ProductList = external_exports.array(Product).max(200);
 var CreateProductRequest = external_exports.object({
@@ -24333,7 +24347,27 @@ var RULES = [
   { id: "identity_ip", kind: "identity", description: "IPv4 addresses", marker: "<IP>" }
 ];
 var FAIL_CLOSED_THRESHOLD = 5;
-var ENV_DUMP_COMMAND_RE = /(?:^|[;&|(]\s*)(?:(?:env|set)(?=\s*(?:$|[|;&>)]))|printenv\b|export\s+-p\b|(?:cat|less|more|head|tail|bat)\s+(?:\S+\s+)*\S*\.env\S*|docker\s+inspect\b|kubectl\s+get\s+secrets?\b)/;
+var ENV_PREFIX = String.raw`(?:(?:sudo|command|exec|builtin|nohup)(?:\s+-[^\s;&|()\n⏎]+)*\s+)*`;
+var ENV_CMD_START = String.raw`(?:^|[;&|(\n⏎])\s*`;
+var ENV_CMD_DIR = String.raw`(?:[^\s;&|()\n⏎<>'"` + "`" + String.raw`]*\/)?`;
+var ENV_READERS = "cat|less|more|head|tail|bat|grep|egrep|rg|awk|sed|sort|tac|nl|xxd|od|strings|cut|uniq|base64";
+var ENV_READER_ARGS = String.raw`(?:[^\n⏎|;&()'"]|'[^'\n⏎|;&()]*'|"[^"\n⏎|;&()]*")*?`;
+var NOT_DOTENV = String.raw`(?!\.(?:example|sample|template|dist|[cm]?[jt]sx?|d\.ts|py|rb|go|rs|java|kt|php)(?![\w-]))`;
+var ENV_DUMP_COMMAND_RE = new RegExp(
+  [
+    // The original rule, minus its `cat … .env` branch (below).
+    String.raw`(?:^|[;&|(]\s*)(?:(?:env|set)(?=\s*(?:$|[|;&>)]))|printenv\b|export\s+-p\b|docker\s+inspect\b|kubectl\s+get\s+secrets?\b)`,
+    // The original `cat … .env` branch: the first `cat|less|… ` at a command start, then `.env` anywhere after it.
+    String.raw`^(?=(?<catStart>[\s\S]*?(?:^|[;&|(]\s*)(?:cat|less|more|head|tail|bat)\s))\k<catStart>[\s\S]*\.env`,
+    // A bare dump at a command start (also after a newline / ⏎), behind optional prefix commands.
+    ENV_CMD_START + ENV_PREFIX + ENV_CMD_DIR + String.raw`(?:env(?:\s+(?:-0|--null|-u\s*[^\s;&|()\n⏎]+|--unset=[^\s;&|()\n⏎]+))*|printenv(?:\s+-0)?|set|export|(?:declare|typeset)\s+-[A-Za-z]*[xp][A-Za-z]*)(?=\s*(?:$|[|;&>)\n⏎]))`,
+    ENV_CMD_START + ENV_PREFIX + ENV_CMD_DIR + String.raw`printenv\b`,
+    // Any reader of a `.env*` file operand (after whitespace, `<` or `/`; not quoted).
+    ENV_CMD_START + ENV_PREFIX + String.raw`(?:${ENV_READERS})\b` + ENV_READER_ARGS + String.raw`[\s<\/]\.env` + NOT_DOTENV + String.raw`[\w.-]*(?=$|[\s|;&)>⏎])`,
+    // An interpreter one-liner printing the whole environment.
+    String.raw`\b(?:node|deno|bun|python[0-9.]*)\s+(?:-[A-Za-z]+\s+)*-[ecp]\s+['"][^'"\n⏎]*\b(?:console\.(?:log|dir)|print|pprint|JSON\.stringify)\((?:dict\()?(?:process\.env|os\.environ)\)`
+  ].join("|")
+);
 
 // ../../packages/redact/src/redact.ts
 var MARKER_BY_ID = Object.fromEntries(RULES.map((r) => [r.id, r.marker]));
@@ -24413,20 +24447,56 @@ var SPECIFIC = [
 ];
 var URL_CRED = {
   id: "url_credentials",
-  re: /\b[a-zA-Z][a-zA-Z0-9+.-]{1,20}:\/\/([^\s:/@<>"'`]+:[^\s@/<>"'`]+)@/dg,
+  // The password may contain `/` (`postgres://admin:s3cr/etP4ss@db`) unless it
+  // starts like a port and path (`https://host:443/@scope/pkg`, `http://localhost:3000/u/a@b.c`).
+  re: /\b[a-zA-Z][a-zA-Z0-9+.-]{1,20}:\/\/([^\s:/@<>"'`]+:(?:[^\s@/<>"'`]+|(?!\d{1,5}\/)[^\s@<>"'`]+))@/dg,
   group: 1
 };
-var GENERIC = {
-  id: "generic_assignment",
-  re: /\b[A-Za-z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|auth[_-]?key|private[_-]?key|client[_-]?secret|credentials?)[A-Za-z0-9_.-]*["']?\s*(?::=|=>|=|:)\s*(["']?)([^\s"'`,;()[\]{}<>]{8,})\1/dgi,
-  group: 2,
-  validate: (v) => {
-    if (!hasDigit(v)) return false;
-    if (/^\$|^process\.env\b|^env\./.test(v)) return false;
-    if (/^(?:x+|\*+|changeme|example\w*|placeholder\w*)$/i.test(v)) return false;
-    return shannonEntropy(v) > 3.5;
+var GENERIC_ID = "generic_assignment";
+var GENERIC_KEYWORD_RE = /password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|auth[_-]?key|private[_-]?key|client[_-]?secret|credentials?/i;
+var GENERIC_KEY_RUN_SRC = "[A-Za-z0-9_.-]+";
+var GENERIC_TAIL_SRC = String.raw`["']?\s*(?::=|=>|=|:)\s*(["']?)([^\s"'` + "`" + String.raw`,;()[\]{}<>]{8,})\1`;
+var PASSWORD_KEY_RE = /(?:password|passwd|pwd)$/i;
+var IDENTIFIER_LIKE_RE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/;
+var PLACEHOLDER_WORD_RE = /example|placeholder|changeme|change[-_.]me|your[-_.]|redacted|dummy|sample|fake|test|todo|xxx|secret|password|here/i;
+function quotedPassphraseOk(key, v) {
+  if (!PASSWORD_KEY_RE.test(key) || v.length < 12) return false;
+  if (IDENTIFIER_LIKE_RE.test(v) || /[/\\]|^[.~]/.test(v)) return false;
+  if (/^\$|^process\.env\b|^env\./.test(v) || PLACEHOLDER_WORD_RE.test(v)) return false;
+  return shannonEntropy(v) > 3;
+}
+function genericValueOk(v, key = "", quoted = false) {
+  if (!hasDigit(v)) return quoted && quotedPassphraseOk(key, v);
+  if (/^\$|^process\.env\b|^env\./.test(v)) return false;
+  if (/^(?:x+|\*+|changeme|example\w*|placeholder\w*)$/i.test(v)) return false;
+  return shannonEntropy(v) > 3.5;
+}
+function genericAssignmentHits(text) {
+  const out = [];
+  const runs = new RegExp(GENERIC_KEY_RUN_SRC, "g");
+  const tailRe = new RegExp(GENERIC_TAIL_SRC, "dy");
+  for (let m = runs.exec(text); m; m = runs.exec(text)) {
+    const run = m[0];
+    if (!GENERIC_KEYWORD_RE.test(run)) continue;
+    const runEnd = m.index + run.length;
+    tailRe.lastIndex = runEnd;
+    const tail = tailRe.exec(text);
+    const idx = tail?.indices?.[2];
+    if (!tail || !idx || tail[2] === void 0) continue;
+    out.push({ start: idx[0], end: idx[1], value: tail[2], key: run, quoted: Boolean(tail[1]) });
+    runs.lastIndex = runEnd + tail[0].length;
   }
-};
+  return out;
+}
+function addGeneric(text, taken, out) {
+  for (const { start, end, value, key, quoted } of genericAssignmentHits(text)) {
+    if (!genericValueOk(value, key, quoted)) continue;
+    if (overlaps(taken, start, end)) continue;
+    const span = { start, end, ruleId: GENERIC_ID };
+    taken.push(span);
+    out.push(span);
+  }
+}
 var PEM_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]{0,16384}?-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|[A-Za-z0-9+/=\s⏎]*)/g;
 var ENTROPY_CANDIDATE_RE = /[A-Za-z0-9+/_\-.=~]{20,}/g;
 var ENV_LINE_RE = /^\s*(?:export\s+)?[A-Z_][A-Z0-9_]{1,}=\S*/;
@@ -24532,7 +24602,7 @@ function findSecretSpans(text, entropy) {
   addMatcher(text, { id: "pem_private_key", re: PEM_RE }, taken, out);
   for (const m of SPECIFIC) addMatcher(text, m, taken, out);
   addMatcher(text, URL_CRED, taken, out);
-  addMatcher(text, GENERIC, taken, out);
+  addGeneric(text, taken, out);
   entropySpans(text, entropy, taken, out);
   return out.sort((a, b) => a.start - b.start);
 }

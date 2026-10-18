@@ -19951,7 +19951,7 @@ function date4(params) {
 // ../../packages/schema/src/common.ts
 var CONTROL_SINGLE_LINE = /[\u0000-\u001F\u007F]/;
 var CONTROL_MULTI_LINE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
-var INVISIBLE_CHARS_SOURCE = "[\\u00AD\\u180E\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF]";
+var INVISIBLE_CHARS_SOURCE = "[\\u00AD\\u061C\\u17B4\\u17B5\\u180E\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\u3164\\uFEFF\\uFFA0]";
 var INVISIBLE_CHARS_RE = new RegExp(INVISIBLE_CHARS_SOURCE);
 function singleLine(max, min = 0) {
   return external_exports.string().min(min).max(max).refine((s) => !CONTROL_SINGLE_LINE.test(s), {
@@ -22434,9 +22434,12 @@ var McpSetupArm = external_exports.object({
   /** Median tokens of the arm's verified successes; null when it has none. */
   median_tokens_on_success: Count.nullable()
 });
+var SetupSignalName = external_exports.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:@/+[\]-]{0,159}$/, {
+  error: "invalid setup component name"
+});
 var McpSetupComponentSignal = external_exports.object({
   kind: SetupComponentKind,
-  name: ComponentName,
+  name: SetupSignalName,
   /** 'measured' only when each arm has n ≥ 5 from ≥ 2 owners. */
   label: external_exports.enum(["measured", "early_signal"]),
   with: McpSetupArm,
@@ -22447,6 +22450,8 @@ var McpSetupComponentSignal = external_exports.object({
   tokens_delta: external_exports.number().nullable(),
   /** Share of with-arm sessions from its single largest owner (1 = one person). */
   top_owner_share: external_exports.number().min(0).max(1),
+  /** The same share for the without arm (optional; older servers omit it). */
+  without_top_owner_share: external_exports.number().min(0).max(1).optional(),
   /** True when your agent's latest setup has it. */
   you_use: external_exports.boolean(),
   /** Other components present in exactly the same sessions (indistinguishable; e.g. a plugin's bundled skills). */
@@ -22764,7 +22769,11 @@ var InternalMcpMeta = external_exports.object({
     version: external_exports.string().max(40).optional()
   }).optional(),
   /** The harness session, when the MCP client forwards it (used for exposures and leases). */
-  harnessSessionId: HarnessSessionId.optional()
+  harnessSessionId: HarnessSessionId.optional(),
+  /** Random per-request value; core accepts a signed request carrying one only once (replay guard). */
+  nonce: external_exports.string().regex(/^[A-Za-z0-9_-]{16,64}$/).optional(),
+  /** Hash of the MCP client's network address (never the address): the rate-limit key for signed-out calls. */
+  clientKey: external_exports.string().regex(/^[a-f0-9]{16,64}$/).optional()
 });
 var InternalMcpRequest = external_exports.object({
   input: external_exports.unknown(),
@@ -22811,7 +22820,12 @@ var Product = external_exports.object({
   replyPolicy: ReplyPolicy,
   status: ProductStatus,
   claims: external_exports.array(ProductClaimView).max(50),
-  createdAt: IsoTimestamp
+  createdAt: IsoTimestamp,
+  /**
+   * Present (true) when the product's name or slug no longer passes the label screen (a row stored before it,
+   * or a rule update): `find_builder` does not show the product to agents until it is renamed.
+   */
+  labelHidden: external_exports.literal(true).optional()
 });
 var ProductList = external_exports.array(Product).max(200);
 var CreateProductRequest = external_exports.object({
