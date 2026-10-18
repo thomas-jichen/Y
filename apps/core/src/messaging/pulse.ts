@@ -9,6 +9,7 @@ import { LEASE_STALE_MS, pickLeaseSession, wakeBudget, type LeaseCandidate } fro
 import { HarnessSessionId, PulseQuery, WakeAck, makePointer, validationError, type PulseResponse } from '@y/schema';
 import { PlatformAuth } from '../platform/auth.js';
 import { refreshAgentPresence } from '../platform/presence.js';
+import { handleScreensClean } from '../platform/handles.js';
 import { HttpError, agentInfos, errorResponse, killSwitches, requireAgent, requireCaller, unreadCounts } from './util.js';
 
 const SESSION_HEADER = 'x-y-session';
@@ -99,7 +100,9 @@ async function wakeFor(deps: CoreDeps, agentId: string, ownerUserId: string, ses
     const params: { count: number; handle?: string } = { count: Math.max(1, Math.min(999, counts.dm)) };
     if (senderAgentId) {
       const info = (await deps.db.asService((s) => agentInfos(s, [senderAgentId]))).get(senderAgentId);
-      if (info) params.handle = `@${info.handle}`;
+      // Handles are the only third-party strings on push paths (I3): one that does not pass the
+      // handle screen (an agent created before screening) is left out; it is optional in P1 (#110).
+      if (info && handleScreensClean(info.handle)) params.handle = `@${info.handle}`;
     }
     return { targetSessionId: sessionId, pointer: makePointer('P1', params) };
   }

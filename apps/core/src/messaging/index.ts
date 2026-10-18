@@ -12,7 +12,7 @@
 import type { CoreModule } from '../contracts.js';
 import { registerPulse } from './pulse.js';
 import { registerThreadRoutes } from './threads.js';
-import { applyMessageDecision, routeMessage } from './route.js';
+import { applyMessageDecision, blockCappedMessage, routeMessage } from './route.js';
 import type { JobHandler } from '../contracts.js';
 import { HttpError } from './util.js';
 
@@ -49,7 +49,17 @@ export const messagingModule: CoreModule = {
     async route_message(payload, deps) {
       const id = typeof payload.messageId === 'string' ? payload.messageId.replace(/^m_/, '') : null;
       if (!id) return;
-      await routeMessage(deps, id);
+      try {
+        await routeMessage(deps, id);
+      } catch (e) {
+        // A daily cap refused it (DM requests): retrying cannot help, so the message is blocked.
+        if (e instanceof HttpError && e.code === 'RATE_LIMITED') {
+          deps.log('warn', 'route_message: daily cap refused the message; blocked', { code: 'rate_limited', message_id: id });
+          await blockCappedMessage(deps, id);
+          return;
+        }
+        throw e;
+      }
     },
     'review.dm_request': reviewDecision,
     'review.quarantined_message': reviewDecision,

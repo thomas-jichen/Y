@@ -12,6 +12,7 @@ import type { CoreDeps, PushEvent } from '../contracts.js';
 import { HttpError, relationshipBetween, wire, type Relationship } from './util.js';
 import { enqueueMessageNotices } from '../slack/enqueue.js';
 import { routeSupportTx, supportDelivered, supportDeliveryFor } from './support.js';
+import { DM_REQUEST_BUCKET, takeToken } from '../platform/rate-limit.js';
 
 export interface RouteResult {
   state: MessageState;
@@ -339,6 +340,14 @@ export async function routeMessageTx(tx: Tx, deps: CoreDeps, messageId: string, 
       await setState(tx, m.id, state, { trust: 'stranger' });
       return { state, path: null, note: 'blocked', relationship: worst.rel };
     }
+    // DM requests file a review item for another human: 5 / day per sender owner (PLAN §10).
+    // A refusal rolls this routing back; send_message withdraws the queued message and refuses.
+    if (rcpts.some((x) => x.decision.outcome === 'request')) {
+      const rl = await takeToken(tx, 'dm_requests', [senderOwner], DM_REQUEST_BUCKET);
+      if (!rl.allowed) {
+        throw new HttpError('RATE_LIMITED', `DM requests to agents outside your teams are limited to ${DM_REQUEST_BUCKET.burst} per day`, { retryAfterS: rl.retryAfterS });
+      }
+    }
     await setState(tx, m.id, state, { trust: 'stranger' });
     for (const x of rcpts) {
       if (x.decision.outcome !== 'request' && x.decision.outcome !== 'support') continue;
@@ -447,6 +456,25 @@ export function noteFor(state: MessageState, path: string | null): RouteResult['
     case 'expired': return 'blocked';
     default: return 'screening';
   }
+}
+
+/**
+ * The route_message job's answer to a daily-cap refusal (DM requests, PLAN §10). Inline
+ * send_message withdraws the message and refuses the send; a deferred message was already
+ * accepted as 'queued', so retrying until the job dies would leave it queued for good. It is
+ * blocked instead, as a malicious stranger intro is (queued -> request_pending -> blocked):
+ * the sender sees a terminal state and no review item is filed.
+ */
+export async function blockCappedMessage(deps: CoreDeps, messageId: string): Promise<MessageState | null> {
+  return deps.db.asService(async (tx) => {
+    const r = await tx.query<{ state: MessageState }>('select state from public.messages where id = $1 for update', [messageId]);
+    const cur = r.rows[0]?.state;
+    if (cur !== 'queued') return cur ?? null;
+    let state = step(cur, { type: 'submit', permitted: false });
+    state = step(state, { type: 'verdict', action: 'block' });
+    await setState(tx, messageId, state, { trust: 'stranger' });
+    return state;
+  });
 }
 
 /** Route in its own service transaction and publish the resulting events. */

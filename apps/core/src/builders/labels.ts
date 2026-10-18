@@ -30,16 +30,21 @@ const ACTION = new Set(['run', 'execute', 'exec', 'curl', 'wget', 'npx', 'pnpx',
 const READER = new Set(['you', 'your', 'yourself', 'assistant', 'assistants', 'agent', 'agents', 'ai', 'llm', 'claude', 'codex', 'gpt', 'chatgpt', 'model']);
 const MUST = new Set(['must', 'should', 'shall', 'please', 'always', 'immediately', 'required', 'mandatory']);
 
-function l0Passes(text: string): boolean {
-  const r = l0Scan(normalizeUntrusted(text).text, 'dm_stranger');
+type Normalize = (text: string) => string;
+const untrusted: Normalize = (text) => normalizeUntrusted(text).text;
+/** Plain ASCII (`[a-z0-9-]`, e.g. a handle): Unicode normalization is a no-op, so it is skipped. */
+const ascii: Normalize = (text) => text;
+
+function l0Passes(text: string, norm: Normalize = untrusted): boolean {
+  const r = l0Scan(norm(text), 'dm_stranger');
   if (r.label === 'clean') return true;
   if (r.label !== 'warn') return false;
   return r.findings.every((f) => f.severity === 'info' || (f.severity === 'warn' && WORD_WARN_RULES.has(f.rule)));
 }
 
 /** True when the words of the label read as an instruction to the reading agent. */
-export function instructionShaped(label: string): boolean {
-  const words = normalizeUntrusted(label).text.toLowerCase().replace(/[0-9@$]/g, (c) => LEET[c] ?? c).split(/[^a-z]+/).filter(Boolean);
+export function instructionShaped(label: string, norm: Normalize = untrusted): boolean {
+  const words = norm(label).toLowerCase().replace(/[0-9@$]/g, (c) => LEET[c] ?? c).split(/[^a-z]+/).filter(Boolean);
   const has = (set: Set<string>) => words.some((w) => set.has(w));
   const actions = words.filter((w) => ACTION.has(w)).length;
   if (has(OVERRIDE) && (has(RULES) || actions > 0 || has(READER))) return true;
@@ -50,10 +55,23 @@ export function instructionShaped(label: string): boolean {
 
 /** True when the label (as written, with `-_.` as spaces, and with digits read as letters) passes the label screen. */
 export function cleanProductLabel(label: string): boolean {
+  return labelPasses(label, untrusted);
+}
+
+/**
+ * The same screen for a label made only of `[a-z0-9-]` (a handle derived from a GitHub login):
+ * Unicode normalization cannot change such text, so it is not applied. Anything else goes
+ * through {@link cleanProductLabel}.
+ */
+export function cleanAsciiLabel(label: string): boolean {
+  return /^[a-z0-9-]*$/.test(label) ? labelPasses(label, ascii) : cleanProductLabel(label);
+}
+
+function labelPasses(label: string, norm: Normalize): boolean {
   const spaced = label.replace(/[-_.]+/g, ' ');
   const folded = spaced.replace(/[0-9@$]/g, (c) => LEET[c] ?? c);
   for (const text of new Set([label, spaced, folded])) {
-    if (!l0Passes(text)) return false;
+    if (!l0Passes(text, norm)) return false;
   }
-  return !instructionShaped(label);
+  return !instructionShaped(label, norm);
 }

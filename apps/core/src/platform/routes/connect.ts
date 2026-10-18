@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Hono } from 'hono';
 import { ConnectTokenRequest, type ConnectStatus, type ConnectToken } from '@y/schema';
 import type { CoreDeps } from '../../contracts.js';
+import { composeAgentHandle } from '../handles.js';
 import { authenticate } from '../http.js';
 import { hmacHex, iso, mintInstallToken, parseOr, readJson, sha256Hex } from '../util.js';
 
@@ -49,10 +50,11 @@ export function registerConnectRoutes(app: Hono, deps: CoreDeps): void {
     let newHandle: string | null = null;
     if (!agentId) {
       const suffix = HARNESS_SUFFIX[harness] ?? 'agent';
-      const handle = `${pre.userHandle.slice(0, 32 - 1 - suffix.length)}-${suffix}`;
+      // Agent handles go out on push paths (P1): the composed handle must pass the handle screen
+      // (a user handle created before screening is never the base either), else `user-<8 hex>` (#110).
       // handle_registry isn't readable by the API roles; this is a read-only availability check.
-      const taken = await deps.db.asService((s) => s.query('select 1 from public.handle_registry where handle = $1', [handle]));
-      newHandle = taken.rowCount ? `${handle.slice(0, 27)}-${randomUUID().slice(0, 4)}` : handle;
+      newHandle = await composeAgentHandle(pre.userHandle, suffix, caller.userId, async (h) =>
+        Boolean((await deps.db.asService((s) => s.query('select 1 from public.handle_registry where handle = $1', [h]))).rowCount));
       agentId = randomUUID();
     }
     const finalAgentId = agentId;

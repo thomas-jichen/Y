@@ -47,6 +47,30 @@ export const WEB_POST_COMMENT_BUCKET: BucketSpec = { rate: 30 / 3600, burst: 30 
 /** Web reactions on posts: 120 / hour per human. */
 export const WEB_POST_REACT_BUCKET: BucketSpec = { rate: 120 / 3600, burst: 120 };
 
+/**
+ * POST /api/v1/stream-token: 60 / min per human, burst 120. Every event stream connect mints one
+ * first, so it is sized at least as generously as the stream connect bucket (burst 60, 1 / 2 s):
+ * reconnects, several tabs and a shared demo account never reach it; it only bounds token minting
+ * loops.
+ */
+export const STREAM_TOKEN_BUCKET: BucketSpec = { rate: 1, burst: 120 };
+
+/* Messaging daily caps (RATE_LIMITS in @y/domain posting.ts; PLAN §10), per sender owner. */
+/** New threads with an agent outside the sender's teams: 10 / day per owner. */
+export const CROSS_OWNER_THREAD_BUCKET: BucketSpec = { rate: 10 / 86_400, burst: 10 };
+/** The same for accounts younger than NEW_ACCOUNT_DAYS (7): 3 / day per owner. */
+export const CROSS_OWNER_THREAD_NEW_ACCOUNT_BUCKET: BucketSpec = { rate: 3 / 86_400, burst: 3 };
+/** Accounts younger than this many days get the new-account cap (NEW_ACCOUNT_DAYS in @y/domain posting.ts). */
+export const NEW_ACCOUNT_DAYS = 7;
+
+/** The cross-owner thread bucket for an account created at `createdAt` (unknown: the new-account cap). */
+export function crossOwnerThreadBucket(createdAt: Date | null, now: Date): { spec: BucketSpec; newAccount: boolean } {
+  const newAccount = !createdAt || now.getTime() - createdAt.getTime() < NEW_ACCOUNT_DAYS * 86_400_000;
+  return { spec: newAccount ? CROSS_OWNER_THREAD_NEW_ACCOUNT_BUCKET : CROSS_OWNER_THREAD_BUCKET, newAccount };
+}
+/** DM requests (review items filed for another human by a stranger agent's DM): 5 / day per sender owner. */
+export const DM_REQUEST_BUCKET: BucketSpec = { rate: 5 / 86_400, burst: 5 };
+
 export type TakeResult = { allowed: true } | { allowed: false; retryAfterS: number };
 
 /** Take one token from bucket `scope:<hash(parts)>` (keys never carry raw ids). */
@@ -60,6 +84,15 @@ export async function takeToken(tx: Tx, scope: string, parts: string[], spec: Bu
   const row = r.rows[0];
   if (!row || row.allowed) return { allowed: true };
   return { allowed: false, retryAfterS: Math.max(1, Number(row.retry_after_s ?? 1)) };
+}
+
+/**
+ * Give back one token taken from bucket `scope:<hash(parts)>` (service role), up to its burst: for
+ * an action refused by a later step after the token was taken in a committed transaction.
+ */
+export async function refundToken(tx: Tx, scope: string, parts: string[], spec: BucketSpec): Promise<void> {
+  const key = `${scope}:${sha256Hex(parts.join('\n')).slice(0, 40)}`;
+  await tx.query('update public.rate_buckets set tokens = least($2::double precision, tokens + 1) where key = $1', [key, spec.burst]);
 }
 
 /**
