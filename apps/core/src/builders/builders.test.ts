@@ -62,7 +62,8 @@ beforeEach(async () => {
 });
 afterEach(async () => { await env.db.close(); });
 
-const web = (p: Person) => env.token(`${p.handle}-web`, webCaller(p));
+// A web session signed in just now (auto_send and activation need a recent sign-in).
+const web = (p: Person) => env.token(`${p.handle}-web`, { ...webCaller(p), authTime: Math.floor(Date.now() / 1000) });
 const agent = (p: Person) => env.token(`${p.handle}-agent`, agentCaller(p));
 async function api(method: string, path: string, auth: string | null, body?: unknown) {
   const headers: Record<string, string> = { 'content-type': 'application/json' };

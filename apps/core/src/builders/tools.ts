@@ -19,12 +19,26 @@ import type { Caller, CoreDeps } from '../contracts.js';
 import { routeMessage } from '../messaging/route.js';
 import { HttpError, atHandle, bare, requireAgent, toIso, wire } from '../messaging/util.js';
 import { scoped } from '../internal-mcp/search.js';
+import { cleanProductLabel } from './labels.js';
 
 type MatchedOn = BuilderInfo['matched_on'];
-const RANK: readonly MatchedOn[] = ['package', 'repo', 'domain', 'error'];
+/** Rank → matched_on: 3 is a verified package token in error text, 4 a claim-backed slug in error text. */
+const RANK: readonly MatchedOn[] = ['package', 'repo', 'domain', 'error', 'error'];
 
 /** Slugs shorter than this are not matched inside error text (too many false hits). */
 const ERROR_SLUG_MIN = 4;
+
+/**
+ * Hyphenated words common in error text, headers and stack traces: never matched as a slug in error text
+ * (anyone can buy a domain whose label is one of these).
+ */
+export const ERROR_SLUG_DENY: readonly string[] = [
+  'access-control', 'access-control-allow-origin', 'api-key', 'built-in', 'cache-control', 'client-side', 'content-encoding',
+  'content-length', 'content-security-policy', 'content-type', 'cross-origin', 'e-mail', 'end-of-file', 'err-require-esm',
+  'keep-alive', 'module-not-found', 'non-null', 'not-found', 'on-demand', 'out-of-memory', 'post-install', 'pre-commit',
+  'pre-install', 'range-error', 'read-only', 'real-time', 'reference-error', 'same-origin', 'server-side', 'set-cookie',
+  'syntax-error', 'third-party', 'time-out', 'top-level', 'type-error', 'user-agent', 'utf-8', 'x-api-key', 'x-forwarded-for',
+];
 
 /** Package-like tokens in error text (npm/PyPI names, scoped names and path segments), lowercased. */
 export function errorTokens(error: string): string[] {
@@ -72,36 +86,41 @@ export async function findBuilder(deps: CoreDeps, caller: Caller | null, input: 
   const { matches, claims } = await scoped(deps, caller, async (tx) => {
     // Active products with a builder agent and a VERIFIED claim matching the input (RLS: anon sees exactly these).
     // No ecosystem: npm and PyPI both match (P7 names only the dependency); PyPI names compare PEP 503-normalized.
+    // Each product's best-ranked matching claim decides; ties go to the claim verified first (never to the
+    // product's self-chosen name). A slug found in error text counts only when the product owns that name through
+    // a verified claim (an unscoped package of that name, or, for a multi-part slug, a domain whose registrable
+    // label is the slug), and ranks after verified package tokens: a first-come slug alone never captures unrelated
+    // errors. Scoped npm names (free under one's own scope) and single words (cheap as a domain under some TLD,
+    // e.g. typeerror.xyz) never qualify, nor do common hyphenated error words (ERROR_SLUG_DENY).
     const r = await tx.query<ProductRow & { rank: number }>(
-      `select p.id, p.slug, p.name, p.builder_agent_id, p.sla_minutes,
-              min(case
-                when $1::text is not null and ($2::text is null or c.kind = $2)
-                     and (c.kind = 'npm' and lower(c.value) = lower($1) or c.kind = 'pypi' and ${PEP503} = $8) then 0
-                when $3::text is not null and c.kind = 'github_repo' and lower(c.value) = lower($3) then 1
-                when $4::text is not null and c.kind = 'domain'
-                     and (lower(c.value) = $4 or right($4, length(c.value) + 1) = '.' || lower(c.value)) then 2
-                when $5::text[] is not null and (c.kind = 'npm' and lower(c.value) = any($5::text[])
-                     or c.kind = 'pypi' and ${PEP503} = any($9::text[])) then 3
-                when $6::text is not null and length(p.slug) >= $7
-                     and $6 ~ ('(^|[^a-z0-9-])' || p.slug || '($|[^a-z0-9-])') then 3
-              end) as rank
-         from public.products p join public.product_claims c on c.product_id = p.id
-        where p.status = 'active' and p.builder_agent_id is not null and c.verified_at is not null
-        group by p.id, p.slug, p.name, p.builder_agent_id, p.sla_minutes
-       having min(case
-                when $1::text is not null and ($2::text is null or c.kind = $2)
-                     and (c.kind = 'npm' and lower(c.value) = lower($1) or c.kind = 'pypi' and ${PEP503} = $8) then 0
-                when $3::text is not null and c.kind = 'github_repo' and lower(c.value) = lower($3) then 1
-                when $4::text is not null and c.kind = 'domain'
-                     and (lower(c.value) = $4 or right($4, length(c.value) + 1) = '.' || lower(c.value)) then 2
-                when $5::text[] is not null and (c.kind = 'npm' and lower(c.value) = any($5::text[])
-                     or c.kind = 'pypi' and ${PEP503} = any($9::text[])) then 3
-                when $6::text is not null and length(p.slug) >= $7
-                     and $6 ~ ('(^|[^a-z0-9-])' || p.slug || '($|[^a-z0-9-])') then 3
-              end) is not null
-        order by rank, p.name, p.id limit 20`,
+      `with m as (
+         select p.id, p.slug, p.name, p.builder_agent_id, p.sla_minutes, c.verified_at,
+                case
+                  when $1::text is not null and ($2::text is null or c.kind = $2)
+                       and (c.kind = 'npm' and lower(c.value) = lower($1) or c.kind = 'pypi' and ${PEP503} = $8) then 0
+                  when $3::text is not null and c.kind = 'github_repo' and lower(c.value) = lower($3) then 1
+                  when $4::text is not null and c.kind = 'domain'
+                       and (lower(c.value) = $4 or right($4, length(c.value) + 1) = '.' || lower(c.value)) then 2
+                  when $5::text[] is not null and (c.kind = 'npm' and lower(c.value) = any($5::text[])
+                       or c.kind = 'pypi' and ${PEP503} = any($9::text[])) then 3
+                  when $6::text is not null and length(p.slug) >= $7
+                       and $6 ~ ('(^|[^a-z0-9-])' || p.slug || '($|[^a-z0-9-])') and not (p.slug = any($10::text[]))
+                       and (c.kind = 'domain' and strpos(p.slug, '-') > 0
+                                and reverse(split_part(reverse(lower(c.value)), '.', 2)) = p.slug
+                            or c.kind = 'npm' and lower(c.value) = p.slug
+                            or c.kind = 'pypi' and ${PEP503} = p.slug) then 4
+                end as rank
+           from public.products p join public.product_claims c on c.product_id = p.id
+          where p.status = 'active' and p.builder_agent_id is not null and c.verified_at is not null
+       ), best as (
+         select distinct on (id) id, slug, name, builder_agent_id, sla_minutes, rank, verified_at
+           from m where rank is not null
+          order by id, rank, verified_at
+       )
+       select id, slug, name, builder_agent_id, sla_minutes, rank from best
+        order by rank, verified_at, id limit 20`,
       [input.package ?? null, input.ecosystem ?? null, input.repo ?? null, input.domain?.toLowerCase() ?? null, tokens, errorText, ERROR_SLUG_MIN,
-       input.package ? pep503(input.package) : null, tokens ? [...new Set(tokens.map(pep503))] : null],
+       input.package ? pep503(input.package) : null, tokens ? [...new Set(tokens.map(pep503))] : null, ERROR_SLUG_DENY],
     );
     const ids = r.rows.map((x) => x.id);
     const cl = ids.length
@@ -116,6 +135,12 @@ export async function findBuilder(deps: CoreDeps, caller: Caller | null, input: 
   for (const p of matches) {
     const a = agents.get(p.builder_agent_id);
     if (!a) continue;
+    // Name and slug are plain fields (no envelope): only labels that still screen clean (I2). The team's products
+    // page flags a product hidden this way (Product.labelHidden), and the log says which one.
+    if (!cleanProductLabel(p.name) || !cleanProductLabel(p.slug)) {
+      deps.log('warn', 'find_builder: product label no longer passes the label screen; hidden from agents', { product_id: wire('product', p.id) });
+      continue;
+    }
     builders.push({
       product_id: wire('product', p.id), slug: p.slug, name: p.name, builder_agent: atHandle(a.handle), presence: a.presence,
       sla_minutes: p.sla_minutes ?? null,

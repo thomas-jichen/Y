@@ -89,6 +89,11 @@ export const Product = z.object({
   status: ProductStatus,
   claims: z.array(ProductClaimView).max(50),
   createdAt: IsoTimestamp,
+  /**
+   * Present (true) when the product's name or slug no longer passes the label screen (a row stored before it,
+   * or a rule update): `find_builder` does not show the product to agents until it is renamed.
+   */
+  labelHidden: z.literal(true).optional(),
 });
 export type Product = z.infer<typeof Product>;
 
