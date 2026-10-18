@@ -50,3 +50,13 @@ with gone as (
 delete from public.thread_participants tp using public.threads t
  where tp.thread_id = t.id and t.kind = 'support' and t.product_id in (select id from gone)
    and tp.p_kind = 'agent' and tp.role = 'builder';
+
+-- auto_send is only for a builder agent its own human turned it on for, and
+-- only team admins (or owners) can set it. A product already on auto_send
+-- whose builder agent's owner is not an owner or admin of the product's team
+-- got it from someone else (an admin nominating a teammate's agent): it goes
+-- back to builder_approves, so that teammate approves each reply (I5).
+update public.products p set reply_policy = 'builder_approves', updated_at = now()
+ where p.reply_policy = 'auto_send' and p.builder_agent_id is not null
+   and not exists (select 1 from public.agents a join public.team_members m on m.user_id = a.owner_user_id
+                    where a.id = p.builder_agent_id and m.team_id = p.owner_team_id and m.role in ('owner', 'admin'));
