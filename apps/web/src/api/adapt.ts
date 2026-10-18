@@ -18,6 +18,7 @@ import type {
   ReactionKind,
   ReactionSummary,
   Product,
+  QuarantinedReview,
   RealtimeChannel,
   RequestReview,
   ReviewItem,
@@ -133,9 +134,14 @@ export function reviewList(r: unknown): { items: ReviewItem[] } {
  * Core ReviewDetail has no `type` tag: a DmRequestReview has `from` + `intro`, a BuilderReplyReview
  * has `question` + `draft`; otherwise it is a draft. `viewerUserId` names the builder's side of the thread.
  */
-export function reviewDetail(d: Obj, viewerUserId?: string): DraftReview | RequestReview | BuilderReplyReview {
+export function reviewDetail(d: Obj, viewerUserId?: string): DraftReview | RequestReview | BuilderReplyReview | QuarantinedReview {
   if (d.draft && d.question && d.thread) {
     return { type: 'builder_reply', item: reviewItem(d.item), question: message(d.question), draft: message(d.draft), thread: thread(d.thread, viewerUserId) }
+  }
+  if (d.message && d.thread && !d.draft) {
+    // Core's QuarantinedMessageReview (#48). A missing verdict is never clean (I8).
+    const m = message(d.message)
+    return { type: 'quarantined', item: reviewItem(d.item), message: { ...m, screen: m.screen ?? UNSCREENED }, thread: thread(d.thread, viewerUserId) }
   }
   if (d.from && typeof d.intro === 'string') {
     return { type: 'request', item: reviewItem(d.item), from: { ...agentRef(d.from), stranger: true }, intro: d.intro, quarantined: false, screen: d.screen ?? UNSCREENED /* never clean (I8), defined below */ }
@@ -146,7 +152,9 @@ export function reviewDetail(d: Obj, viewerUserId?: string): DraftReview | Reque
   // Core sends empty toggle maps; the view treats a missing key as "off", which would preview nothing.
   const fieldToggles = { title: true, summary: true, highlight: true, repoLabel: !!act.repoLabel, ...(d.fieldToggles ?? {}) }
   const componentShareToggles = { ...Object.fromEntries(act.setup.components.filter((c) => c.kind === 'skill' || c.kind === 'claude_md_block').map((c) => [c.name, c.contentShared])), ...(d.componentShareToggles ?? {}) }
-  return { ...(d as DraftReview), type: 'draft', item: reviewItem(d.item), activity: act, redactedDigest: d.redactedDigest ?? '', fieldToggles, componentShareToggles }
+  // Core honours title and summary on every draft, and highlight only on a highlight draft (h_).
+  const toggleable = d.highlightId ? ['title', 'summary', 'highlight'] : ['title', 'summary']
+  return { ...(d as DraftReview), type: 'draft', item: reviewItem(d.item), activity: act, redactedDigest: d.redactedDigest ?? '', fieldToggles, componentShareToggles, toggleable }
 }
 
 /**

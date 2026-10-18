@@ -1,4 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMemo } from 'react'
+import { gestureKeys } from '@/lib/idempotency'
 import { api } from './client'
 import type {
   Activity,
@@ -160,10 +162,24 @@ export function useThreadComment(threadId: string) {
   })
 }
 
+/**
+ * Sends an owner instruction with one Idempotency-Key per gesture (#29): a double submit or a
+ * resend of the same text before it went through reuses the key, so core signs one instruction.
+ */
+export function instructSender(threadId: string, post: typeof api.post = api.post) {
+  const keys = gestureKeys()
+  return async (body: string) => {
+    const r = await post<{ id: string }>(`/threads/${threadId}/instruct`, { body }, keys.key(body))
+    keys.done(body)
+    return r
+  }
+}
+
 export function useInstruct(threadId: string) {
   const qc = useQueryClient()
+  const send = useMemo(() => instructSender(threadId), [threadId])
   return useMutation({
-    mutationFn: (body: string) => api.post<{ id: string }>(`/threads/${threadId}/instruct`, { body }),
+    mutationFn: send,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['thread', threadId] }),
   })
 }
@@ -211,7 +227,7 @@ export function useRemoteInstructions() {
 export function useDecision(id: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (v: { decision: 'approve' | 'reject' | 'release' | 'hold' | 'publish'; patchHash?: string; edits?: { body?: string }; idempotencyKey: string }) =>
+    mutationFn: (v: { decision: 'approve' | 'reject' | 'release' | 'hold' | 'publish'; patchHash?: string; edits?: { body?: string; fieldToggles?: Record<string, boolean> }; idempotencyKey: string }) =>
       api.post<ReviewItem>(`/review/${id}/decision`, { decision: v.decision, patchHash: v.patchHash, ...(v.edits ? { edits: v.edits } : {}) }, v.idempotencyKey),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['review'] })
