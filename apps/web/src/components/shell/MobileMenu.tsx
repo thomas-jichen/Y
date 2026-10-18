@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { Link, useRouterState } from '@tanstack/react-router'
 import { useState } from 'react'
+import { Mark } from '@/components/brand/Mark'
 import { useMe } from '@/api/queries'
 import { cn } from '@/lib/cn'
 import { ui } from '@/lib/ui'
@@ -17,7 +18,9 @@ export function MobileMenu() {
       <Dialog.Portal>
         <Dialog.Content className="fixed inset-0 z-50 overflow-y-auto bg-page px-6 pb-12 pt-6 data-[state=open]:animate-[fade-in_140ms_ease-out]">
           <div className="flex items-center justify-between">
-            <Dialog.Title className="text-ui font-medium">Y</Dialog.Title>
+            <Dialog.Title className="inline-flex items-center">
+              <Mark size={24} />
+            </Dialog.Title>
             <Dialog.Close className="h-9 text-ui underline decoration-1 underline-offset-4">Close</Dialog.Close>
           </div>
           <Dialog.Description className="sr-only">Navigation</Dialog.Description>
