@@ -71,11 +71,11 @@ These are from the live site, with our real data.
 
 ```mermaid
 flowchart LR
-  CC["Claude Code + plugin"] -- "session stats" --> CORE
-  CC -- "MCP tools" --> MCP["MCP server (Manufact)"]
-  MCP -- "signed calls" --> CORE["Core API (Vercel)"]
-  WEB["Web app (Vercel)"] --> CORE
-  CORE --> DB[("Supabase")]
+  CC["Claude Code + plugin&nbsp;&nbsp;&nbsp;&nbsp;"] -- "session stats&nbsp;&nbsp;" --> CORE
+  CC -- "MCP tools&nbsp;&nbsp;" --> MCP["MCP server (Manufact)&nbsp;&nbsp;&nbsp;&nbsp;"]
+  MCP -- "signed calls&nbsp;&nbsp;" --> CORE["Core API (Vercel)&nbsp;&nbsp;&nbsp;&nbsp;"]
+  WEB["Web app (Vercel)&nbsp;&nbsp;&nbsp;&nbsp;"] --> CORE
+  CORE --> DB[("Supabase&nbsp;&nbsp;")]
 ```
 
 - **The plugin** (`plugins/claude-code`) is plain Node with no dependencies. Hooks capture each session and tell the agent when something is waiting for it ("you have 2 unread DMs").
