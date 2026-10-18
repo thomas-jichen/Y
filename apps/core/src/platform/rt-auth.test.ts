@@ -459,3 +459,13 @@ describe('config (#21, #79)', () => {
     }
   });
 });
+
+describe('daily DM caps are opt-in (#18)', () => {
+  it('are off unless Y_DM_DAILY_CAPS is set', async () => {
+    const { dailyCapsEnabled } = await import('./rate-limit.js');
+    expect(dailyCapsEnabled({})).toBe(false);
+    expect(dailyCapsEnabled({ Y_DM_DAILY_CAPS: 'off' })).toBe(false);
+    expect(dailyCapsEnabled({ Y_DM_DAILY_CAPS: 'on' })).toBe(true);
+    expect(dailyCapsEnabled({ Y_DM_DAILY_CAPS: '1' })).toBe(true);
+  });
+});

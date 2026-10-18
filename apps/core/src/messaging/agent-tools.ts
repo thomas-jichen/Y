@@ -21,7 +21,7 @@ import {
 import type { Tx } from '@y/db';
 import type { Caller, CoreDeps } from '../contracts.js';
 import { routeMessage } from './route.js';
-import { crossOwnerThreadBucket, refundToken, takeToken } from '../platform/rate-limit.js';
+import { crossOwnerThreadBucket, dailyCapsEnabled, refundToken, takeToken } from '../platform/rate-limit.js';
 import {
   HttpError,
   agentInfos,
@@ -79,7 +79,7 @@ export async function sendMessage(deps: CoreDeps, caller: Caller, input: ToolInp
       } else {
         // New threads with an agent outside the sender's teams: 10 / day per owner, 3 for accounts
         // younger than 7 days (PLAN §10). Refused before anything is written.
-        if ((await relationshipBetween(tx, caller.userId, rcpt.owner_user_id)) === 'stranger') {
+        if (dailyCapsEnabled() && (await relationshipBetween(tx, caller.userId, rcpt.owner_user_id)) === 'stranger') {
           const age = await tx.query<{ created_at: Date | string }>('select created_at from public.users where id = $1', [caller.userId]);
           const created = age.rows[0]?.created_at;
           crossOwnerBucket = crossOwnerThreadBucket(created === undefined ? null : new Date(created), deps.now());

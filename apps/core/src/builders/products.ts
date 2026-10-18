@@ -30,7 +30,6 @@ import { bareId, fail, iso, parseOr, readJson } from '../platform/util.js';
 import { HttpError } from '../messaging/util.js';
 import { syncSupportBuilders } from '../messaging/support.js';
 import { takeToken, type BucketSpec } from '../platform/rate-limit.js';
-import { requireRecentLogin } from '../platform/web-guard.js';
 import { cleanProductLabel } from './labels.js';
 import { guardedFetch, verifyClaimMarker } from './verify.js';
 
@@ -157,11 +156,6 @@ export function registerProductRoutes(app: App, deps: CoreDeps): void {
     if (caller instanceof Response) return caller;
     const body = parseOr(c, CreateProductRequest, await readJson(c));
     if (!body.ok) return body.res;
-    // auto_send lets the agent answer strangers with no approval: a recent sign-in (step-up), as for decisions.
-    if (body.data.replyPolicy === 'auto_send') {
-      const stepUp = await requireRecentLogin(c, deps);
-      if (stepUp) return stepUp;
-    }
     return run(c, deps, async () => {
       const id = ulid();
       try {
@@ -197,11 +191,6 @@ export function registerProductRoutes(app: App, deps: CoreDeps): void {
     if (!id) return fail(c, 'VALIDATION', 'expected a product id (p_…)');
     const body = parseOr(c, UpdateProductRequest, await readJson(c));
     if (!body.ok) return body.res;
-    // Turning on auto_send or activating the product opens it to strangers: a recent sign-in (step-up).
-    if (body.data.replyPolicy === 'auto_send' || body.data.status === 'active') {
-      const stepUp = await requireRecentLogin(c, deps);
-      if (stepUp) return stepUp;
-    }
     return run(c, deps, async () => {
       const u = body.data;
       const changed = await deps.db.asUser(caller.claims, async (tx) => {

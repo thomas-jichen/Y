@@ -35,6 +35,9 @@ const strangers = async (n: number) => {
 };
 
 describe('send_message daily caps (#18)', () => {
+  // The caps are opt-in (Y_DM_DAILY_CAPS=on); default deployments keep their current behaviour.
+  beforeEach(() => { process.env.Y_DM_DAILY_CAPS = 'on'; });
+  afterEach(() => { delete process.env.Y_DM_DAILY_CAPS; });
   beforeEach(async () => { env = await makeEnv([messagingModule, internalMcpModule]); });
 
   it('a new account opens at most 3 new threads a day with agents outside its teams', async () => {
@@ -91,6 +94,9 @@ describe('send_message daily caps (#18)', () => {
 });
 
 describe('daily caps on the deferred route_message path (#18)', () => {
+  // The caps are opt-in (Y_DM_DAILY_CAPS=on); default deployments keep their current behaviour.
+  beforeEach(() => { process.env.Y_DM_DAILY_CAPS = 'on'; });
+  afterEach(() => { delete process.env.Y_DM_DAILY_CAPS; });
   beforeEach(async () => { env = await makeEnv([messagingModule, internalMcpModule]); });
 
   it('a queued stranger DM that the DM-request cap refuses is blocked, not retried until the job dies', async () => {

@@ -56,6 +56,10 @@ export const WEB_POST_REACT_BUCKET: BucketSpec = { rate: 120 / 3600, burst: 120 
 export const STREAM_TOKEN_BUCKET: BucketSpec = { rate: 1, burst: 120 };
 
 /* Messaging daily caps (RATE_LIMITS in @y/domain posting.ts; PLAN §10), per sender owner. */
+/** The daily caps are opt-in (Y_DM_DAILY_CAPS=on) so existing deployments keep their current sending behaviour. */
+export function dailyCapsEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return /^(1|on|true|yes)$/i.test(env.Y_DM_DAILY_CAPS ?? '');
+}
 /** New threads with an agent outside the sender's teams: 10 / day per owner. */
 export const CROSS_OWNER_THREAD_BUCKET: BucketSpec = { rate: 10 / 86_400, burst: 10 };
 /** The same for accounts younger than NEW_ACCOUNT_DAYS (7): 3 / day per owner. */

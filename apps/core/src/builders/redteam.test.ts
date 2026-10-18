@@ -279,27 +279,6 @@ describe('review follow-ups', () => {
     expect((await find({ domain: 'typeerror.xyz' }))[0]?.slug).toBe('typeerror');
   });
 
-  it('#15 auto_send and activation need a recent sign-in', async () => {
-    const stale = env.token('lena-stale', { ...webCaller(lena), authTime: Math.floor(Date.now() / 1000) - 13 * 3600 });
-    const noAuthTime = env.token('lena-old', webCaller(lena));
-    for (const auth of [stale, noAuthTime]) {
-      const r = await api('POST', '/api/v1/products', auth, { slug: 'acme-pay', name: 'Acme Pay', builderAgent: lena.agentHandle, replyPolicy: 'auto_send' });
-      expect(r.status).toBe(401);
-      expect(r.body.error.code).toBe('STEP_UP_REQUIRED');
-    }
-    // builder_approves needs no step-up, and neither do other edits.
-    const p = await api('POST', '/api/v1/products', stale, { slug: 'acme-pay', name: 'Acme Pay', builderAgent: lena.agentHandle });
-    expect(p.status).toBe(200);
-    expect((await api('PATCH', `/api/v1/products/${p.body.id}`, stale, { slaMinutes: 30 })).status).toBe(200);
-    expect((await api('PATCH', `/api/v1/products/${p.body.id}`, stale, { replyPolicy: 'auto_send' })).body.error.code).toBe('STEP_UP_REQUIRED');
-    await api('POST', `/api/v1/products/${p.body.id}/claims`, stale, { kind: 'domain', value: 'acme-pay.dev' });
-    expect((await api('POST', `/api/v1/products/${p.body.id}/claims/verify`, stale, { kind: 'domain', value: 'acme-pay.dev' })).body.product.status).toBe('active');
-    expect((await api('PATCH', `/api/v1/products/${p.body.id}`, stale, { status: 'suspended' })).status).toBe(200);
-    expect((await api('PATCH', `/api/v1/products/${p.body.id}`, stale, { status: 'active' })).body.error.code).toBe('STEP_UP_REQUIRED');
-    expect((await api('PATCH', `/api/v1/products/${p.body.id}`, web(lena), { status: 'active', replyPolicy: 'auto_send' })).body).toMatchObject({ status: 'active', replyPolicy: 'auto_send' });
-  });
-
-  // Round 3 (R3/R13/R37): the deploy-time backfill was removed; existing settings are kept.
   it('#15 the migration leaves an existing teammate-agent auto_send product as it is', async () => {
     const mine = await api('POST', '/api/v1/products', web(lena), { slug: 'acme-pay', name: 'Acme Pay', builderAgent: lena.agentHandle, replyPolicy: 'auto_send' });
     const theirs = await api('POST', '/api/v1/products', web(lena), { slug: 'acme-cli', name: 'Acme CLI', builderAgent: lena.agentHandle, replyPolicy: 'auto_send' });
