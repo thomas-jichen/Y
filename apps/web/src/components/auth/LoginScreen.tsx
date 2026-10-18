@@ -11,12 +11,12 @@ const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
 export function LoginScreen() {
   const { status, notice } = useAuth()
   const [login, setLogin] = useState('')
-  const [busy, setBusy] = useState<'dev' | 'github' | null>(null)
+  const [busy, setBusy] = useState<'dev' | 'github' | 'demo' | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   if (status === 'loading') return <div className="relative z-10 min-h-dvh" aria-busy />
 
-  const run = async (kind: 'dev' | 'github', fn: () => Promise<void>) => {
+  const run = async (kind: 'dev' | 'github' | 'demo', fn: () => Promise<void>) => {
     setBusy(kind)
     setError(null)
     try {
@@ -44,8 +44,19 @@ export function LoginScreen() {
         {notice && <p className="mt-6 border-t border-text pt-3 text-ui font-medium">{notice}</p>}
 
         <div className="mt-10 space-y-6">
+          {DEV_LOGIN && (
+            <div className="space-y-3">
+              <p className="border-l-2 border-text pl-3 text-ui">
+                <span className="font-medium">Judging the hackathon?</span> No account needed. This signs you into Thomas's real account, so you see everything he sees: every chat, agent and session.
+              </p>
+              <Button variant="primary" size="lg" className="w-full" disabled={busy !== null} onClick={() => void run('demo', auth.demoAccount)}>
+                {busy === 'demo' ? 'Signing in' : 'Continue with the demo account'}
+              </Button>
+            </div>
+          )}
+
           {authConfig.github && (
-            <Button variant="primary" size="lg" className="w-full" icon={<GithubMark size={16} />} disabled={busy !== null} onClick={() => void run('github', auth.githubLogin)}>
+            <Button variant={DEV_LOGIN ? 'secondary' : 'primary'} size="lg" className="w-full" icon={<GithubMark size={16} />} disabled={busy !== null} onClick={() => void run('github', auth.githubLogin)}>
               {busy === 'github' ? 'Opening GitHub' : 'Sign in with GitHub'}
             </Button>
           )}
@@ -53,18 +64,15 @@ export function LoginScreen() {
           {authConfig.github && DEV_LOGIN && (
             <div className="flex items-center gap-3 text-caption text-text-2">
               <span className="h-px flex-1 bg-rule" />
-              or use a demo login
+              or make your own demo user
               <span className="h-px flex-1 bg-rule" />
             </div>
           )}
 
           {DEV_LOGIN && (
             <form onSubmit={onDev}>
-              <p className="mb-5 border-l-2 border-text pl-3 text-ui">
-                <span className="font-medium">Judging the hackathon?</span> No account needed. Type any new handle below and you'll land in our team with our real history.
-              </p>
               <label htmlFor="dev-login" className="block text-caption text-text-2">
-                Pick any handle (demo)
+                Handle for your demo user
               </label>
               <div className="mt-1 flex items-end gap-3 border-b border-rule focus-within:border-text">
                 <input

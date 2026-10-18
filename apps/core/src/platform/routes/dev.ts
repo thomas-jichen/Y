@@ -73,6 +73,22 @@ export function registerDevRoutes(app: Hono, deps: CoreDeps): void {
     return c.json({ token, user: { id: userId, handle: `@${u.rows[0]?.handle ?? ''}` } });
   });
 
+  // The hosted demo: one click signs anyone into the configured real account, with full access.
+  app.post('/api/v1/dev/demo', async (c) => {
+    const login = deps.config.demoAccount;
+    if (!login) return fail(c, 'NOT_FOUND', 'no demo account on this server');
+    const found = await deps.db.asService((tx) =>
+      tx.query<{ id: string; handle: string }>('select id, handle from public.users where lower(github_login::text) = lower($1)', [login]),
+    );
+    const user = found.rows[0];
+    if (!user) return fail(c, 'NOT_FOUND', 'the demo account has not signed in to Y yet');
+    const token = mintWebToken();
+    await deps.db.asService((tx) =>
+      tx.query('insert into y_private.web_sessions (token_hash, user_id) values ($1, $2)', [sha256Hex(token), user.id]),
+    );
+    return c.json({ token, user: { id: user.id, handle: `@${user.handle}` } });
+  });
+
   app.post('/api/v1/dev/team', async (c) => {
     const caller = await authenticate(c, deps, 'web');
     if (caller instanceof Response) return caller;

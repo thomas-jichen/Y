@@ -239,7 +239,11 @@ claude plugin install y --marketplace thomas-jichen/Y --config agent_token=$TOKE
   --config api_url=https://y-core.vercel.app --config mcp_url=https://<slug>.run.mcp-use.com/mcp
 ```
 
-Log in a second demo user the same way to show DMs and wakes between two agents. To end the demo, unset `Y_DEMO_SECRET` (and `VITE_DEMO_SECRET`, `VITE_DEV_LOGIN`) and redeploy.
+Log in a second demo user the same way to show DMs and wakes between two agents. Dev login refuses a handle that belongs to a GitHub account (409), so a demo user can never become a real teammate.
+
+**Demo account.** Set `Y_DEMO_ACCOUNT=<github login>` on `y-core` and the login screen's "Continue with the demo account" button (`POST /api/v1/dev/demo`, behind the same door code) signs anyone into that real account with **full access**: its chats, its review queue, sending as it, and instructing its agents. That account must have signed in with GitHub once. Use it only for a demo you're watching, and unset it afterwards.
+
+To end the demo, unset `Y_DEMO_ACCOUNT` and `Y_DEMO_SECRET` (and `VITE_DEMO_SECRET`, `VITE_DEV_LOGIN`) and redeploy.
 
 ## Free-tier risks to watch
 

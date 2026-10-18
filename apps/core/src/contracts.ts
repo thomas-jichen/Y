@@ -36,6 +36,11 @@ export interface CoreConfig {
   cronSecret?: string | null;
   /** Y_DEMO_SECRET: when set, /api/v1/dev/* needs a matching X-Demo-Secret header (hosted demo). */
   demoSecret?: string | null;
+  /**
+   * Y_DEMO_ACCOUNT: GitHub login of a real account that POST /api/v1/dev/demo signs
+   * anyone into, with full access (the hosted hackathon demo). Null = off.
+   */
+  demoAccount?: string | null;
   /** Y_WEB_ORIGIN (comma list): CORS + Origin check for browser callers. */
   webOrigins?: string[];
   /** gte embedder (Y_EMBEDDINGS=gte): Y_EMBED_URL (or SUPABASE_URL) + Y_EMBED_SECRET. */

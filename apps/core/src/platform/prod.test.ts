@@ -313,6 +313,27 @@ describe('demo login gate', () => {
     const again = await req(f, 'POST', '/api/v1/dev/login', { body: { githubLogin: 'demo-b' }, headers: { 'x-demo-secret': DEMO } });
     expect(again.json!.user.id).toBe(first.json!.user.id);
   }, 60_000);
+
+  it('signs anyone into Y_DEMO_ACCOUNT, behind the demo secret, only when configured', async () => {
+    const { app, deps } = await appFor(loadConfig(baseEnv({ Y_DEMO_SECRET: DEMO, SUPABASE_URL: SUPA, Y_DEMO_ACCOUNT: 'Demo-Owner' })));
+    const f = (r: Request) => app.fetch(r);
+    const headers = { 'x-demo-secret': DEMO };
+    expect((await req(f, 'POST', '/api/v1/dev/demo', { headers })).status).toBe(404); // not signed up yet
+    const ownerId = randomUUID();
+    await deps.db.query(
+      `insert into auth.users (id, email, raw_user_meta_data, raw_app_meta_data, email_confirmed_at)
+       values ($1, 'owner@example.test', $2::jsonb, $3::jsonb, now())`,
+      [ownerId, JSON.stringify({ user_name: 'demo-owner', provider_id: '434343' }), JSON.stringify({ provider: 'github', providers: ['github'] })],
+    );
+    expect((await req(f, 'POST', '/api/v1/dev/demo')).status).toBe(401);
+    const ok = await req(f, 'POST', '/api/v1/dev/demo', { headers });
+    expect(ok.status).toBe(200);
+    expect(ok.json!.user.id).toBe(ownerId);
+    expect((await req(f, 'GET', '/api/v1/me', { token: ok.json!.token })).status).toBe(200);
+
+    const { app: off } = await appFor(loadConfig(baseEnv({ Y_DEMO_SECRET: DEMO, SUPABASE_URL: SUPA })));
+    expect((await req((r: Request) => off.fetch(r), 'POST', '/api/v1/dev/demo', { headers })).status).toBe(404);
+  }, 60_000);
 });
 
 describe('connect install commands', () => {

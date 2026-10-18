@@ -95,6 +95,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
     production,
     cronSecret,
     demoSecret,
+    demoAccount: str(env.Y_DEMO_ACCOUNT),
     webOrigins,
     embed,
     realtimeRest,

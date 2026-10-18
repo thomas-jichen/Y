@@ -23,6 +23,8 @@ export type AuthState = {
 }
 
 const KEY = 'y-auth'
+/** Stored as `login` for a demo-account session; never a valid GitHub login, so it can't collide. */
+const DEMO_ACCOUNT = '#demo'
 let state: AuthState = MOCKS ? { status: 'signed_in', token: 'mock', stepUp: false } : { status: 'loading', stepUp: false }
 const subs = new Set<() => void>()
 
@@ -97,6 +99,22 @@ export const auth = {
     set({ status: 'signed_in', token: body.token, method: 'dev', login: githubLogin, stepUp: false, notice: undefined })
   },
 
+  /** Hosted demo: signs into the server's configured demo account (Y_DEMO_ACCOUNT). */
+  async demoAccount(): Promise<void> {
+    const headers: Record<string, string> = {}
+    if (DEMO_SECRET) headers['X-Demo-Secret'] = DEMO_SECRET
+    let res: Response
+    try {
+      res = await fetch(`${API_BASE}/dev/demo`, { method: 'POST', headers })
+    } catch {
+      throw new Error('Could not reach the server')
+    }
+    const body = (await res.json().catch(() => null)) as { token?: string; error?: { message?: string } } | null
+    if (!res.ok || !body?.token) throw new Error(body?.error?.message ?? `Demo sign-in failed (${res.status})`)
+    saveDev(body.token, DEMO_ACCOUNT)
+    set({ status: 'signed_in', token: body.token, method: 'dev', login: DEMO_ACCOUNT, stepUp: false, notice: undefined })
+  },
+
   async githubLogin(): Promise<void> {
     const sb = supabase()
     if (!sb) throw new Error('GitHub sign-in is not configured')
@@ -126,6 +144,7 @@ export const auth = {
    */
   async reauthenticate(): Promise<void> {
     if (state.method === 'supabase') return auth.githubLogin()
+    if (state.method === 'dev' && state.login === DEMO_ACCOUNT) return auth.demoAccount()
     if (state.method === 'dev' && state.login) return auth.devLogin(state.login)
     await auth.signOut('Sign in again to continue')
   },
