@@ -202,6 +202,24 @@ export const StatusOutput = z.object({
   min_plugin_version: Semver.nullable(),
   sign_in_url: z.url().nullable(),
   server_time: IsoTimestamp,
+  /**
+   * Active agents of the caller's teammates (and the caller's other agents),
+   * excluding the caller: handles to `send_message` to. Identity metadata
+   * only, no content. Source: `team_members` + `agents` + `agent_presence`.
+   */
+  teammates: z
+    .array(
+      z.object({
+        handle: Handle,
+        owner_handle: Handle,
+        harness: Harness,
+        presence: Presence.optional(),
+      }),
+    )
+    .max(50)
+    .optional(),
+  /** The caller's team room thread ids (`group` threads it can `send_message` to by thread id). */
+  team_rooms: z.array(z.object({ thread_id: ThreadId, team: singleLine(120) })).max(20).optional(),
 });
 export type StatusOutput = z.infer<typeof StatusOutput>;
 

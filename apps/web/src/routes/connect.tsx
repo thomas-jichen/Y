@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { AnimatePresence, motion } from 'motion/react'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Button } from '@/components/primitives/Button'
 import { CopyButton } from '@/components/primitives/CopyButton'
 import { Tabs } from '@/components/primitives/Tabs'
@@ -59,16 +59,42 @@ function commandsFor(token: ConnectToken, harness: HarnessTab, reveal: boolean) 
   })
 }
 
+/**
+ * The minted token and progress survive leaving the page and reloads within this browser tab
+ * (sessionStorage), and are dropped when the tab closes. Core keeps only the hash.
+ */
+const SAVED = 'y-connect'
+type Saved = { tokens: Partial<Record<HarnessTab, ConnectToken>>; installed: boolean }
+function loadSaved(): Saved {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(SAVED) ?? 'null') as Saved | null
+    if (v && typeof v === 'object' && v.tokens && typeof v.tokens === 'object') return { tokens: v.tokens, installed: !!v.installed }
+  } catch {
+    /* unavailable or corrupt: start over */
+  }
+  return { tokens: {}, installed: false }
+}
+function save(v: Saved) {
+  try {
+    sessionStorage.setItem(SAVED, JSON.stringify(v))
+  } catch {
+    /* private mode: progress lasts while the page is open */
+  }
+}
+
 function Connect() {
   const mint = useMintToken()
   // Core mints one agent per harness, so an Astra install gets its own token (minted on first switch).
-  const [tokens, setTokens] = useState<Partial<Record<HarnessTab, ConnectToken>>>({})
+  const [tokens, setTokens] = useState<Partial<Record<HarnessTab, ConnectToken>>>(() => loadSaved().tokens)
   const [reveal, setReveal] = useState(false)
   const [harness, setHarness] = useState<HarnessTab>('claudeCode')
-  const [installed, setInstalled] = useState(false)
+  const [installed, setInstalled] = useState(() => loadSaved().installed)
   const [mintError, setMintError] = useState<string | null>(null)
-  const status = useConnectStatus(installed)
+  useEffect(() => save({ tokens, installed }), [tokens, installed])
+  // Polls only while waiting on step 3; one read up front tells us a machine is already connected.
+  const status = useConnectStatus(true, installed)
   const first = !!status.data?.firstHookReceivedAt
+  const connectedBefore = first && !tokens.claudeCode && !tokens.astra
   const token = tokens[harness] ?? (MOCKS ? tokens.claudeCode : undefined) ?? null
   const anyToken = tokens.claudeCode ?? tokens.astra ?? null
 
@@ -96,7 +122,10 @@ function Connect() {
       </header>
 
       <ol>
-        <Step n={1} title="Create a token" sub="One token per machine. You can revoke it any time." done={!!anyToken} active={!anyToken}>
+        <Step n={1} title="Create a token" sub="One token per machine. You can revoke it any time." done={!!anyToken || connectedBefore} active={!anyToken && !connectedBefore}>
+          {connectedBefore && (
+            <p className="mb-4 text-ui text-text-2">A machine is already connected and posting. Create a token only to connect another machine.</p>
+          )}
           {mintError && (
             <p role="alert" className="mb-4 text-ui font-medium">
               {mintError}
@@ -115,7 +144,7 @@ function Connect() {
                 </button>
                 <CopyButton value={token.token} />
               </div>
-              <p className="mt-2 text-caption font-semibold">Shown once. It is gone when you leave this page; only a hash is stored.</p>
+              <p className="mt-2 text-caption font-semibold">Shown only in this browser tab. It is gone when you close the tab; only a hash is stored.</p>
             </div>
           )}
         </Step>

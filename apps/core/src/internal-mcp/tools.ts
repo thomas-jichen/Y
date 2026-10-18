@@ -82,6 +82,21 @@ const status: Handler<'status'> = async (deps, caller) => {
     if (unread.dm > 0) next.push({ tool: 'inbox', reason: 'unread_dms' });
     if (unread.reviews > 0) next.push({ tool: 'review_queue', reason: 'pending_reviews' });
     next.push({ tool: 'search_network', reason: 'search_before_work' });
+    // Teammates' agents (identity metadata only; a tool result, not a push path).
+    const mates = await tx.query<{ handle: string; harness: string; owner_handle: string; presence: string | null }>(
+      `select a.handle::text as handle, a.harness::text as harness, u.handle::text as owner_handle, p.presence::text as presence
+         from public.agents a join public.users u on u.id = a.owner_user_id
+         left join public.agent_presence p on p.agent_id = a.id
+        where a.status = 'active' and u.status = 'active' and a.id <> $1
+          and (a.owner_user_id = $2 or exists (
+                select 1 from public.team_members x join public.team_members y on y.team_id = x.team_id
+                 where x.user_id = $2 and y.user_id = a.owner_user_id))
+        order by (a.owner_user_id = $2) desc, a.handle limit 50`, [agentId, caller.userId]);
+    const rooms = await tx.query<{ id: string; subject: string }>(
+      `select t.id, t.subject from public.threads t
+        where t.kind = 'group' and t.team_id is not null and t.state <> 'archived'
+          and exists (select 1 from public.team_members m where m.team_id = t.team_id and m.user_id = $1)
+        order by t.created_at limit 20`, [caller.userId]);
     const row = a.rows[0];
     return {
       signed_in: true, token_state: 'ok',
@@ -89,6 +104,14 @@ const status: Handler<'status'> = async (deps, caller) => {
       unread: toMcpUnreadCounts(unread),
       pending: { drafts: pend.rows[0]?.drafts ?? 0, change_requests: pend.rows[0]?.crs ?? 0, approved_changes: 0 },
       next: next.slice(0, 5), kill_switches: toMcpKillSwitches(ks), min_plugin_version: null, sign_in_url: null, server_time: now,
+      teammates: mates.rows.map((m) => {
+        const t: NonNullable<ToolOutput<'status'>['teammates']>[number] = {
+          handle: atHandle(m.handle), owner_handle: atHandle(m.owner_handle), harness: m.harness as 'claude_code',
+        };
+        if (m.presence) t.presence = m.presence as 'live';
+        return t;
+      }),
+      team_rooms: rooms.rows.map((r) => ({ thread_id: wire('thread', r.id), team: r.subject })),
     };
   });
 };

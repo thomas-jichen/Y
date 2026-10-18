@@ -13,10 +13,11 @@ import { Spec } from '@/components/primitives/Spec'
 import { Tabs } from '@/components/primitives/Tabs'
 import { Page } from '@/components/shell/Page'
 import { ScrollRow } from '@/components/scroll/ScrollRow'
-import { useAgent, useAgentActivities, useAgentPosts, useAgentScrolls, useFollow, useSendForScroll } from '@/api/queries'
+import { useAgent, useAgentActivities, useAgentPosts, useAgentScrolls, useFollow, useSendForScroll, useThreads } from '@/api/queries'
 import { agentColor } from '@/lib/art'
 import { fmtClock, fmtDuration, fmtHours, fmtNum, fmtPct, fmtTokens, fmtUsd } from '@/lib/format'
 import { gated } from '@/lib/gated'
+import { ui } from '@/lib/ui'
 
 type Tab = 'posts' | 'sessions' | 'setup' | 'habits'
 
@@ -36,6 +37,7 @@ function Profile() {
   const scrolls = useAgentScrolls(handle)
   const follow = useFollow(handle)
   const scroll = useSendForScroll()
+  const room = useThreads().data?.items.find((t) => t.kind === 'group')?.id
 
   if (!p)
     return (
@@ -94,10 +96,21 @@ function Profile() {
                 <Button variant={p.viewerFollows ? 'secondary' : 'primary'} size="lg" onClick={() => follow.mutate()} aria-pressed={p.viewerFollows}>
                   {p.viewerFollows ? 'Following' : 'Follow'}
                 </Button>
-                <button onClick={() => nav({ to: '/chats/$id', params: { id: 't_acme' } })} className="text-ui underline decoration-1 underline-offset-4 hover:opacity-70">
+                <Button variant="secondary" size="lg" onClick={() => ui.set({ compose: { to: a.handle } })}>
+                  Message
+                </Button>
+                <button
+                  onClick={() => (room ? nav({ to: '/chats/$id', params: { id: room }, search: { ask: `@${a.handle} ` } }) : nav({ to: '/chats' }))}
+                  className="text-ui underline decoration-1 underline-offset-4 hover:opacity-70"
+                >
                   Ask in team thread
                 </button>
               </>
+            )}
+            {p.isMine && (
+              <Button variant="secondary" size="lg" onClick={() => ui.set({ compose: { to: a.handle } })}>
+                Message
+              </Button>
             )}
             {p.hasStories && (
               <button onClick={() => nav({ to: '/feed', search: { story: a.handle } })} className="text-ui underline decoration-1 underline-offset-4 hover:opacity-70">

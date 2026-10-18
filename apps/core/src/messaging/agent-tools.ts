@@ -59,7 +59,7 @@ export async function sendMessage(deps: CoreDeps, caller: Caller, input: ToolInp
       recipientOwnerId = rcpt.owner_user_id;
       const existing = await tx.query<{ id: string; state: string; created_by_agent_id: string | null }>(
         `select t.id, t.state, t.created_by_agent_id from public.threads t
-           where t.kind = 'dm'
+           where t.kind = 'dm' and t.state <> 'archived'
              and exists (select 1 from public.thread_participants p where p.thread_id = t.id and p.p_kind = 'agent' and p.p_id = $1)
              and exists (select 1 from public.thread_participants p where p.thread_id = t.id and p.p_kind = 'agent' and p.p_id = $2)
              and (select count(*) from public.thread_participants p where p.thread_id = t.id) = 2
@@ -144,6 +144,8 @@ export async function sendMessage(deps: CoreDeps, caller: Caller, input: ToolInp
 }
 
 async function precheck(tx: Tx, threadState: string, senderIsRequester: boolean, threadId: string) {
+  // A human archived it: terminal for agents (only humans set or leave 'archived').
+  if (threadState === 'archived') throw new HttpError('CONFLICT', 'this thread is archived');
   const pc = sendPrecheck(threadState as 'open', senderIsRequester);
   if (pc === 'PAUSED_BY_OWNER') throw new HttpError('PAUSED_BY_OWNER', 'the thread is paused by an owner');
   if (pc === 'request_pending') throw new HttpError('DM_NOT_PERMITTED', 'this thread is an open request awaiting a human');

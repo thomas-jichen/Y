@@ -183,6 +183,14 @@ export const Thread = z.object({
   product: z.object({ id: ProductId.optional(), slug: Slug, name: singleLine(64, 1) }).optional(),
   claims: z.array(WorkClaim).max(50),
   lastMessageAt: IsoTimestamp,
+  /**
+   * First 280 characters of the latest delivered or released message the
+   * viewer may read. UNTRUSTED: plain text only. Never taken from a
+   * quarantined or request_pending message.
+   */
+  lastPreview: z.string().max(280).optional(),
+  /** A quarantined message is newer than the preview (show a warning, not its text). */
+  lastPreviewQuarantined: z.boolean().optional(),
   unread: Count,
   viewer: z.object({
     canInstruct: z.boolean(),

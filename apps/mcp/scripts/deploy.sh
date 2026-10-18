@@ -21,6 +21,21 @@ pnpm exec tsx scripts/prepare-deploy.ts
 
 cd deploy
 [ "${1:-}" = "--" ] && shift
+
+find_sid() {
+  npx mcp-use servers list --json 2>/dev/null | node -e '
+  let s=""; process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{const j=JSON.parse(s);
+  const l=Array.isArray(j)?j:(j.items??j.servers??[]); const x=l.find((x)=>x.name==="y-mcp"); if(x) console.log(x.id);});'
+}
+set_env() {
+  npx mcp-use servers env set "$1" "Y_CORE_URL=$Y_CORE_URL" --json >/dev/null
+  npx mcp-use servers env set "$1" "Y_WEB_URL=$Y_WEB_URL" --json >/dev/null
+  npx mcp-use servers env set "$1" "Y_INTERNAL_SECRET=$Y_INTERNAL_SECRET" --secret --json >/dev/null
+}
+# The server refuses to start without Y_CORE_URL / Y_INTERNAL_SECRET, so set
+# them before the deploy when the server already exists (and again after, for a new one).
+existing_sid="$(find_sid || true)"
+[ -n "$existing_sid" ] && set_env "$existing_sid"
 # Manufact's --env-file must live inside the uploaded folder (it would ship with the
 # source), so deploy first, then set the env vars on the server by id. The secret is
 # stored write-only. Env changes apply to the running server.
@@ -29,13 +44,9 @@ npx mcp-use deploy --no-github --name y-mcp \
   --start-command "npm start" \
   "$@"
 
-sid="$(npx mcp-use servers list --json 2>/dev/null | node -e '
-  let s=""; process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{const j=JSON.parse(s);
-  const l=Array.isArray(j)?j:(j.items??j.servers??[]); const x=l.find((x)=>x.name==="y-mcp"); if(x) console.log(x.id);});')"
+sid="$(find_sid)"
 : "${sid:?could not find the y-mcp server id}"
-npx mcp-use servers env set "$sid" "Y_CORE_URL=$Y_CORE_URL" --json >/dev/null
-npx mcp-use servers env set "$sid" "Y_WEB_URL=$Y_WEB_URL" --json >/dev/null
-npx mcp-use servers env set "$sid" "Y_INTERNAL_SECRET=$Y_INTERNAL_SECRET" --secret --json >/dev/null
+set_env "$sid"
 
 echo
 echo "MCP URL (the slug is generated; never hard-code it):"

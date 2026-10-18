@@ -15,6 +15,7 @@ import type {
   RequestReview,
   ReviewItem,
   Thread,
+  UsageSeries,
   UserRef,
 } from './types'
 
@@ -193,6 +194,12 @@ export function me(m: Obj, pendingReviews: number): Me {
     remoteInstructionsOn: Boolean(m.remoteInstructionsOn),
     ...(m.realtime ? { realtime: m.realtime as RealtimeChannel } : {}),
   }
+}
+
+/** Core UsageSeries: agent is core's AgentRef; `model` (the most used model id) picks the web's model family. */
+export function usage(u: Obj): UsageSeries {
+  const { model, ...rest } = u
+  return { ...(rest as UsageSeries), agent: agentRef(u.agent, model) }
 }
 
 /** Core sends one shell command per harness (`codex` on the wire, `astra` in the UI); the web lists steps. */

@@ -302,6 +302,57 @@ on('POST', '/threads/:id/resolve', ({ params }) => {
   return t
 })
 
+on('POST', '/threads/:id/reopen', ({ params }) => {
+  const t = db.threads.find((x) => x.id === params.id)
+  if (!t) throw new MockHttpError(404, 'NOT_FOUND', 'Thread not found')
+  if (t.state === 'paused_by_owner' || t.state === 'resolved') t.state = 'open'
+  bus.emit({ type: 'thread.updated', threadId: t.id })
+  return t
+})
+
+// A human starts a DM with a teammate's agent or their own (strangers stay default-deny, as in core).
+on('POST', '/threads', ({ body }) => {
+  const text = String(body?.body ?? '').trim().slice(0, 4000)
+  if (!text) throw new MockHttpError(400, 'VALIDATION', 'Write a message first')
+  const target = byHandle(String(body?.to ?? '').replace(/^@/, ''))
+  if (target.stranger) throw new MockHttpError(403, 'DM_NOT_PERMITTED', 'You can message your own and your teammates’ agents only')
+  let t = db.threads.find(
+    (x) => x.kind === 'dm' && x.state !== 'archived' && x.participants.length === 2 && x.participants.some((p) => p.user?.id === me.id) && x.participants.some((p) => p.agent?.id === target.id),
+  )
+  if (!t) {
+    t = {
+      id: uid('t'),
+      kind: 'dm',
+      subject: String(body?.subject ?? '').slice(0, 120) || target.displayName,
+      state: 'open',
+      participants: [{ user: me, role: 'owner' }, { agent: target, role: 'member' }],
+      claims: [],
+      lastMessageAt: new Date().toISOString(),
+      unread: 0,
+      viewer: { canInstruct: myIds.has(target.id), remoteInstructionsOn: db.remoteInstructionsOn, needsStepUp: !stepUpFresh(), myAgentHandle: agents[myAgents[0]].handle },
+    }
+    db.threads.push(t)
+  }
+  const m: Message = {
+    id: uid('m'),
+    threadId: t.id,
+    sender: { kind: 'user', user: me },
+    trust: 'human_comment',
+    intent: 'comment',
+    urgency: 'normal',
+    body: text,
+    state: 'delivered',
+    screen: { label: 'clean', layers: ['l0'] },
+    createdAt: new Date().toISOString(),
+    deliveries: [],
+  }
+  db.messages.push(m)
+  touch(t.id, m.body)
+  bus.emit({ type: 'message.new', threadId: t.id, messageId: m.id })
+  const messages = db.messages.filter((x) => x.threadId === t.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  return { thread: decorateThread(t), messages }
+})
+
 // ---------- usage and team ----------
 on('GET', '/usage', ({ query }) => {
   const a = byHandle(query.get('agent') ?? 'thomas-opus')

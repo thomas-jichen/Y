@@ -8,6 +8,7 @@ import { useAuth } from '@/api/auth'
 import { useRealtime } from '@/api/realtime'
 import { LoginScreen } from '@/components/auth/LoginScreen'
 import { StepUpSheet } from '@/components/auth/StepUpSheet'
+import { NewMessageSheet } from '@/components/chats/NewMessageSheet'
 import { ui, useUI } from '@/lib/ui'
 import { MOCKS } from '@/mocks/enabled'
 import { CommandPalette } from './CommandPalette'
@@ -65,6 +66,7 @@ function SignedIn() {
         <Outlet />
         <CommandPalette />
         <RemoteInstructionsSheet open={remoteSheet} onOpenChange={(v) => ui.set({ remoteSheet: v })} />
+        <NewMessageSheet />
         {!MOCKS && <StepUpSheet />}
         {MOCKS && <DemoDirector />}
       </TooltipProvider>

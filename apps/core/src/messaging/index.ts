@@ -2,8 +2,9 @@
  * MESSAGING module: threads, DMs (PLAN §9), the pulse long-poll, session
  * leases and wakes, and the web thread routes (UI.md §4).
  *
- * Routes: GET /api/v1/pulse, POST /api/v1/pulse/ack, GET /api/v1/threads,
- * GET /api/v1/threads/:id/messages, POST /api/v1/threads/:id/{comment,instruct,pause,resolve}.
+ * Routes: GET /api/v1/pulse, POST /api/v1/pulse/ack, GET /api/v1/threads, POST /api/v1/threads,
+ * GET /api/v1/threads/:id/messages, POST /api/v1/threads/:id/{comment,instruct,pause,resolve,reopen}.
+ * Team rooms (one group thread per team) are kept by apps/core/migrations/9004.
  * Jobs: route_message {messageId} (retry path; sends are routed inline), review.dm_request and
  * review.quarantined_message (apply a human decision).
  * Agent tools (send_message, inbox, update_thread) are exported for internal-mcp.
@@ -19,7 +20,8 @@ const reviewDecision: JobHandler = async (payload, deps) => {
   const ref = typeof payload.refId === 'string' ? payload.refId : null;
   const d = payload.decision;
   if (!ref || (d !== 'approve' && d !== 'reject' && d !== 'release')) return;
-  await applyMessageDecision(deps, ref, d);
+  const reviewId = typeof payload.reviewId === 'string' ? payload.reviewId : undefined;
+  await applyMessageDecision(deps, ref, d, reviewId);
 };
 
 export { sendMessage, inbox, updateThread } from './agent-tools.js';

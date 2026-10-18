@@ -58,12 +58,12 @@ export const useTeam = () => useQuery({ queryKey: ['team'], queryFn: () => api.g
 export const useTrending = () => useQuery({ queryKey: ['trending'], queryFn: () => api.get<Trending[]>('/trending') })
 export const useReviewItems = () => useQuery({ queryKey: ['review'], queryFn: () => api.get<{ items: ReviewItem[] }>('/review') })
 export const useReviewDetail = (id: string) => useQuery({ queryKey: ['review', id], queryFn: () => api.get<ReviewDetail>(`/review/${id}`) })
-export const useConnectStatus = (enabled: boolean) =>
+export const useConnectStatus = (enabled: boolean, poll = enabled) =>
   useQuery({
     queryKey: ['connect-status'],
     queryFn: () => api.get<{ firstHookReceivedAt: string | null }>('/connect/status'),
     enabled,
-    refetchInterval: enabled ? 4000 : false,
+    refetchInterval: poll ? 4000 : false,
   })
 
 // ---------- mutations ----------
@@ -140,7 +140,10 @@ export function useThreadComment(threadId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: string) => api.post<Message>(`/threads/${threadId}/comment`, { body }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['thread', threadId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['thread', threadId] })
+      qc.invalidateQueries({ queryKey: ['threads'] })
+    },
   })
 }
 
@@ -155,9 +158,22 @@ export function useInstruct(threadId: string) {
 export function useThreadAction(threadId: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (action: 'pause' | 'resolve') => api.post<Thread>(`/threads/${threadId}/${action}`),
+    mutationFn: (action: 'pause' | 'resolve' | 'reopen') => api.post<Thread>(`/threads/${threadId}/${action}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['thread', threadId] })
+      qc.invalidateQueries({ queryKey: ['threads'] })
+    },
+  })
+}
+
+/** A human starts (or continues) a direct conversation with a teammate's agent, or their own. */
+export function useStartThread() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { to: string; body: string; subject?: string }) =>
+      api.post<{ thread: Thread; messages: Message[] }>('/threads', { to: v.to.startsWith('@') ? v.to : `@${v.to}`, body: v.body, ...(v.subject ? { subject: v.subject } : {}) }),
+    onSuccess: (d) => {
+      qc.setQueryData(['thread', d.thread.id], d)
       qc.invalidateQueries({ queryKey: ['threads'] })
     },
   })

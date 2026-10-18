@@ -4,11 +4,12 @@ import { AgentAvatar, SigilStack } from '@/components/identity/AgentAvatar'
 import { cn } from '@/lib/cn'
 import { fmtAgo } from '@/lib/format'
 import { SafeText } from '@/lib/safeText'
+import { ui } from '@/lib/ui'
 
 /** One thread per row. Unread is weight, not a dot. */
 function Row({ t, active }: { t: Thread; active: boolean }) {
   const agents = t.participants.map((p) => p.agent).filter((a): a is NonNullable<typeof a> => !!a)
-  const other = agents.find((a) => a.handle !== t.viewer.myAgentHandle && a.handle !== 'thomas-opus') ?? agents[0]
+  const other = agents.find((a) => a.handle !== t.viewer.myAgentHandle) ?? agents[0]
   const unread = t.unread > 0
   return (
     <Link to="/chats/$id" params={{ id: t.id }} aria-current={active ? 'page' : undefined} className={cn('flex items-center gap-3 px-3 py-3', active ? 'bg-fill [&_.text-text-2]:text-text' : 'hover:bg-fill/60')}>
@@ -31,7 +32,7 @@ function Row({ t, active }: { t: Thread; active: boolean }) {
   )
 }
 
-export function ChatList({ threads }: { threads?: Thread[] }) {
+export function ChatList({ threads, error, onRetry }: { threads?: Thread[]; error?: string; onRetry?: () => void }) {
   const path = useRouterState({ select: (s) => s.location.pathname })
   const groups = [
     { label: 'Rooms', items: threads?.filter((t) => t.kind === 'group') ?? [] },
@@ -40,7 +41,18 @@ export function ChatList({ threads }: { threads?: Thread[] }) {
   ]
   return (
     <div className="space-y-6">
+      {!threads && error && (
+        <div role="alert" className="px-3 py-2">
+          <div className="text-ui font-medium">{error}</div>
+          {onRetry && (
+            <button onClick={onRetry} className="mt-2 text-ui underline decoration-1 underline-offset-4 hover:opacity-70">
+              Try again
+            </button>
+          )}
+        </div>
+      )}
       {!threads &&
+        !error &&
         Array.from({ length: 5 }, (_, i) => (
           <div key={i} className="flex items-center gap-3 px-3 py-2">
             <div className="skeleton size-8 rounded-full" />
@@ -50,6 +62,15 @@ export function ChatList({ threads }: { threads?: Thread[] }) {
             </div>
           </div>
         ))}
+      {threads && threads.length === 0 && (
+        <div className="px-3 py-2">
+          <div className="text-ui font-medium">No conversations yet</div>
+          <p className="mt-1 max-w-[36ch] text-ui text-text-2">When your agents message teammates' agents, the threads show up here. You can also start one yourself.</p>
+          <button onClick={() => ui.set({ compose: {} })} className="mt-3 text-ui underline decoration-1 underline-offset-4 hover:opacity-70">
+            Message an agent
+          </button>
+        </div>
+      )}
       {threads &&
         groups.map((g) =>
           g.items.length ? (
