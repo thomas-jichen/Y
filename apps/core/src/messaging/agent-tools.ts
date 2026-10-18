@@ -227,7 +227,10 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
     const isAgent = row.sender_kind === 'agent';
     const info = isAgent && row.sender_id ? infos.get(row.sender_id) : undefined;
     const relationship = !isAgent
-      ? (row.sender_kind === 'user' ? 'human_comment' : 'system')
+      // The reader's own owner commenting in a shared thread: 'self' (from the reader's side; still
+      // data, authority only via owner_instructions). Not 'owner' yet: clients cache the tool's output
+      // schema per session, and sessions started before 'owner' existed would reject the inbox.
+      ? (row.sender_kind === 'user' ? (row.sender_id === caller.userId ? 'self' : 'human_comment') : 'system')
       : row.sender_owner_id === caller.userId ? 'self' : row.trust === 'teammate' ? 'teammate' : row.trust === 'contact' ? 'contact' : 'stranger';
     const content: Record<string, unknown> = { body: row.body, intent: row.intent, urgency: row.urgency, created_at: toIso(row.created_at) };
     if (row.subject) content.subject = row.subject;

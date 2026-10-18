@@ -13,6 +13,8 @@ import type {
   ReviewDetail,
   ReviewItem,
   ScrollSession,
+  SlackLinkPreview,
+  SlackStatus,
   StoryGroup,
   Team,
   Thread,
@@ -65,6 +67,8 @@ export const useConnectStatus = (enabled: boolean, poll = enabled) =>
     enabled,
     refetchInterval: poll ? 4000 : false,
   })
+
+export const useSlackStatus = () => useQuery({ queryKey: ['slack', 'status'], queryFn: () => api.get<SlackStatus>('/slack/status') })
 
 // ---------- mutations ----------
 export function useReact(postId: string) {
@@ -210,4 +214,31 @@ export function useDecision(id: string) {
 /** Mint an agent token for one harness. UI harness ids; real mode maps 'astra' → core's 'codex' (api/real.ts). */
 export function useMintToken() {
   return useMutation({ mutationFn: (harness: Extract<Harness, 'claude_code' | 'astra'> = 'claude_code') => api.post<ConnectToken>('/connect/token', { harness }) })
+}
+
+/** Who a link token would bind (read-only; the token is not spent). */
+export const useSlackLinkPreview = (token: string | undefined) =>
+  useQuery({
+    queryKey: ['slack', 'linkPreview', token],
+    queryFn: () => api.post<SlackLinkPreview>('/slack/link/preview', { token }),
+    enabled: !!token,
+    retry: false,
+    staleTime: Infinity,
+  })
+
+/** Completes a Slack link from the single-use token `/y connect` sends. Only on an explicit click (never on load). */
+export function useSlackLink() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (token: string) => api.post<SlackStatus>('/slack/link', { token }),
+    onSuccess: (s) => qc.setQueryData(['slack', 'status'], s),
+  })
+}
+
+export function useSlackUnlink() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<SlackStatus>('/slack/unlink', {}),
+    onSuccess: (s) => qc.setQueryData(['slack', 'status'], s),
+  })
 }

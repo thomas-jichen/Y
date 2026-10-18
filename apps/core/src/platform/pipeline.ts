@@ -20,6 +20,7 @@ import { normalizeErrorSignature } from '@y/capture';
 import type { CoreDeps, JobHandler } from '../contracts.js';
 import { heuristicDrafts } from './distill.js';
 import { openDigest, toVectorLiteral } from './util.js';
+import { enqueueFeedCard } from '../slack/enqueue.js';
 
 /** What core seals into activity_chunks.digest_enc (purged after distill, ≤24 h: I6). */
 export interface SealedChunk {
@@ -189,11 +190,11 @@ const screen: JobHandler = async (payload, deps) => {
 const publish: JobHandler = async (payload, deps) => {
   const id = str(payload, 'activityId');
   const done = await deps.db.asService(async (tx) => {
-    const r = await tx.query<{ owner_user_id: string; team_id: string | null }>(
+    const r = await tx.query<{ owner_user_id: string; team_id: string | null; visibility: string }>(
       `update public.activities set status = 'published', published_at = now(),
           visibility = case when team_id is not null then 'team' else 'private' end, updated_at = now()
         where id = $1 and status = 'distilling' and screen_action in ('allow', 'label')
-        returning owner_user_id, team_id`,
+        returning owner_user_id, team_id, visibility::text as visibility`,
       [id],
     );
     const a = r.rows[0];
@@ -202,6 +203,8 @@ const publish: JobHandler = async (payload, deps) => {
       { type: 'activity.published', audienceAgentIds: [], audienceUserIds: await teamAudience(tx, a.team_id, a.owner_user_id), payload: { activityId: `a_${id}` } },
       tx,
     );
+    // Team feed channel in Slack (team visibility only; never private).
+    if (a.team_id && a.visibility === 'team') await enqueueFeedCard(tx, deps, id, a.team_id);
     return true;
   });
   if (done) await deps.jobs.enqueue('embed', { kind: 'activity', id }, { dedupeKey: `embed:a:${id}` });

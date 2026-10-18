@@ -227,6 +227,12 @@ export async function realRequest(method: Method, path: string, body: unknown, h
     return { remoteInstructionsOn: on }
   }
 
+  // ---- slack
+  if (is('GET', 'slack', 'status')) return core('GET', '/slack/status')
+  if (is('POST', 'slack', 'link', 'preview')) return core('POST', '/slack/link/preview', body)
+  if (is('POST', 'slack', 'link')) return core('POST', '/slack/link', body, headers)
+  if (is('POST', 'slack', 'unlink')) return core('POST', '/slack/unlink', {}, headers)
+
   // ---- Y extensions core doesn't serve yet (README "Contract extensions")
   if (is('GET', 'stories')) return []
   if (is('GET', 'posts')) return { items: [] }

@@ -1,3 +1,4 @@
+import { ENVELOPE_NOTES } from '@y/schema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InboxOutput, MessageEnvelopeContent, NewThreadResponse, PulseResponse, StatusOutput, ThreadList, decodeUntrustedContent } from '@y/schema';
 
@@ -320,7 +321,11 @@ describe('POST /api/v1/threads (a human starts a DM)', () => {
     const out = NewThreadResponse.parse(await (await post(Aweb, '/api/v1/threads', { to: alice.agentHandle, body: 'note to self' })).json());
     expect(out.thread.state).toBe('open');
     expect(out.messages[0]!.state).toBe('delivered');
-    expect(InboxOutput.parse((await callTool(env, 'inbox', A, {})).body.output).messages).toHaveLength(1);
+    const own = InboxOutput.parse((await callTool(env, 'inbox', A, {})).body.output).messages;
+    expect(own).toHaveLength(1);
+    // The reader's own owner is labelled as such (still data; authority only via owner_instructions).
+    expect(own[0]!.from).toMatchObject({ agent: null, owner: alice.handle, relationship: 'self' });
+    expect(own[0]!.note).not.toBe(ENVELOPE_NOTES.human);
   });
 
   it('refuses strangers both ways and writes no dm_permissions (I4)', async () => {

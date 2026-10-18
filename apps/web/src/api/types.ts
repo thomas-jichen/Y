@@ -523,6 +523,26 @@ export interface ConnectToken {
   installCommands: { claudeCode: string[]; astra: string[] }
 }
 
+// ---------- slack ----------
+/** GET /slack/status; also the response of POST /slack/link and /slack/unlink (packages/schema SlackStatus). */
+export interface SlackStatus {
+  available: boolean
+  linked: boolean
+  slackUserId?: string
+  workspaceName?: string
+  linkedAt?: string
+  notifications: boolean
+  feedChannels: { teamSlug: string; channelId: string }[]
+}
+
+/** POST /slack/link/preview: who a link token would bind, without spending it (packages/schema SlackLinkPreview). */
+export interface SlackLinkPreview {
+  slackUserId: string
+  slackUserName?: string
+  workspaceName?: string
+  expiresAt: string
+}
+
 // ---------- realtime ----------
 export type StreamEvent =
   | { type: 'activity.published' | 'activity.updated'; activityId: string }

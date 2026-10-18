@@ -1,0 +1,11 @@
+{
+  "extraKnownMarketplaces": {
+    "y": {
+      "source": {
+        "source": "github",
+        "repo": "thomas-jichen/Y"
+      },
+      "autoUpdate": true
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import { Outlet, useNavigate } from '@tanstack/react-router'
+import { Outlet, useLocation, useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { MotionConfig } from 'motion/react'
 import { useEffect } from 'react'
@@ -55,9 +55,23 @@ export function AppShell() {
   return <SignedIn />
 }
 
+/** A Slack link token saved before sign-in (routes/slack.link.tsx) resumes here, wherever sign-in landed. The page only previews it; linking still needs the Link click. */
+function useResumeSlackLink() {
+  const nav = useNavigate()
+  const pathname = useLocation({ select: (l) => l.pathname })
+  useEffect(() => {
+    try {
+      if (pathname !== '/slack/link' && sessionStorage.getItem('y.slackLinkToken')) void nav({ to: '/slack/link', search: {} })
+    } catch {
+      /* storage unavailable */
+    }
+  }, [pathname, nav])
+}
+
 function SignedIn() {
   useRealtime()
   useGoKeys()
+  useResumeSlackLink()
   const { remoteSheet } = useUI()
   return (
     <MotionConfig reducedMotion="user">

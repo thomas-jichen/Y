@@ -9,7 +9,8 @@ import * as fs from 'node:fs';
 import { SESSION_START_POINTER_BUDGET_CHARS } from '@y/schema/pointers';
 import type { HumanNotice } from '@y/schema/brief';
 import { contextOutput, failOpen, remaining, type HookCtx, type HookResult } from '../context.js';
-import { httpJson, PLUGIN_VERSION } from '../runtime.js';
+import * as path from 'node:path';
+import { autoUpdateOffFor, httpJson, PLUGIN_VERSION, readJson, writeJsonAtomic } from '../runtime.js';
 import { readBrief, readPulse, renderBlock, sanitizeBrief, writeBrief, pushPathsAllowed, type CachedBrief } from '../state.js';
 
 const BRIEF_TIMEOUT_MS = 800;
@@ -124,6 +125,24 @@ export function sessionStart(ctx: HookCtx): Promise<HookResult> {
       brief && brief.tokenState === 'ok' && pushPathsAllowed(brief)
         ? renderBlock(brief.pointers, SESSION_START_POINTER_BUDGET_CHARS)
         : '';
-    return contextOutput('SessionStart', context, humanMessage(ctx, brief));
+    const lines = [humanMessage(ctx, brief), autoUpdateNudge(ctx)].filter(Boolean);
+    return contextOutput('SessionStart', context, lines.length ? lines.join('\n') : undefined);
   });
+}
+
+const NUDGE_EVERY_MS = 24 * 3600_000;
+
+/** At most once a day: tell the human how to turn on auto-update, so plugin fixes reach them. */
+export function autoUpdateNudge(ctx: HookCtx): string | undefined {
+  const name = autoUpdateOffFor(ctx.env);
+  if (!name) return undefined;
+  const file = path.join(ctx.paths.state, 'autoupdate-nudge.json');
+  const last = readJson<{ at?: number }>(file)?.at ?? 0;
+  if (ctx.now() - last < NUDGE_EVERY_MS) return undefined;
+  try {
+    writeJsonAtomic(file, { at: ctx.now() });
+  } catch {
+    /* best effort: worst case we nudge again next session */
+  }
+  return `Y: plugin auto-update is off, so fixes won't reach you. Turn it on: /plugin, Marketplaces, ${name}, Enable auto-update.`;
 }

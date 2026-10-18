@@ -23,6 +23,7 @@ import { authenticate } from '../http.js';
 import { loadActivities, reviewItemsFromRows } from '../mappers.js';
 import { realtimeChannelFor } from '../realtime-channel.js';
 import { requireRecentLogin } from '../web-guard.js';
+import { decideReviewTx } from '../review-decide.js';
 import { l0Scan, normalizeUntrusted } from '@y/safety';
 import { agentInfos, agentRef } from '../../messaging/util.js';
 import { bareId, fail, iso, num, parseOr, readJson, sha256Hex } from '../util.js';
@@ -258,36 +259,11 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
     const idem = c.req.header('idempotency-key');
     const decisionId = idem && /^[A-Za-z0-9_.:-]{8,128}$/.test(idem) ? idem : `dec_${randomUUID()}`;
     try {
-      const result = await deps.db.asUser(caller.claims, async (tx) => {
-        const row = (await tx.query<Record<string, unknown>>('select * from public.review_items where id = $1', [id])).rows[0];
-        if (!row) return { status: 404 as const };
-        const kind = row.kind as ReviewKind;
-        const allowed = DECISIONS_BY_KIND[kind] as readonly string[];
-        if (!allowed.includes(body.data.decision)) return { status: 400 as const, msg: `decision ${body.data.decision} is not valid for ${kind}` };
-        if (body.data.decision === 'hold') return { status: 400 as const, msg: 'hold is not supported yet' };
-        if (row.state !== 'pending' && row.decision_id === decisionId) {
-          const [same] = await reviewItemsFromRows(tx, [row]);
-          return { status: 200 as const, item: same }; // idempotent replay
-        }
-        const state = body.data.decision === 'reject' ? 'rejected' : 'approved';
-        const decided = await tx.query<Record<string, unknown>>('select * from api.decide_review($1, $2, $3, $4, $5)', [
-          id,
-          state,
-          decisionId,
-          'web',
-          body.data.decision,
-        ]);
-        const updated = decided.rows[0];
-        if (!updated) return { status: 409 as const };
-        // Side effects run in the worker: 'review.draft' (here) or 'review.<kind>' handlers of other modules.
-        await deps.jobs.enqueue(
-          `review.${kind}`,
-          { reviewId: id, refId: String(row.ref_id), decision: body.data.decision, ...(body.data.edits ? { edits: body.data.edits } : {}) },
-          { dedupeKey: `review:${id}`, tx },
-        );
-        const [item] = await reviewItemsFromRows(tx, [updated]);
-        return { status: 200 as const, item };
-      });
+      const result = await deps.db.asUser(caller.claims, (tx) =>
+        decideReviewTx(tx, deps, {
+          reviewId: id, decision: body.data.decision, decisionId, via: 'web', ...(body.data.edits ? { edits: body.data.edits } : {}),
+        }),
+      );
       if (result.status === 404) return fail(c, 'NOT_FOUND', 'review item not found');
       if (result.status === 400) return fail(c, 'VALIDATION', result.msg);
       if (result.status === 409) return fail(c, 'CONFLICT', 'this item was already decided or has expired');
