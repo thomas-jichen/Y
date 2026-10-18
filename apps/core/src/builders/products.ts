@@ -29,7 +29,14 @@ import { loadAgentRefs } from '../platform/mappers.js';
 import { bareId, fail, iso, parseOr, readJson } from '../platform/util.js';
 import { HttpError } from '../messaging/util.js';
 import { syncSupportBuilders } from '../messaging/support.js';
+import { takeToken, type BucketSpec } from '../platform/rate-limit.js';
+import { cleanProductLabel } from './labels.js';
 import { guardedFetch, verifyClaimMarker } from './verify.js';
+
+/** Claim verification makes an outbound fetch: 30 / hour per human (already-verified claims answer without one). */
+export const VERIFY_BUCKET: BucketSpec = { rate: 30 / 3600, burst: 30 };
+/** Claims per product (verified or not). */
+export const MAX_CLAIMS_PER_PRODUCT = 50;
 
 interface ProductRow {
   id: string; slug: string; name: string; owner_team_id: string; builder_agent_id: string | null; sla_minutes: number;
@@ -97,6 +104,25 @@ async function teamAgent(tx: Tx, teamId: string, handle: string): Promise<string
   return a.agent_id;
 }
 
+/**
+ * auto_send sends a builder agent's replies to strangers with no human
+ * approval: only that agent's own human may turn it on for it (an admin can
+ * nominate a teammate's agent with builder_approves, whose replies wait for
+ * that teammate, I5).
+ */
+async function assertAutoSendOwner(tx: Tx, caller: Caller, agentId: string): Promise<void> {
+  const own = await tx.query(`select 1 from public.agents where id = $1 and owner_user_id = $2`, [agentId, caller.userId]);
+  if (own.rowCount === 0) {
+    throw new HttpError('VALIDATION', 'auto_send is only for your own agent; a teammate\'s builder agent needs builder_approves');
+  }
+}
+
+/** Product names and slugs reach agents unenveloped: refuse labels that do not screen clean (I2). */
+function assertCleanLabels(labels: { name?: string | null | undefined; slug?: string | undefined }): void {
+  if (labels.name != null && !cleanProductLabel(labels.name)) throw new HttpError('VALIDATION', 'that product name is not allowed');
+  if (labels.slug !== undefined && !cleanProductLabel(labels.slug)) throw new HttpError('VALIDATION', 'that product slug is not allowed');
+}
+
 /** Canonical claim value: hostnames and package names compare case-insensitively; stored lowercase except owner/repo. */
 function canonicalValue(kind: ClaimKind, value: string): string {
   return kind === 'github_repo' ? value : value.toLowerCase();
@@ -106,7 +132,10 @@ async function run(c: Context, deps: CoreDeps, fn: () => Promise<Response>): Pro
   try {
     return await fn();
   } catch (e) {
-    if (e instanceof HttpError) return fail(c, e.code, e.message, e.opts);
+    if (e instanceof HttpError) {
+      if (e.opts.retryAfterS !== undefined) c.header('retry-after', String(e.opts.retryAfterS));
+      return fail(c, e.code, e.message, e.opts);
+    }
     if (isSqlState(e, '42501')) return fail(c, 'SCOPE_FORBIDDEN', 'only a team admin in a web session can change products');
     if (isSqlState(e, '23505')) return fail(c, 'CONFLICT', 'already taken');
     deps.log('error', 'products route failed', { err: String(e), path: c.req.path });
@@ -138,7 +167,9 @@ export function registerProductRoutes(app: App, deps: CoreDeps): void {
                 `select team_id from public.team_members where user_id = $1 and role in ('owner', 'admin') order by joined_at, team_id limit 1`,
                 [caller.userId])).rows[0];
           if (!team) throw new HttpError('SCOPE_FORBIDDEN', 'only a team admin can register a product');
+          assertCleanLabels({ name: body.data.name, slug: body.data.slug });
           const agentId = await teamAgent(tx, team.team_id, body.data.builderAgent);
+          if (body.data.replyPolicy === 'auto_send') await assertAutoSendOwner(tx, caller, agentId);
           await tx.query(
             `insert into public.products (id, slug, name, owner_team_id, builder_agent_id, sla_minutes, reply_policy, status)
              values ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
@@ -163,8 +194,13 @@ export function registerProductRoutes(app: App, deps: CoreDeps): void {
       const u = body.data;
       const changed = await deps.db.asUser(caller.claims, async (tx) => {
         const p = await adminProduct(tx, caller, id);
+        assertCleanLabels({ name: u.name });
         let builder = p.builder_agent_id;
         if (u.builderAgent !== undefined) builder = u.builderAgent === null ? null : await teamAgent(tx, p.owner_team_id, u.builderAgent);
+        // Setting auto_send, or a new builder on an auto_send product: the builder must be the caller's own agent.
+        if (builder && (u.replyPolicy ?? p.reply_policy) === 'auto_send' && (u.replyPolicy === 'auto_send' || builder !== p.builder_agent_id)) {
+          await assertAutoSendOwner(tx, caller, builder);
+        }
         await tx.query(
           `update public.products set name = coalesce($2, name), sla_minutes = coalesce($3, sla_minutes),
                   reply_policy = coalesce($4, reply_policy), builder_agent_id = $5 where id = $1`,
@@ -198,9 +234,16 @@ export function registerProductRoutes(app: App, deps: CoreDeps): void {
     return run(c, deps, async () => {
       await deps.db.asUser(caller.claims, async (tx) => {
         await adminProduct(tx, caller, id);
+        const value = canonicalValue(body.data.kind, body.data.value);
+        const n = await tx.query<{ n: number; has: boolean }>(
+          `select count(*)::int as n, coalesce(bool_or(kind = $2 and value = $3), false) as has
+             from public.product_claims where product_id = $1`, [id, body.data.kind, value]);
+        if (!n.rows[0]?.has && Number(n.rows[0]?.n ?? 0) >= MAX_CLAIMS_PER_PRODUCT) {
+          throw new HttpError('VALIDATION', `a product has at most ${MAX_CLAIMS_PER_PRODUCT} claims`);
+        }
         await tx.query(
           `insert into public.product_claims (product_id, kind, value) values ($1, $2, $3) on conflict do nothing`,
-          [id, body.data.kind, canonicalValue(body.data.kind, body.data.value)]);
+          [id, body.data.kind, value]);
       });
       return c.json(await oneProduct(deps, caller, id));
     });
@@ -221,7 +264,15 @@ export function registerProductRoutes(app: App, deps: CoreDeps): void {
         const cl = await tx.query<{ verified_at: Date | string | null }>(
           `select verified_at from public.product_claims where product_id = $1 and kind = $2 and value = $3`, [id, kind, value]);
         if (!cl.rows[0]) throw new HttpError('NOT_FOUND', 'add this claim before verifying it');
-        return { slug: p.slug, verified: cl.rows[0].verified_at !== null };
+        const verified = cl.rows[0].verified_at !== null;
+        // Each unverified check fetches a public host: bounded per human.
+        if (!verified) {
+          const rl = await takeToken(tx, 'claim_verify', [caller.userId], VERIFY_BUCKET);
+          if (!rl.allowed) {
+            throw new HttpError('RATE_LIMITED', 'too many claim checks; try again later', { retryable: true, retryAfterS: rl.retryAfterS });
+          }
+        }
+        return { slug: p.slug, verified };
       });
       let out: Omit<VerifyClaimResponse, 'product'>;
       if (pre.verified) {
