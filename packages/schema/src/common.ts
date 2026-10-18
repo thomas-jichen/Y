@@ -18,11 +18,19 @@ const CONTROL_MULTI_LINE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 /**
  * Source of a character class matching invisible and bidirectional-control
  * characters (soft hyphen, zero-width chars, LRM/RLM, bidi embeddings and
- * isolates, word joiners, BOM). UI.md §5 rule 2 strips these before display;
- * `@y/safety` strips them during normalization.
+ * isolates, word joiners, BOM, the Mongolian vowel separator, the Arabic
+ * letter mark, the Hangul filler U+3164 and its halfwidth form U+FFA0, and
+ * the Khmer inherent vowels U+17B4/U+17B5). UI.md §5 rule 2 strips these
+ * before display; `@y/safety` strips them during normalization. BMP only
+ * (the envelope encoder escapes matches one UTF-16 unit at a time).
+ * Characters that are meaningful in some script are not included: emoji
+ * variation selectors (U+FE00–FE0F), the combining grapheme joiner U+034F,
+ * the Mongolian free variation selectors U+180B–180D/U+180F and the Hangul
+ * conjoining fillers U+115F/U+1160. The L0 scan ignores those while matching
+ * instead.
  */
 export const INVISIBLE_CHARS_SOURCE =
-  '[\\u00AD\\u180E\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF]';
+  '[\\u00AD\\u061C\\u17B4\\u17B5\\u180E\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\u3164\\uFEFF\\uFFA0]';
 
 /** Non-global test regex for {@link INVISIBLE_CHARS_SOURCE}. */
 export const INVISIBLE_CHARS_RE = new RegExp(INVISIBLE_CHARS_SOURCE);

@@ -124,7 +124,9 @@ const PHRASE_RULES: readonly PhraseRule[] = [
     category: 'agent_imperative',
     severity: 'block',
     discussable: true,
-    re: /\b(?:send|post|upload|share|paste|give|email|forward|leak|dm|reply\s+with|include)\s+(?:me|us|it|them|back)?\s*(?:back\s+)?(?:the\s+contents\s+of\s+)?(?:your|the|all|any)?\s*(?:own\s+)?(?:api[\s_-]?keys?|access\s+tokens?|auth\s+tokens?|tokens?|credentials?|secrets?|passwords?|env(?:ironment)?\s+(?:vars?|variables?|file)|\.env(?:\s+file)?|ssh\s+keys?|private\s+keys?|id_rsa|cookies?|session\s+tokens?|aws\s+keys?)\b|\bexfiltrat\w*/gi,
+    // Each whitespace run has one owner (the original `\s+(?:me|…)?\s*(?:back\s+)?…(?:your|…)?\s*`
+    // accepted the same strings but backtracked cubically on a verb followed by many spaces).
+    re: /\b(?:send|post|upload|share|paste|give|email|forward|leak|dm|reply\s+with|include)\s+(?:(?:me|us|it|them|back)\s*)?(?:back\s+)?(?:the\s+contents\s+of\s+)?(?:(?:your|the|all|any)\s*)?(?:own\s+)?(?:api[\s_-]?keys?|access\s+tokens?|auth\s+tokens?|tokens?|credentials?|secrets?|passwords?|env(?:ironment)?\s+(?:vars?|variables?|file)|\.env(?:\s+file)?|ssh\s+keys?|private\s+keys?|id_rsa|cookies?|session\s+tokens?|aws\s+keys?)\b|\bexfiltrat\w*/gi,
   },
   {
     rule: 'agent.conceal',
@@ -177,6 +179,95 @@ function foldConfusables(text: string): { text: string; folded: number } {
   });
   return { text: out, folded };
 }
+
+/** More look-alikes, folded only in the {@link deepView} (dotless i, palochka, lunate sigma, Latin alpha, Armenian o/u/h, Cyrillic qa/we). */
+const EXTRA_CONFUSABLES: Readonly<Record<string, string>> = {
+  ı: 'i', ɩ: 'i', ӏ: 'l', Ӏ: 'I', ϲ: 'c', Ϲ: 'C', ɑ: 'a', օ: 'o', Օ: 'O', ս: 'u', հ: 'h', ԛ: 'q', ԝ: 'w', ѵ: 'v',
+};
+/**
+ * Dropped from the deep view: variation selectors (emoji/ideographic variants), combining marks (CGJ and
+ * Mongolian free variation selectors included), Hangul choseong/jungseong fillers, invisible/bidi and tag characters.
+ * These stay in the delivered text (they are meaningful in Mongolian and Hangul); only the scan ignores them.
+ */
+const DEEP_DROP_RE = new RegExp(`^(?:[\\uFE00-\\uFE0F\\u{E0100}-\\u{E01EF}\\u{E0000}-\\u{E007F}\\u115F\\u1160]|\\p{M}|${INVISIBLE_CHARS_SOURCE})$`, 'u');
+
+/** A second scanning view with a map from each of its code units back to the original text. */
+interface DeepView {
+  text: string;
+  /** Original start / end offsets of the character each view code unit came from. */
+  from: number[];
+  to: number[];
+}
+
+/**
+ * The deep view: like the confusable fold, but also drops variation
+ * selectors, combining marks (after NFD, so `ė` reads as `e`) and invisible
+ * characters, and folds {@link EXTRA_CONFUSABLES}. It can be shorter than the
+ * text, so spans are mapped back. `null` when it adds nothing (ASCII text, or
+ * the same as the plain fold). Findings from it are added to, never
+ * replace, the plain view's (folding can also remove a word boundary).
+ */
+function deepView(text: string, plain: string): DeepView | null {
+  if (!/[^\x00-\x7F]/.test(text)) return null;
+  let out = '';
+  const from: number[] = [];
+  const to: number[] = [];
+  let pos = 0;
+  for (const ch of text) {
+    const start = pos;
+    pos += ch.length;
+    if (DEEP_DROP_RE.test(ch)) continue;
+    let piece = ch;
+    if (/[^\x00-\x7F]/.test(ch)) {
+      const nfd = ch.normalize('NFD');
+      const base = nfd.replace(/\p{M}/gu, '');
+      if (base && base !== nfd) piece = base;
+      piece = [...piece].map((c) => CONFUSABLES[c] ?? EXTRA_CONFUSABLES[c] ?? c).join('');
+    }
+    out += piece;
+    for (let k = 0; k < piece.length; k++) {
+      from.push(start);
+      to.push(pos);
+    }
+  }
+  return out === plain ? null : { text: out, from, to };
+}
+
+/** Raw rule hits over one view (phrases, commands, blobs), spans in that view. */
+function viewHits(view: string): L0Finding[] {
+  const out: L0Finding[] = [];
+  for (const r of PHRASE_RULES) {
+    r.re.lastIndex = 0;
+    for (const m of view.matchAll(r.re)) {
+      const start = m.index ?? 0;
+      if (r.rule === 'agent.tool_call') {
+        const tool = /(?:call|use|invoke|run|trigger)\s+(?:the\s+)?`?([a-z_]+)/i.exec(m[0])?.[1]?.toLowerCase() ?? '';
+        out.push({ rule: r.rule, category: r.category, severity: WRITE_TOOLS.has(tool) ? 'block' : 'warn', span: { start, end: start + m[0].length } });
+        continue;
+      }
+      out.push({ rule: r.rule, category: r.category, severity: r.severity, span: { start, end: start + m[0].length } });
+    }
+  }
+  return out;
+}
+
+function commandAndBlobHits(view: string): L0Finding[] {
+  const out: L0Finding[] = [];
+  for (const c of lintCommands(view)) {
+    out.push({ rule: c.rule, category: 'command', severity: c.severity, span: { start: c.start, end: c.end } });
+  }
+  for (const { rule, re } of BLOB_RES) {
+    re.lastIndex = 0;
+    for (const m of view.matchAll(re)) {
+      if (rule === 'blob.base64' && !/[0-9]/.test(m[0])) continue;
+      const start = m.index ?? 0;
+      out.push({ rule, category: 'blob', severity: 'block', span: { start, end: start + m[0].length } });
+    }
+  }
+  return out;
+}
+
+const squashedHit = (view: string) => SQUASHED_RE.test(view.toLowerCase().replace(/[^a-z]/g, ''));
 
 /** Squashed (letters only) phrases that survive spacing/punctuation splitting tricks. */
 const SQUASHED_RE = /(?:ignore|disregard|forget)(?:all|any|the|your)*(?:previous|prior|above|earlier)+(?:instructions?|prompts?|rules)|youarenow(?:dan|jailbroken|unrestricted)|revealyoursystemprompt/;
@@ -232,6 +323,11 @@ export function ruleId(prefix: string, raw: string): string {
 function hostAllowed(host: string, extra: readonly string[] | undefined): boolean {
   const h = host.toLowerCase();
   if (/^docs?\./.test(h)) return true;
+  return listedHost(h, extra);
+}
+
+function listedHost(host: string, extra: readonly string[] | undefined): boolean {
+  const h = host.toLowerCase();
   return [...DEFAULT_ALLOWED_HOSTS, ...(extra ?? [])].some((a) => h === a || h.endsWith(`.${a}`));
 }
 
@@ -248,37 +344,64 @@ function collectFindings(text: string, opts?: L0Options): L0Finding[] {
   };
   const { text: view } = foldConfusables(text);
 
-  for (const r of PHRASE_RULES) {
-    r.re.lastIndex = 0;
-    for (const m of view.matchAll(r.re)) {
-      const start = m.index ?? 0;
-      if (r.rule === 'agent.tool_call') {
-        const tool = /(?:call|use|invoke|run|trigger)\s+(?:the\s+)?`?([a-z_]+)/i.exec(m[0])?.[1]?.toLowerCase() ?? '';
-        push({ rule: r.rule, category: r.category, severity: WRITE_TOOLS.has(tool) ? 'block' : 'warn', span: { start, end: start + m[0].length } });
-        continue;
-      }
-      push({ rule: r.rule, category: r.category, severity: r.severity, span: { start, end: start + m[0].length } });
-    }
-  }
-  if (!findings.some((f) => f.rule === 'inj.ignore_previous' || f.rule === 'inj.you_are_now') && SQUASHED_RE.test(view.toLowerCase().replace(/[^a-z]/g, ''))) {
+  for (const f of viewHits(view)) push(f);
+  const splitPhrase = () => !findings.some((f) => f.rule === 'inj.ignore_previous' || f.rule === 'inj.you_are_now' || f.rule === 'inj.split_phrase');
+  if (splitPhrase() && squashedHit(view)) {
     push({ rule: 'inj.split_phrase', category: 'injection_phrase', severity: 'block' });
   }
-  for (const c of lintCommands(view)) {
-    push({ rule: c.rule, category: 'command', severity: c.severity, span: { start: c.start, end: c.end } });
-  }
-  for (const { rule, re } of BLOB_RES) {
-    re.lastIndex = 0;
-    for (const m of view.matchAll(re)) {
-      if (rule === 'blob.base64' && !/[0-9]/.test(m[0])) continue;
-      const start = m.index ?? 0;
-      push({ rule, category: 'blob', severity: 'block', span: { start, end: start + m[0].length } });
+  for (const f of commandAndBlobHits(view)) push(f);
+
+  // Deep view (variation selectors, combining marks, more look-alikes): extra hits only.
+  const deep = deepView(text, view);
+  const fromDeep = (start: number, end: number): { start: number; end: number } => {
+    const s = deep?.from[start] ?? text.length;
+    const e = end > start ? (deep?.to[end - 1] ?? text.length) : s;
+    return { start: s, end: Math.max(s, e) };
+  };
+  if (deep) {
+    const key = (f: L0Finding) => `${f.rule}:${f.span?.start ?? -1}:${f.span?.end ?? -1}`;
+    const seen = new Set(findings.map(key));
+    const mapSpan = (f: L0Finding): L0Finding => (f.span ? { ...f, span: fromDeep(f.span.start, f.span.end) } : f);
+    for (const f of [...viewHits(deep.text), ...commandAndBlobHits(deep.text)].map(mapSpan)) {
+      if (seen.has(key(f))) continue;
+      seen.add(key(f));
+      push(f);
+    }
+    if (splitPhrase() && squashedHit(deep.text)) {
+      push({ rule: 'inj.split_phrase', category: 'injection_phrase', severity: 'block' });
     }
   }
+
+  // URLs are found on the folded view, but the host is checked as written:
+  // a look-alike host (`gіthub.com` with a Cyrillic і) is a different domain.
+  // The deep view also finds links whose scheme hides a variation selector or
+  // combining mark (`ht\uFE0Ftps://`); those spans and hosts map back to the text.
+  const urlSpans: { start: number; end: number }[] = [];
+  const pushUrl = (span: { start: number; end: number }, host: string) => {
+    urlSpans.push(span);
+    if (hostAllowed(host, opts?.allowedHosts)) {
+      // `docs.*` hosts stay unlabeled, but still count as a link payload for agent-addressed text.
+      if (!listedHost(host, opts?.allowedHosts)) push({ rule: 'url.docs_host', category: 'url', severity: 'info', span });
+      return;
+    }
+    push({ rule: 'url.not_allowlisted', category: 'url', severity: 'warn', span });
+  };
   URL_RE.lastIndex = 0;
   for (const m of view.matchAll(URL_RE)) {
-    if (hostAllowed(m[1] ?? '', opts?.allowedHosts)) continue;
     const start = m.index ?? 0;
-    push({ rule: 'url.not_allowlisted', category: 'url', severity: 'warn', span: { start, end: start + m[0].length } });
+    const hostAt = start + m[0].indexOf('//') + 2;
+    pushUrl({ start, end: start + m[0].length }, text.slice(hostAt, hostAt + (m[1] ?? '').length));
+  }
+  if (deep) {
+    URL_RE.lastIndex = 0;
+    for (const m of deep.text.matchAll(URL_RE)) {
+      const start = m.index ?? 0;
+      const span = fromDeep(start, start + m[0].length);
+      if (urlSpans.some((u) => u.start < span.end && span.start < u.end)) continue;
+      const hostAt = start + m[0].indexOf('//') + 2;
+      const host = fromDeep(hostAt, hostAt + (m[1] ?? '').length);
+      pushUrl(span, text.slice(host.start, host.end));
+    }
   }
   for (const s of findSecrets(text)) {
     push({ rule: ruleId('secret', s.ruleId), category: 'secret', severity: 'block', span: { start: s.start, end: s.end } });
@@ -297,7 +420,30 @@ function collectFindings(text: string, opts?: L0Options): L0Finding[] {
   return findings;
 }
 
-/** Apply the security-discussion downgrade (block → warn) when nothing addresses the reading agent. */
+/** An exfil request with a first-person recipient: "send me …", "give us …", "dm me …". */
+const FIRST_PERSON_EXFIL_RE = /^[a-z]+(?:\s+with)?\s+(?:me|us)\b/i;
+
+/** The span's text as the rules read it (marks, variation selectors and invisibles dropped, look-alikes folded). */
+function scanForm(text: string): string {
+  const plain = text.normalize('NFD').replace(/[\p{M}\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u115F\u1160]/gu, '').replace(INVISIBLE_G, '');
+  return foldConfusables([...plain].map((c) => EXTRA_CONFUSABLES[c] ?? c).join('')).text;
+}
+
+/** Whether `start` sits inside a quotation opened earlier in its sentence (`"…`, `“…`, `` `… ``, ` '…`). */
+function insideQuote(text: string, start: number): boolean {
+  const before = text.slice(Math.max(0, start - 200), start);
+  const cut = Math.max(before.lastIndexOf('\n'), ...[...before.matchAll(/[.!?]\s/g)].map((m) => (m.index ?? 0) + 1));
+  const sentence = before.slice(cut + 1);
+  const count = (c: string) => sentence.split(c).length - 1;
+  return count('"') % 2 === 1 || count('`') % 2 === 1 || count('\u201C') > count('\u201D') || /(?:^|[\s(])'[^']*$/.test(sentence);
+}
+
+/**
+ * Apply the security-discussion downgrade (block → warn) when nothing
+ * addresses the reading agent. A first-person exfil request ("send me your
+ * .env") is never downgraded unless it is quoted: that is a request, not a
+ * discussion of one.
+ */
 function applyDiscussion(text: string, findings: L0Finding[]): L0Finding[] {
   const imperative = findings.some((f) => IMPERATIVE_RULES.has(f.rule) && f.severity !== 'info');
   if (imperative) return findings;
@@ -305,6 +451,13 @@ function applyDiscussion(text: string, findings: L0Finding[]): L0Finding[] {
   return findings.map((f) => {
     if (f.severity !== 'block' || !f.span) return f;
     if (!(f.category === 'command' || discussable.has(f.rule))) return f;
+    if (
+      f.rule === 'agent.exfil_request' &&
+      FIRST_PERSON_EXFIL_RE.test(scanForm(text.slice(f.span.start, f.span.end))) &&
+      !insideQuote(text, f.span.start)
+    ) {
+      return f;
+    }
     return isDiscussionContext(text, f.span.start) ? { ...f, severity: 'warn' } : f;
   });
 }
@@ -315,8 +468,10 @@ function applyDiscussion(text: string, findings: L0Finding[]): L0Finding[] {
  *   imperative together with a payload (command, blob, URL, exfil request,
  *   concealment, secret) or with each other (e.g. "if you are an AI…" +
  *   "call send_message");
- * - `suspicious`: any other block finding (except secrets);
- * - `sensitive`: the only block findings are secrets;
+ * - `sensitive`: otherwise, whenever a secret is among the block findings
+ *   (alone, or with e.g. a command or blob): the sender's secret is held for
+ *   the sender rather than delivered to the recipient's quarantine;
+ * - `suspicious`: any other block finding;
  * - `warn`: warn findings only; else `clean`.
  */
 export function labelFromFindings(findings: readonly L0Finding[]): Label {
@@ -331,6 +486,7 @@ export function labelFromFindings(findings: readonly L0Finding[]): Label {
     blocks.some((f) => f.category === 'command' || f.category === 'blob' || f.rule === 'agent.exfil_request') ||
     findings.some((f) => f.category === 'url' || f.rule === 'agent.conceal' || f.category === 'secret');
   if ((inj || agent) && (payload || (inj && agent) || (addressed && action))) return 'malicious';
+  if (blocks.some((f) => f.category === 'secret')) return 'sensitive';
   return 'suspicious';
 }
 
@@ -340,7 +496,11 @@ export function labelFromFindings(findings: readonly L0Finding[]): Label {
  * non-allowlisted URLs (warn), secrets (`@y/redact`, local fallback),
  * the {@link lintCommands} command linter, leftover invisible characters
  * and HTML comments (callers that skipped normalization), code shape (info).
- * Confusable Cyrillic/Greek letters are folded before matching.
+ * Confusable Cyrillic/Greek letters are folded before matching; a second
+ * view that also drops variation selectors, combining marks and invisible
+ * characters (and folds more look-alikes) can only add findings. URL hosts
+ * are checked as written, so a look-alike host is never allowlisted; `docs.*`
+ * hosts are not labeled but count as a link payload (`url.docs_host`, info).
  *
  * Security-themed developer content is labeled, not blocked: when nothing in
  * the text addresses or instructs the reading agent, block-severity commands

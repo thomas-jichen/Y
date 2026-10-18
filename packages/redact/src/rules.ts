@@ -108,14 +108,57 @@ export interface RedactResult {
   dropped: boolean;
 }
 
+/** Optional prefix commands before a dump (`sudo -E env`, `command printenv`). */
+const ENV_PREFIX = String.raw`(?:(?:sudo|command|exec|builtin|nohup)(?:\s+-[^\s;&|()\n⏎]+)*\s+)*`;
+/** Command start: input start, a shell separator, a newline or ` ⏎ ` (digest form). */
+const ENV_CMD_START = String.raw`(?:^|[;&|(\n⏎])\s*`;
+/** An optional directory before the command name (`/usr/bin/env`); never crosses a separator or quote. */
+const ENV_CMD_DIR = String.raw`(?:[^\s;&|()\n⏎<>'"` + '`' + String.raw`]*\/)?`;
+/** Readers whose `.env*` file operand dumps it. */
+const ENV_READERS = 'cat|less|more|head|tail|bat|grep|egrep|rg|awk|sed|sort|tac|nl|xxd|od|strings|cut|uniq|base64';
+/**
+ * Arguments before the `.env*` operand: no separator, parenthesis or newline,
+ * and quoted strings only as a whole (`grep 'API_KEY' .env`), so a quoted
+ * pattern (`grep -rn ".env" .`) is not a file operand.
+ */
+const ENV_READER_ARGS = String.raw`(?:[^\n⏎|;&()'"]|'[^'\n⏎|;&()]*'|"[^"\n⏎|;&()]*")*?`;
+/** Not a dotenv file: templates and source files named `.env.*` (`.env.example`, `src/.env.ts`). */
+const NOT_DOTENV = String.raw`(?!\.(?:example|sample|template|dist|[cm]?[jt]sx?|d\.ts|py|rb|go|rs|java|kt|php)(?![\w-]))`;
+
 /**
  * Matches commands whose output is redacted wholesale: bare `env` / `set`
  * (no command after them), `printenv`, `export -p`, `cat|less|more|head|tail|bat`
- * of a `.env*` file, `docker inspect`, `kubectl get secret(s)`. `env FOO=1 cmd`
- * and `set -e` do not match.
+ * of a `.env*` file, `docker inspect`, `kubectl get secret(s)`. Also: commands
+ * after a newline or ` ⏎ ` (digest form), behind `sudo`/`command`/`exec`/
+ * `builtin`/`nohup`, or with a path (`/usr/bin/env`); `env -0`/`--null`/`-u X`;
+ * bare `export`, `declare -x|-p`, `typeset -x|-p`; other readers of a `.env*`
+ * file operand (`grep . .env`, `sort .env`, `cat<.env`); an interpreter
+ * one-liner printing all of `process.env` / `os.environ`. `env FOO=1 cmd`,
+ * `set -e`, `export FOO=1`, `grep -rn process.env src`, `grep -rn ".env" .`
+ * and `grep x src/.env.ts` do not match.
+ *
+ * Every alternative runs in linear time: the original `cat … .env` rule is
+ * anchored at the input start and takes the first `cat ` with an atomic
+ * lookahead (same commands as `(?:^|[;&|(]\s*)(?:cat|…)\s+(?:\S+\s+)*\S*\.env`,
+ * which rescanned the rest of the input from every `(cat `), and no other
+ * scan crosses a separator.
  */
-export const ENV_DUMP_COMMAND_RE =
-  /(?:^|[;&|(]\s*)(?:(?:env|set)(?=\s*(?:$|[|;&>)]))|printenv\b|export\s+-p\b|(?:cat|less|more|head|tail|bat)\s+(?:\S+\s+)*\S*\.env\S*|docker\s+inspect\b|kubectl\s+get\s+secrets?\b)/;
+export const ENV_DUMP_COMMAND_RE = new RegExp(
+  [
+    // The original rule, minus its `cat … .env` branch (below).
+    String.raw`(?:^|[;&|(]\s*)(?:(?:env|set)(?=\s*(?:$|[|;&>)]))|printenv\b|export\s+-p\b|docker\s+inspect\b|kubectl\s+get\s+secrets?\b)`,
+    // The original `cat … .env` branch: the first `cat|less|… ` at a command start, then `.env` anywhere after it.
+    String.raw`^(?=(?<catStart>[\s\S]*?(?:^|[;&|(]\s*)(?:cat|less|more|head|tail|bat)\s))\k<catStart>[\s\S]*\.env`,
+    // A bare dump at a command start (also after a newline / ⏎), behind optional prefix commands.
+    ENV_CMD_START + ENV_PREFIX + ENV_CMD_DIR +
+      String.raw`(?:env(?:\s+(?:-0|--null|-u\s*[^\s;&|()\n⏎]+|--unset=[^\s;&|()\n⏎]+))*|printenv(?:\s+-0)?|set|export|(?:declare|typeset)\s+-[A-Za-z]*[xp][A-Za-z]*)(?=\s*(?:$|[|;&>)\n⏎]))`,
+    ENV_CMD_START + ENV_PREFIX + ENV_CMD_DIR + String.raw`printenv\b`,
+    // Any reader of a `.env*` file operand (after whitespace, `<` or `/`; not quoted).
+    ENV_CMD_START + ENV_PREFIX + String.raw`(?:${ENV_READERS})\b` + ENV_READER_ARGS + String.raw`[\s<\/]\.env` + NOT_DOTENV + String.raw`[\w.-]*(?=$|[\s|;&)>⏎])`,
+    // An interpreter one-liner printing the whole environment.
+    String.raw`\b(?:node|deno|bun|python[0-9.]*)\s+(?:-[A-Za-z]+\s+)*-[ecp]\s+['"][^'"\n⏎]*\b(?:console\.(?:log|dir)|print|pprint|JSON\.stringify)\((?:dict\()?(?:process\.env|os\.environ)\)`,
+  ].join('|'),
+);
 
 /** A secret found by {@link scanSecrets} (never includes the matched text). */
 export interface SecretHit {

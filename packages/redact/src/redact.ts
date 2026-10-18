@@ -132,21 +132,90 @@ const SPECIFIC: Matcher[] = [
 
 const URL_CRED: Matcher = {
   id: 'url_credentials',
-  re: /\b[a-zA-Z][a-zA-Z0-9+.-]{1,20}:\/\/([^\s:/@<>"'`]+:[^\s@/<>"'`]+)@/dg,
+  // The password may contain `/` (`postgres://admin:s3cr/etP4ss@db`) unless it
+  // starts like a port and path (`https://host:443/@scope/pkg`, `http://localhost:3000/u/a@b.c`).
+  re: /\b[a-zA-Z][a-zA-Z0-9+.-]{1,20}:\/\/([^\s:/@<>"'`]+:(?:[^\s@/<>"'`]+|(?!\d{1,5}\/)[^\s@<>"'`]+))@/dg,
   group: 1,
 };
 
-const GENERIC: Matcher = {
-  id: 'generic_assignment',
-  re: /\b[A-Za-z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|auth[_-]?key|private[_-]?key|client[_-]?secret|credentials?)[A-Za-z0-9_.-]*["']?\s*(?::=|=>|=|:)\s*(["']?)([^\s"'`,;()[\]{}<>]{8,})\1/dgi,
-  group: 2,
-  validate: (v) => {
-    if (!hasDigit(v)) return false; // identifiers / member expressions / types
-    if (/^\$|^process\.env\b|^env\./.test(v)) return false;
-    if (/^(?:x+|\*+|changeme|example\w*|placeholder\w*)$/i.test(v)) return false;
-    return shannonEntropy(v) > 3.5;
-  },
-};
+/**
+ * `generic_assignment`: `<key containing a keyword>["']? <op> ["']?<value ≥ 8>["']?`.
+ *
+ * Same matches as the regex
+ * `\b[A-Za-z0-9_.-]*(?:KEYWORDS)[A-Za-z0-9_.-]*["']?\s*(?::=|=>|=|:)\s*(["']?)([^\s"'`,;()[\]{}<>]{8,})\1`
+ * (flags `gi`, value = group 2), in linear time. That regex backtracks
+ * cubically on runs like `token-token-token-…`, because its prefix and suffix
+ * classes both contain the keyword. Here the key is always the whole
+ * `[A-Za-z0-9_.-]` run (an operator can't start inside one), the match starts
+ * at the run's first word character (its only usable `\b`), and the tail is
+ * matched once per run.
+ */
+const GENERIC_ID = 'generic_assignment';
+const GENERIC_KEYWORD_RE =
+  /password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|auth[_-]?key|private[_-]?key|client[_-]?secret|credentials?/i;
+const GENERIC_KEY_RUN_SRC = '[A-Za-z0-9_.-]+';
+const GENERIC_TAIL_SRC = String.raw`["']?\s*(?::=|=>|=|:)\s*(["']?)([^\s"'` + '`' + String.raw`,;()[\]{}<>]{8,})\1`;
+
+/** A key naming a password (`DB_PASSWORD`, `admin.passwd`, `pwd`). */
+const PASSWORD_KEY_RE = /(?:password|passwd|pwd)$/i;
+/** Identifiers and member expressions (`passwordField`, `cfg.db.pass`). */
+const IDENTIFIER_LIKE_RE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/;
+/** Placeholder words in a value (`your-password-here`, `not.a.real.secret`). */
+const PLACEHOLDER_WORD_RE = /example|placeholder|changeme|change[-_.]me|your[-_.]|redacted|dummy|sample|fake|test|todo|xxx|secret|password|here/i;
+
+/**
+ * A quoted, digit-free passphrase assigned to a password key
+ * (`DB_PASSWORD="correct-horse-battery-staple"`). Identifiers, paths,
+ * placeholders and short values are not.
+ */
+function quotedPassphraseOk(key: string, v: string): boolean {
+  if (!PASSWORD_KEY_RE.test(key) || v.length < 12) return false;
+  if (IDENTIFIER_LIKE_RE.test(v) || /[/\\]|^[.~]/.test(v)) return false;
+  if (/^\$|^process\.env\b|^env\./.test(v) || PLACEHOLDER_WORD_RE.test(v)) return false;
+  return shannonEntropy(v) > 3;
+}
+
+function genericValueOk(v: string, key = '', quoted = false): boolean {
+  if (!hasDigit(v)) return quoted && quotedPassphraseOk(key, v); // identifiers / member expressions / types
+  if (/^\$|^process\.env\b|^env\./.test(v)) return false;
+  if (/^(?:x+|\*+|changeme|example\w*|placeholder\w*)$/i.test(v)) return false;
+  return shannonEntropy(v) > 3.5;
+}
+
+/** Internal (exported for tests): value spans of generic assignments, in text order. */
+export function genericAssignmentMatches(text: string): { start: number; end: number; value: string }[] {
+  return genericAssignmentHits(text).map(({ start, end, value }) => ({ start, end, value }));
+}
+
+/** {@link genericAssignmentMatches} plus the key and whether the value was quoted. */
+function genericAssignmentHits(text: string): { start: number; end: number; value: string; key: string; quoted: boolean }[] {
+  const out: { start: number; end: number; value: string; key: string; quoted: boolean }[] = [];
+  const runs = new RegExp(GENERIC_KEY_RUN_SRC, 'g');
+  const tailRe = new RegExp(GENERIC_TAIL_SRC, 'dy');
+  for (let m = runs.exec(text); m; m = runs.exec(text)) {
+    const run = m[0];
+    if (!GENERIC_KEYWORD_RE.test(run)) continue;
+    const runEnd = m.index + run.length;
+    tailRe.lastIndex = runEnd;
+    const tail = tailRe.exec(text) as (RegExpExecArray & { indices?: ([number, number] | undefined)[] }) | null;
+    const idx = tail?.indices?.[2];
+    if (!tail || !idx || tail[2] === undefined) continue;
+    out.push({ start: idx[0], end: idx[1], value: tail[2], key: run, quoted: Boolean(tail[1]) });
+    // Like matchAll: continue after the whole match (it never ends inside a key run).
+    runs.lastIndex = runEnd + tail[0].length;
+  }
+  return out;
+}
+
+function addGeneric(text: string, taken: Span[], out: Span[]): void {
+  for (const { start, end, value, key, quoted } of genericAssignmentHits(text)) {
+    if (!genericValueOk(value, key, quoted)) continue;
+    if (overlaps(taken, start, end)) continue;
+    const span = { start, end, ruleId: GENERIC_ID };
+    taken.push(span);
+    out.push(span);
+  }
+}
 
 const PEM_RE =
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]{0,16384}?-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|[A-Za-z0-9+/=\s⏎]*)/g;
@@ -265,7 +334,7 @@ function findSecretSpans(text: string, entropy?: RedactOptions['entropy']): Span
   addMatcher(text, { id: 'pem_private_key', re: PEM_RE }, taken, out);
   for (const m of SPECIFIC) addMatcher(text, m, taken, out);
   addMatcher(text, URL_CRED, taken, out);
-  addMatcher(text, GENERIC, taken, out);
+  addGeneric(text, taken, out);
   entropySpans(text, entropy, taken, out);
   return out.sort((a, b) => a.start - b.start);
 }

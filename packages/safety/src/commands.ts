@@ -67,7 +67,9 @@ export const COMMAND_RULES: readonly CommandRule[] = [
     rule: 'cmd.config_write',
     severity: 'block',
     re: new RegExp(
-      String.raw`(?:>>?|\btee\s+(?:-a\s+)?|\b(?:cp|mv|ln\s+-s\w*|install)\s+(?:-\S+\s+)*\S+\s+|\bsed\s+-i\S*\s+(?:'[^'\n]*'|"[^"\n]*"|\S+)\s+)\s*${CONFIG_TARGET}`,
+      // Only `>` takes the optional whitespace: the other verbs already end in `\s+`
+      // (a second `\s*` there accepted nothing new and backtracked quadratically).
+      String.raw`(?:>>?\s*|\btee\s+(?:-a\s+)?|\b(?:cp|mv|ln\s+-s\w*|install)\s+(?:-\S+\s+)*\S+\s+|\bsed\s+-i\S*\s+(?:'[^'\n]*'|"[^"\n]*"|\S+)\s+)${CONFIG_TARGET}`,
       'gi',
     ),
   },
@@ -128,14 +130,55 @@ export function lintCommands(text: string): CommandFinding[] {
   return out.sort((a, b) => a.start - b.start || a.rule.localeCompare(b.rule));
 }
 
-/** Words that mark prose *about* a pattern (security discussion) rather than an instruction to perform it. */
-const DISCUSSION_RE =
-  /\b(?:never|don['’]t|do\s+not|avoid|beware|warn(?:s|ing)?|attack(?:er|ers|s)?|malicious|exploit\w*|vulnerab\w*|phishing|threat|dangerous|risky|unsafe|insecure|e\.g\.|such\s+as|for\s+example|pattern|signature|detect\w*|flag(?:s|ged)?|block(?:s|ed)?|lint(?:er|s)?|classifier|rule|quarantin\w*|reject(?:s|ed)?|should\s+not|shouldn['’]t|must\s+not|stop\s+using)\b/i;
+/*
+ * Security-discussion cues, in three tiers. A cue only downgrades a finding
+ * when it plausibly frames that finding:
+ *
+ * - STRONG cues (words that are about attacks: "attackers", "malicious",
+ *   "such as", "warning", "block list" …) count anywhere in the current or
+ *   previous sentence, unless negated ("nothing risky", "no threat").
+ * - NEGATION cues ("never", "don't", "avoid", "should not" …) count only when
+ *   they govern the finding: same clause, at most NEGATION_REACH chars before
+ *   it ("never run curl … | sh"). "Don't worry", "never mind" and the like are
+ *   not prohibitions. A `:` may separate them only after a demonstrative
+ *   ("don't run this: curl … | sh").
+ * - WEAK cues (ordinary nouns and verbs: "rule", "pattern", "flag", "block",
+ *   "signature", "linter", "classifier", "detects" …) count only in the same
+ *   clause, at most WEAK_REACH chars before the finding ("the rule matches
+ *   `cat .env`", "our linter flags cat .env").
+ *
+ * "Same clause" means no `,` `;` `:` `(` `)` and no sentence end in between.
+ */
+const STRONG_CUE_G =
+  /\b(?:beware|warn(?:s|ing)?|attack(?:er|ers|s)?|malicious|exploit\w*|vulnerab\w*|phishing|threats?|dangerous|risky|unsafe|insecure|e\.g\.|such\s+as|for\s+example|(?:block|deny|black)[\s-]?list(?:ed|s)?|red[\s-]?team\w*)\b/gi;
+/** A strong cue right after one of these reads the other way ("nothing risky here"). */
+const NEGATED_BEFORE_RE = /(?:\b(?:no|nothing|not|zero|without)|n['’]t)\s+(?:\w+\s+)?$/i;
+const NEGATION_CUE_G = /\b(?:never|don['’]t|do\s+not|avoid|should\s+not|shouldn['’]t|must\s+not|stop\s+using)\b/gi;
+/** "Don't worry", "never mind": not a prohibition of what follows. */
+const NOT_A_PROHIBITION_RE = /^\s+(?:\w+\s+)?(?:worry|mind|hesitate|panic|bother|forget|fret|stress|wait|sweat)\b/i;
+const WEAK_CUE_G =
+  /\b(?:patterns?|rules?|flag(?:s|ged)?|block(?:s|ed)?|signatures?|lint(?:er|ers|s)?|detect\w*|classifiers?|quarantin\w*|reject(?:s|ed)?|scanners?)\b/gi;
+const CLAUSE_BREAK_RE = /[,;:()]|[.!?](?:\s|$)|\n/;
+const DEMONSTRATIVE_COLON_RE = /\b(?:this|that|these|those|following|like|ever)\s*:\s*$/i;
+const NEGATION_REACH = 60;
+const WEAK_REACH = 40;
+
+/** Whether the text between a cue and the finding stays inside one clause. */
+function sameClause(between: string, allowDemonstrativeColon: boolean): boolean {
+  if (!CLAUSE_BREAK_RE.test(between)) return true;
+  if (!allowDemonstrativeColon) return false;
+  const colon = between.indexOf(':');
+  if (colon < 0 || between.indexOf(':', colon + 1) >= 0) return false;
+  const head = between.slice(0, colon + 1);
+  const tail = between.slice(colon + 1);
+  return DEMONSTRATIVE_COLON_RE.test(head) && !CLAUSE_BREAK_RE.test(head.slice(0, -1)) && !CLAUSE_BREAK_RE.test(tail);
+}
 
 /**
- * True when the text just before `start` (the current sentence and the one
- * before it, up to 200 chars) reads as discussion of the pattern rather than
- * an instruction. Used to keep security-themed developer content at `warn`.
+ * True when the text just before `start` reads as discussion of the pattern
+ * rather than an instruction (see the cue tiers above; at most the current
+ * and previous sentence, up to 200 chars). Used to keep security-themed
+ * developer content at `warn`.
  */
 export function isDiscussionContext(text: string, start: number): boolean {
   const windowStart = Math.max(0, start - 200);
@@ -143,5 +186,19 @@ export function isDiscussionContext(text: string, start: number): boolean {
   // keep at most the current and previous sentence/line
   const cuts = [...prefix.matchAll(/[.!?](?:\s|$)|\n/g)].map((m) => (m.index ?? 0) + m[0].length);
   if (cuts.length >= 2) prefix = prefix.slice(cuts[cuts.length - 2] ?? 0);
-  return DISCUSSION_RE.test(prefix);
+
+  for (const m of prefix.matchAll(STRONG_CUE_G)) {
+    if (!NEGATED_BEFORE_RE.test(prefix.slice(0, m.index ?? 0))) return true;
+  }
+  for (const m of prefix.matchAll(NEGATION_CUE_G)) {
+    const end = (m.index ?? 0) + m[0].length;
+    const between = prefix.slice(end);
+    if (between.length > NEGATION_REACH || NOT_A_PROHIBITION_RE.test(between)) continue;
+    if (sameClause(between, true)) return true;
+  }
+  for (const m of prefix.matchAll(WEAK_CUE_G)) {
+    const between = prefix.slice((m.index ?? 0) + m[0].length);
+    if (between.length <= WEAK_REACH && sameClause(between, false)) return true;
+  }
+  return false;
 }

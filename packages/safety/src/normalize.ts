@@ -34,8 +34,88 @@ const BIDI_RUN_G = /[‭‮]([^‬\n]*)/g;
 /** C0 controls except tab and LF, DEL, and C1 controls. */
 const CONTROLS_G = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
 const HTML_COMMENT_G = /<!--([\s\S]*?)(?:-->|$)/g;
-const MD_IMAGE_G = /!\[([^\]\n]*)\]\(([^)\n]*)\)/g;
-const HTML_IMG_G = /<img\b[^>]*>/gi;
+/**
+ * Max removal passes for nested hidden constructs. Each pass is linear; past
+ * the cap, whatever hidden construct is left goes to `hidden` as a whole.
+ */
+const HIDDEN_PASSES_MAX = 4;
+
+/** Next index ≥ i of either stop character (or `text.length`), for every i. */
+function nextStops(text: string, a: string, b: string): Int32Array {
+  const n = text.length;
+  const out = new Int32Array(n + 1);
+  out[n] = n;
+  for (let i = n - 1; i >= 0; i--) {
+    const c = text[i];
+    out[i] = c === a || c === b ? i : (out[i + 1] ?? n);
+  }
+  return out;
+}
+
+/**
+ * `text.replace(/!\[([^\]\n]*)\]\(([^)\n]*)\)/g, …)` in linear time (the
+ * regex restarts its `[^\]\n]*` scan at every `![`, quadratic on `![![![…`).
+ * The classes can't contain their closing character, so each candidate has
+ * exactly one possible match: the same matches as the regex.
+ */
+function replaceMdImages(text: string, onMatch: (alt: string, url: string) => void): string {
+  if (!text.includes('![')) return text;
+  const n = text.length;
+  const rb = nextStops(text, ']', '\n');
+  const rp = nextStops(text, ')', '\n');
+  let out = '';
+  let copied = 0;
+  let i = 0;
+  for (let p = text.indexOf('![', i); p >= 0; p = text.indexOf('![', i)) {
+    const q = rb[p + 2] ?? n;
+    if (q < n && text[q] === ']' && text[q + 1] === '(') {
+      const r = rp[q + 2] ?? n;
+      if (r < n && text[r] === ')') {
+        onMatch(text.slice(p + 2, q), text.slice(q + 2, r));
+        out += text.slice(copied, p);
+        copied = r + 1;
+        i = r + 1;
+        continue;
+      }
+    }
+    i = p + 1;
+  }
+  return copied === 0 ? text : out + text.slice(copied);
+}
+
+/** `text.replace(/<img\b[^>]*>/gi, …)` in linear time (the regex rescans to the next `>` from every `<img`). */
+function replaceHtmlImgs(text: string, onMatch: (tag: string) => void): string {
+  const open = /<img/gi;
+  if (!open.test(text)) return text;
+  let out = '';
+  let copied = 0;
+  let gt = -2; // cached `text.indexOf('>', from)` (−1: none left)
+  open.lastIndex = 0;
+  for (let m = open.exec(text); m; m = open.exec(text)) {
+    const p = m.index;
+    open.lastIndex = p + 1;
+    const after = text[p + 4];
+    if (after !== undefined && /\w/.test(after)) continue; // `\b` after `img`
+    if (gt !== -1 && gt < p + 4) gt = text.indexOf('>', p + 4);
+    if (gt === -1) break;
+    onMatch(text.slice(p, gt + 1));
+    out += text.slice(copied, p);
+    copied = gt + 1;
+    open.lastIndex = gt + 1;
+  }
+  return copied === 0 ? text : out + text.slice(copied);
+}
+
+/** Whether any hidden construct is left (same patterns as the removal pass). */
+function hasHiddenConstruct(text: string): boolean {
+  let found = false;
+  const hit = () => {
+    found = true;
+  };
+  replaceMdImages(text, hit);
+  if (!found) replaceHtmlImgs(text, hit);
+  return found || text.includes('<!--');
+}
 const DELIMITER_G = /<(\/?)(\s*)(untrusted|y)/gi;
 /** U+2039 SINGLE LEFT-POINTING ANGLE QUOTATION MARK: NFKC-stable look-alike for `<`. */
 const ESCAPED_LT = '‹';
@@ -76,22 +156,34 @@ export function normalizeDetailed(input: string): NormalizedDetail {
   // 3. Line endings and control characters.
   text = text.replace(/\r\n?/g, '\n').replace(CONTROLS_G, '');
 
-  // 4. Hidden constructs: HTML comments, markdown images, <img> tags.
-  text = text.replace(HTML_COMMENT_G, (_m, body: string) => {
-    removedHidden += 1;
-    if (body.trim()) hidden.push(body);
-    return '';
-  });
-  text = text.replace(MD_IMAGE_G, (_m, alt: string, url: string) => {
-    removedHidden += 1;
-    hidden.push(`${alt} ${url}`.trim());
-    return '';
-  });
-  text = text.replace(HTML_IMG_G, (m) => {
-    removedHidden += 1;
-    hidden.push(m);
-    return '';
-  });
+  // 4. Hidden constructs: HTML comments, markdown images, <img> tags. Removing
+  //    one can join its neighbours into another (`<!![](x)-- … -->`), so repeat
+  //    until nothing is removed (at most HIDDEN_PASSES_MAX linear passes); past
+  //    the cap, whatever is left is also treated as hidden (scanned with the
+  //    never-downgraded hidden rules).
+  for (let pass = 0; ; pass++) {
+    const before = text;
+    text = text.replace(HTML_COMMENT_G, (_m, body: string) => {
+      removedHidden += 1;
+      if (body.trim()) hidden.push(body);
+      return '';
+    });
+    text = replaceMdImages(text, (alt, url) => {
+      removedHidden += 1;
+      hidden.push(`${alt} ${url}`.trim());
+    });
+    text = replaceHtmlImgs(text, (m) => {
+      removedHidden += 1;
+      hidden.push(m);
+    });
+    if (text === before) break;
+    // Joining text can also join a base letter and a combining mark.
+    text = text.normalize('NFKC');
+    if (pass + 1 >= HIDDEN_PASSES_MAX) {
+      if (hasHiddenConstruct(text)) hidden.push(text);
+      break;
+    }
+  }
 
   // 5. Escape delimiter look-alikes so content can't close or open an envelope/pointer frame.
   text = text.replace(DELIMITER_G, (_m, slash: string, ws: string, word: string) => {

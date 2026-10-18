@@ -156,9 +156,24 @@ export function emptyStats(harnessVersion = '0'): ActivityStats {
   };
 }
 
+/**
+ * Own-property read of a counter map. Keys are tool, server and extension
+ * names, so `toString`, `constructor` or `__proto__` are valid keys and must
+ * never resolve to `Object.prototype` members.
+ */
+function ownGet<T>(m: Record<string, T>, k: string): T | undefined {
+  return Object.hasOwn(m, k) ? m[k] : undefined;
+}
+
+/** Own-property write (an assignment to `__proto__` would set the prototype instead). */
+function ownSet<T>(m: Record<string, T>, k: string, v: T): void {
+  Object.defineProperty(m, k, { value: v, writable: true, enumerable: true, configurable: true });
+}
+
 function addCounts(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
-  const out: Record<string, number> = { ...a };
-  for (const [k, v] of Object.entries(b)) out[k] = (out[k] ?? 0) + v;
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(a)) ownSet(out, k, v);
+  for (const [k, v] of Object.entries(b)) ownSet(out, k, (ownGet(out, k) ?? 0) + v);
   return out;
 }
 
@@ -194,9 +209,10 @@ export function mergeStats(acc: ActivityStats, delta: ActivityStats): ActivitySt
   };
   tokens.total = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite + tokens.subagents;
 
-  const mcp: Record<string, Record<string, number>> = { ...acc.mcp };
+  const mcp: Record<string, Record<string, number>> = {};
+  for (const [server, tools] of Object.entries(acc.mcp)) ownSet(mcp, server, tools);
   for (const [server, tools] of Object.entries(delta.mcp)) {
-    mcp[server] = addCounts(mcp[server] ?? {}, tools);
+    ownSet(mcp, server, addCounts(ownGet(mcp, server) ?? {}, tools));
   }
 
   let costSource: CostSource;
