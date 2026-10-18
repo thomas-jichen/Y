@@ -22,6 +22,9 @@ import {
 } from './util.js';
 
 const CACHE_MS = 60_000;
+/** Most entries per auth cache; a full cache is cleared, so random tokens can't grow memory. */
+export const AUTH_CACHE_MAX = 10_000;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const PULSE_TOKEN_TTL_S = 3600;
 /** EventSource can't send headers: GET /api/v1/stream?token=<this>, valid 60 s. */
 export const STREAM_TOKEN_TTL_S = 60;
@@ -31,6 +34,16 @@ export const STEP_UP_MAX_AGE_S = 12 * 3600;
 export interface PlatformAuthOptions {
   /** Override the Supabase key set (tests: jose createLocalJWKSet). */
   jwks?: JWTVerifyGetKey;
+  /** Override {@link AUTH_CACHE_MAX} (tests). */
+  cacheMax?: number;
+}
+
+type Cached<T> = { at: number; value: T };
+
+/** Set with a size bound: a full cache starts over (amortised O(1); live tokens just re-resolve). */
+function setBounded<T>(map: Map<string, Cached<T>>, key: string, value: Cached<T>, max: number): void {
+  if (!map.has(key) && map.size >= max) map.clear();
+  map.set(key, value);
 }
 
 /** Latest authentication time in a Supabase access token: `amr[].timestamp`, else `auth_time`. */
@@ -79,8 +92,13 @@ export function webCaller(userId: string, via: 'web' | 'dev', authTime: number |
 }
 
 export class PlatformAuth implements AuthService {
-  private readonly installCache = new Map<string, { at: number; value: InstallResolution }>();
-  private readonly webCache = new Map<string, { at: number; value: Caller | null }>();
+  private readonly installCache = new Map<string, Cached<InstallResolution>>();
+  private readonly webCache = new Map<string, Cached<Caller | null>>();
+  /** Pulse tokens: is install i a live install of agent a owned by user u? Keyed `i:a:u`. */
+  private readonly pulseCache = new Map<string, Cached<boolean>>();
+  /** Supabase users: is public.users.status 'active'? Keyed by sub. */
+  private readonly jwtStatusCache = new Map<string, Cached<boolean>>();
+  private readonly cacheMax: number;
   private readonly provisioned = new Set<string>();
   private readonly jwks: JWTVerifyGetKey | null;
   private readonly hsKey: Uint8Array | null;
@@ -95,8 +113,16 @@ export class PlatformAuth implements AuthService {
   ) {
     this.jwks = opts.jwks ?? (config.supabase.jwksUrl ? createRemoteJWKSet(new URL(config.supabase.jwksUrl)) : null);
     this.hsKey = config.supabase.jwtSecret ? new TextEncoder().encode(config.supabase.jwtSecret) : null;
-    this.pulseKey = `y-pulse-v1\n${config.internalSecret}`;
-    this.streamKey = `y-stream-v1\n${config.internalSecret}`;
+    // Core-only key material: apps/mcp holds Y_INTERNAL_SECRET (to sign forwarded
+    // calls) but never Y_HMAC_KEY, so it cannot mint pulse or stream tokens.
+    this.pulseKey = `y-pulse-v2\n${config.hmacKey}`;
+    this.streamKey = `y-stream-v2\n${config.hmacKey}`;
+    this.cacheMax = Math.max(1, opts.cacheMax ?? AUTH_CACHE_MAX);
+  }
+
+  /** Entries per cache (tests and diagnostics). */
+  cacheSizes(): { install: number; web: number; pulse: number; jwtStatus: number } {
+    return { install: this.installCache.size, web: this.webCache.size, pulse: this.pulseCache.size, jwtStatus: this.jwtStatusCache.size };
   }
 
   /** Is this install still usable (not revoked; agent and owner active)? For stateless pulse tokens. */
@@ -153,7 +179,7 @@ export class PlatformAuth implements AuthService {
         handle: r.agent_handle,
         harness: r.harness,
       };
-    this.installCache.set(hash, { at: t, value });
+    setBounded(this.installCache, hash, { at: t, value }, this.cacheMax);
     return value;
   }
 
@@ -161,6 +187,8 @@ export class PlatformAuth implements AuthService {
   invalidate(): void {
     this.installCache.clear();
     this.webCache.clear();
+    this.pulseCache.clear();
+    this.jwtStatusCache.clear();
   }
 
   mintPulseToken(caller: Caller): { token: string; expiresAt: string } {
@@ -181,11 +209,37 @@ export class PlatformAuth implements AuthService {
     try {
       const p = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as { u: string; a: string; i: string; e: number };
       if (typeof p.e !== 'number' || p.e * 1000 < this.now().getTime()) return null;
-      if (!p.u || !p.a || !p.i) return null;
+      if (typeof p.u !== 'string' || typeof p.a !== 'string' || typeof p.i !== 'string') return null;
+      if (!UUID_RE.test(p.u) || !UUID_RE.test(p.a) || !UUID_RE.test(p.i)) return null;
       return installCaller(p.u, p.a, p.i);
     } catch {
       return null;
     }
+  }
+
+  /** A pulse token is only as good as its install: live, and of that agent and owner. Cached 60 s. */
+  private async pulseInstallOk(caller: Caller): Promise<boolean> {
+    const key = `${caller.installId}:${caller.agentId}:${caller.userId}`;
+    const t = this.now().getTime();
+    const hit = this.pulseCache.get(key);
+    if (hit && t - hit.at < CACHE_MS) return hit.value;
+    const r = await this.db.asService((tx) =>
+      tx.query<{ agent_id: string; owner_user_id: string; revoked: boolean; agent_status: string; user_status: string }>(
+        'select * from api.pulse_install($1)',
+        [caller.installId],
+      ),
+    );
+    const row = r.rows[0];
+    const ok = Boolean(
+      row &&
+        row.agent_id === caller.agentId &&
+        row.owner_user_id === caller.userId &&
+        !row.revoked &&
+        row.agent_status === 'active' &&
+        row.user_status === 'active',
+    );
+    setBounded(this.pulseCache, key, { at: t, value: ok }, this.cacheMax);
+    return ok;
   }
 
   private async verifyWeb(token: string): Promise<Caller | null> {
@@ -195,11 +249,18 @@ export class PlatformAuth implements AuthService {
     const hit = this.webCache.get(hash);
     if (hit && t - hit.at < CACHE_MS) return hit.value;
     const rows = await this.db.asAnon((tx) =>
-      tx.query<{ user_id: string; user_status: string; created_at: Date | string }>('select * from api.resolve_web_session($1)', [hash]),
+      tx.query<{ user_id: string; user_status: string; created_at: Date | string; demo_account?: string | null }>(
+        'select * from api.resolve_web_session($1)',
+        [hash],
+      ),
     );
     const r = rows.rows[0];
-    const value = r && r.user_status === 'active' ? webCaller(r.user_id, 'dev', Math.floor(new Date(r.created_at).getTime() / 1000)) : null;
-    this.webCache.set(hash, { at: t, value });
+    // A /dev/demo session lives only as long as the server still offers that demo account.
+    const demo = r?.demo_account ?? null;
+    const demoOk = demo === null || (this.config.demoAccount ?? '').toLowerCase() === demo.toLowerCase();
+    const value =
+      r && r.user_status === 'active' && demoOk ? webCaller(r.user_id, 'dev', Math.floor(new Date(r.created_at).getTime() / 1000)) : null;
+    setBounded(this.webCache, hash, { at: t, value }, this.cacheMax);
     return value;
   }
 
@@ -226,6 +287,7 @@ export class PlatformAuth implements AuthService {
       if (payload.role !== undefined && payload.role !== 'authenticated') return null;
       if ((payload as { is_anonymous?: unknown }).is_anonymous === true) return null;
       await this.provision(sub, payload);
+      if (!(await this.userActive(sub))) return null;
       return webCaller(sub, 'web', supabaseAuthTime(payload));
     } catch {
       return null;
@@ -245,6 +307,17 @@ export class PlatformAuth implements AuthService {
     this.provisioned.add(sub);
   }
 
+  /** public.users.status = 'active' (a missing row is not active). Cached 60 s, like web sessions. */
+  private async userActive(sub: string): Promise<boolean> {
+    const t = this.now().getTime();
+    const hit = this.jwtStatusCache.get(sub);
+    if (hit && t - hit.at < CACHE_MS) return hit.value;
+    const r = await this.db.asService((tx) => tx.query<{ status: string }>('select status from public.users where id = $1', [sub]));
+    const ok = r.rows[0]?.status === 'active';
+    setBounded(this.jwtStatusCache, sub, { at: t, value: ok }, this.cacheMax);
+    return ok;
+  }
+
   async verifyBearer(authorizationHeader: string | undefined): Promise<Caller | null> {
     const m = /^Bearer\s+(\S{1,4096})$/i.exec(authorizationHeader?.trim() ?? '');
     const token = m?.[1];
@@ -253,7 +326,10 @@ export class PlatformAuth implements AuthService {
       const r = await this.resolveInstall(token);
       return r.state === 'ok' ? r.caller : null;
     }
-    if (token.startsWith(PULSE_TOKEN_PREFIX)) return this.verifyPulse(token);
+    if (token.startsWith(PULSE_TOKEN_PREFIX)) {
+      const caller = this.verifyPulse(token);
+      return caller && (await this.pulseInstallOk(caller)) ? caller : null;
+    }
     if (token.startsWith(STREAM_TOKEN_PREFIX)) return null; // query-string only, stream route only
     if (token.startsWith(WEB_TOKEN_PREFIX)) return this.config.devAuth ? this.verifyWeb(token) : null;
     return this.verifyJwt(token);
