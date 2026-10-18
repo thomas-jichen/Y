@@ -201,6 +201,34 @@ export async function builderReplyDetail(deps: CoreDeps, caller: Caller, item: R
   return { item, question, draft, thread: detail.thread };
 }
 
+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9_.:-]{8,128}$/;
+
+/** True once 9103 is applied (y_private bookkeeping tables); older databases keep the previous behaviour. */
+async function hasPrivateTable(deps: CoreDeps, name: 'thread_pauses' | 'owner_instruction_keys'): Promise<boolean> {
+  return deps.db.asService(async (s) =>
+    (await s.query<{ ok: boolean }>(`select to_regclass($1) is not null as ok`, [`y_private.${name}`])).rows[0]?.ok === true);
+}
+
+async function pausedBy(deps: CoreDeps, threadId: string): Promise<string | null> {
+  if (!(await hasPrivateTable(deps, 'thread_pauses'))) return null;
+  return deps.db.asService(async (s) =>
+    (await s.query<{ paused_by: string }>(`select paused_by from y_private.thread_pauses where thread_id = $1`, [threadId])).rows[0]?.paused_by ?? null);
+}
+
+/** Record (or clear, with null) who paused the thread. */
+async function recordPause(deps: CoreDeps, threadId: string, userId: string | null): Promise<void> {
+  if (!(await hasPrivateTable(deps, 'thread_pauses'))) return;
+  await deps.db.asService(async (s) => {
+    if (userId) {
+      await s.query(
+        `insert into y_private.thread_pauses (thread_id, paused_by) values ($1, $2)
+         on conflict (thread_id) do update set paused_by = excluded.paused_by, paused_at = now()`, [threadId, userId]);
+    } else {
+      await s.query(`delete from y_private.thread_pauses where thread_id = $1`, [threadId]);
+    }
+  });
+}
+
 export function registerThreadRoutes(app: App, deps: CoreDeps): void {
   const human = async (authorization: string | undefined) => {
     const caller = await requireCaller(deps, authorization);
@@ -309,7 +337,13 @@ export function registerThreadRoutes(app: App, deps: CoreDeps): void {
       const threadId = bare('thread', c.req.param('id'));
       const body = InstructRequest.safeParse(await c.req.json().catch(() => null));
       if (!body.success) return c.json(validationError(body.error), 400);
-      const out = await issueOwnerInstruction(deps, { userId: caller.userId, claims: caller.claims, threadId, body: body.data.body, via: 'web' });
+      // Idempotency-Key (UI.md §5 rule 8): a double submit or a retry returns the instruction already issued.
+      // A malformed key is ignored (the request behaves as it did without one).
+      const key = c.req.header('idempotency-key');
+      const idempotencyKey = key && IDEMPOTENCY_KEY_RE.test(key) && (await hasPrivateTable(deps, 'owner_instruction_keys')) ? key : undefined;
+      const out = await issueOwnerInstruction(deps, {
+        userId: caller.userId, claims: caller.claims, threadId, body: body.data.body, via: 'web', ...(idempotencyKey ? { idempotencyKey } : {}),
+      });
       const res: InstructResponse = { id: out.id, state: out.state };
       return c.json(res);
     } catch (err) { return errorResponse(c, err, deps); }
@@ -320,7 +354,9 @@ export function registerThreadRoutes(app: App, deps: CoreDeps): void {
       try {
         const caller = await human(c.req.header('authorization'));
         const threadId = bare('thread', c.req.param('id'));
-        await deps.db.asUser(caller.claims, async (tx) => {
+        // Who paused it (service-only bookkeeping, 9103): only they or a teammate of theirs lift the pause.
+        const pauser = action === 'pause' ? null : await pausedBy(deps, threadId);
+        const moved = await deps.db.asUser(caller.claims, async (tx) => {
           const t = await tx.query<{ state: string }>(`select state from public.threads where id = $1`, [threadId]);
           const cur = t.rows[0]?.state;
           if (!cur) throw new HttpError('NOT_FOUND', 'thread not found');
@@ -328,10 +364,18 @@ export function registerThreadRoutes(app: App, deps: CoreDeps): void {
           const allowed = action === 'pause' ? cur === 'open'
             : action === 'resolve' ? cur === 'open' || cur === 'paused_by_owner'
               : cur === 'paused_by_owner' || cur === 'resolved';
-          if (cur === next) return;
+          if (cur === next) return null;
           if (!allowed) throw new HttpError('CONFLICT', `cannot ${action} a ${cur} thread`);
+          if (cur === 'paused_by_owner' && pauser && pauser !== caller.userId) {
+            const rel = await relationshipBetween(tx, caller.userId, pauser);
+            if (rel !== 'self' && rel !== 'teammate') {
+              throw new HttpError('SCOPE_FORBIDDEN', 'only the owner who paused this thread (or a teammate of theirs) can lift the pause');
+            }
+          }
           await tx.query(`update public.threads set state = $2 where id = $1`, [threadId, next]);
+          return { from: cur, to: next };
         });
+        if (moved) await recordPause(deps, threadId, moved.to === 'paused_by_owner' ? caller.userId : null);
         return c.json(await threadView(deps, caller, threadId));
       } catch (err) { return errorResponse(c, err, deps); }
     });

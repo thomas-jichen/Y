@@ -35,7 +35,11 @@ export async function ownInstructTargets(tx: Tx, userId: string, threadId: strin
  */
 export async function issueOwnerInstruction(
   deps: CoreDeps,
-  a: { userId: string; claims: AuthClaims; threadId: string; agentId?: string; body: string; via: 'web' | 'slack'; confirmNow?: boolean },
+  a: {
+    userId: string; claims: AuthClaims; threadId: string; agentId?: string; body: string; via: 'web' | 'slack'; confirmNow?: boolean;
+    /** Caller's Idempotency-Key (y_private.owner_instruction_keys, 9103): a replay returns the instruction already issued. */
+    idempotencyKey?: string;
+  },
 ): Promise<InstructResponse & { agentId: string; handle: string }> {
   const target = await deps.db.asUser(a.claims, async (tx) => {
     const all = await ownInstructTargets(tx, a.userId, a.threadId);
@@ -47,6 +51,43 @@ export async function issueOwnerInstruction(
       next: { humanAction: 'grant_permission', url: `${deps.config.publicUrl}/settings/remote-instructions` },
     });
   }
+  const key = a.idempotencyKey;
+  if (key) {
+    const prior = await priorInstruction(deps, a.userId, key);
+    if (prior) return prior;
+    try {
+      return await issueNew(deps, a, target, key);
+    } catch (err) {
+      // A concurrent request with the same key won the insert: return its instruction.
+      const won = await priorInstruction(deps, a.userId, key);
+      if (won) return won;
+      throw err;
+    }
+  }
+  return issueNew(deps, a, target, null);
+}
+
+/** The instruction already issued for (user, Idempotency-Key), if any (service role). */
+async function priorInstruction(deps: CoreDeps, userId: string, key: string): Promise<(InstructResponse & { agentId: string; handle: string }) | null> {
+  return deps.db.asService(async (tx) => {
+    const r = await tx.query<{ id: string; agent_id: string; handle: string; requires_confirm: boolean; confirmed_at: Date | string | null }>(
+      `select o.id, o.agent_id, a.handle::text as handle, o.requires_confirm, o.confirmed_at
+         from y_private.owner_instruction_keys k join public.owner_instructions o on o.id = k.owner_instruction_id
+         join public.agents a on a.id = o.agent_id
+        where k.user_id = $1 and k.idempotency_key = $2`, [userId, key]);
+    const row = r.rows[0];
+    if (!row) return null;
+    const state: InstructResponse['state'] = row.requires_confirm && !row.confirmed_at ? 'awaiting_confirm' : 'queued';
+    return { id: wire('ownerInstruction', row.id) as InstructResponse['id'], state, agentId: row.agent_id, handle: row.handle };
+  });
+}
+
+async function issueNew(
+  deps: CoreDeps,
+  a: { userId: string; claims: AuthClaims; threadId: string; body: string; via: 'web' | 'slack'; confirmNow?: boolean },
+  target: InstructTarget,
+  key: string | null,
+): Promise<InstructResponse & { agentId: string; handle: string }> {
   const id = ulid();
   const createdAt = deps.now().toISOString();
   const wireId = wire('ownerInstruction', id);
@@ -59,6 +100,12 @@ export async function issueOwnerInstruction(
       `insert into public.owner_instructions (id, agent_id, thread_id, created_by_user_id, body, verified_via, kid, sig, created_at)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning requires_confirm`,
       [id, target.agentId, a.threadId, a.userId, a.body, a.via, signed.kid, signed.sig, createdAt]);
+    if (key) {
+      // Same transaction: a duplicate key rolls the second instruction back (the caller returns the first).
+      await tx.query(
+        `insert into y_private.owner_instruction_keys (user_id, idempotency_key, owner_instruction_id) values ($1, $2, $3)`,
+        [a.userId, key, id]);
+    }
     const leases = await tx.query<{ session_id: string; listening: string; last_heartbeat_at: Date | string; permission_mode: string; headless: boolean; last_thread_ids: string[] }>(
       `select session_id, listening, last_heartbeat_at, permission_mode, headless, last_thread_ids from public.session_leases where agent_id = $1`, [target.agentId]);
     const cands: LeaseCandidate[] = leases.rows.map((l) => ({

@@ -125,6 +125,27 @@ export async function syncSupportBuilders(tx: Tx, productId: string, threadId: s
      on conflict do nothing`, [productId, threadId]);
 }
 
+/**
+ * Customer agents whose human has NOT explicitly denied this builder: its agent,
+ * its owner, or the product (READ ONLY, I4). The most specific row decides
+ * (agent, then user, then product). Only explicit rows count: the generic
+ * stranger default never applies to builder replies (the customer asked).
+ */
+async function notDenied(tx: Tx, ctx: LiveCtx, rcpts: readonly Part[]): Promise<Part[]> {
+  const out: Part[] = [];
+  for (const p of rcpts) {
+    const r = await tx.query<{ policy: string }>(
+      `select policy from public.dm_permissions
+        where owner_user_id = $1
+          and ((subject_kind = 'agent' and subject_id = $2) or (subject_kind = 'user' and subject_id = $3)
+               or (subject_kind = 'product' and subject_id in ($4, $5)))
+        order by case subject_kind when 'agent' then 0 when 'user' then 1 else 2 end limit 1`,
+      [p.owner_user_id, ctx.builderId, ctx.builderOwner, ctx.productId, wire('product', ctx.productId)]);
+    if (r.rows[0]?.policy !== 'deny') out.push(p);
+  }
+  return out;
+}
+
 /** 'self' when every recipient is the sender's owner, 'teammate' when all share a team with them, else null. */
 async function trustedRel(tx: Tx, senderOwner: string, ownerIds: readonly string[]): Promise<Relationship | null> {
   let all: Relationship = 'self';
@@ -222,8 +243,8 @@ export async function routeSupportTx(tx: Tx, deps: CoreDeps, m: MsgRow, parts: r
     return { state, path: 'inbox', note: 'next_turn', relationship: rel };
   }
 
-  // The builder side: replies to the customer agent(s).
-  const rcpts = customerParts(ctx, parts);
+  // The builder side: replies to the customer agent(s) whose human has not denied this builder.
+  const rcpts = await notDenied(tx, ctx, customerParts(ctx, parts));
   if (rcpts.length === 0) return blocked();
   const mate = await trustedRel(tx, senderOwner, rcpts.map((p) => p.owner_user_id));
   const trust = human ? 'human_comment' : mate ? 'teammate' : 'stranger';
@@ -283,7 +304,13 @@ export async function supportDeliveryFor(tx: Tx, m: MsgRow): Promise<SupportDeli
     `select p_id, owner_user_id from public.thread_participants where thread_id = $1 and p_kind = 'agent'`, [m.thread_id])).rows;
   const side = sideOf(ctx, m, parts);
   if (!side) return null;
-  if (side === 'builder') return { productId: ctx.productId, teamId: ctx.teamId, side, rcpts: customerParts(ctx, parts) };
+  if (side === 'builder') {
+    const customers = customerParts(ctx, parts);
+    const allowed = await notDenied(tx, ctx, customers);
+    // Every customer's human denied this builder since: nothing may be delivered.
+    if (customers.length > 0 && allowed.length === 0) return null;
+    return { productId: ctx.productId, teamId: ctx.teamId, side, rcpts: allowed };
+  }
   await syncSupportBuilders(tx, ctx.productId, m.thread_id);
   return { productId: ctx.productId, teamId: ctx.teamId, side, rcpts: [{ p_id: ctx.builderId, owner_user_id: ctx.builderOwner }] };
 }
@@ -317,14 +344,19 @@ export async function applyBuilderReplyDecision(
     let s: MessageState = m.state;
     // Suspended since, or the drafting agent is no longer the product's builder: the draft is declined, never sent.
     const stale = !live(ctx) || m.sender_id !== ctx.builderId;
-    if (decision === 'reject' || stale) {
+    const parts = await tx.query<Part>(
+      `select p_id, owner_user_id from public.thread_participants where thread_id = $1 and p_kind = 'agent'`, [m.thread_id]);
+    const customers = live(ctx) ? customerParts(ctx, parts.rows) : [];
+    const rcpts = live(ctx) && !stale ? await notDenied(tx, ctx, customers) : customers;
+    // Every customer's human denied this builder since the draft was written: never sent.
+    const denied = customers.length > 0 && rcpts.length === 0;
+    if (decision === 'reject' || stale || denied) {
       s = step(s, { type: 'request_declined' });
       await setState(tx, m.id, s);
       if (stale && decision === 'approve') deps.log('info', 'builder reply declined: product inactive or builder replaced', { messageId: wire('message', m.id) });
+      if (denied && !stale && decision === 'approve') deps.log('info', 'builder reply declined: the customer denied this builder', { messageId: wire('message', m.id) });
       return s;
     }
-    const parts = await tx.query<Part>(
-      `select p_id, owner_user_id from public.thread_participants where thread_id = $1 and p_kind = 'agent'`, [m.thread_id]);
     let body = m.body;
     if (edits.body !== undefined && edits.body !== m.body) {
       const dlp = dlpScan(edits.body, { allowShortCode: false });
@@ -343,7 +375,7 @@ export async function applyBuilderReplyDecision(
     await storeVerdict(tx, m.id, out);
     s = step(s, { type: 'verdict', action: actionFor('builder_answer', out.screen.label).action });
     await setState(tx, m.id, s, { delivered: s === 'delivered' });
-    await finishBuilderReply(tx, deps, { ...m, body }, customerParts(ctx, parts.rows), s, events, 'stranger');
+    await finishBuilderReply(tx, deps, { ...m, body }, rcpts, s, events, 'stranger');
     return s;
   });
   for (const e of events) await deps.bus.publish(e);
