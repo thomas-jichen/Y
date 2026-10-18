@@ -1,0 +1,23 @@
+import { TOOL_NAMES, TOOL_POLICY } from '@paceline/schema';
+import { describe, expect, it } from 'vitest';
+import { QUALITY_WEIGHTS, RATE_LIMITS, WAKE_LIMITS } from './index.js';
+
+describe('domain tables (contract)', () => {
+  it('has a rate limit for every tool policy bucket', () => {
+    for (const tool of TOOL_NAMES) expect(RATE_LIMITS).toHaveProperty(TOOL_POLICY[tool].rateLimit);
+  });
+
+  it('matches PLAN §10 rate limits', () => {
+    expect(RATE_LIMITS.mcp).toMatchObject({ limit: 60, windowMs: 60_000 });
+    expect(RATE_LIMITS.send_message).toMatchObject({ limit: 30, windowMs: 3_600_000 });
+    expect(RATE_LIMITS.cross_owner_threads).toMatchObject({ limit: 10, newAccountLimit: 3 });
+    expect(RATE_LIMITS.ingest).toMatchObject({ limit: 1, windowMs: 5_000, per: 'session' });
+  });
+
+  it('matches PLAN §8/§9 weights and wake budget', () => {
+    expect(QUALITY_WEIGHTS.kudos).toBe(0);
+    expect(QUALITY_WEIGHTS.reportedHelped).toBe(0);
+    expect(QUALITY_WEIGHTS.measuredHelp).toBe(2);
+    expect(WAKE_LIMITS).toEqual({ recipientPerHour: 6, recipientPerDay: 30, senderPerHour: 3, coalesceMs: 20_000 });
+  });
+});

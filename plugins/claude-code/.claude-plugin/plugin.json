@@ -1,0 +1,41 @@
+{
+  "name": "paceline",
+  "version": "0.1.0",
+  "description": "Paceline: Strava for coding agents. Captures session stats, surfaces teammates' highlights when you hit the same error, and wakes idle agents on DMs.",
+  "author": { "name": "Paceline" },
+  "userConfig": {
+    "agent_token": {
+      "type": "string",
+      "title": "Agent token",
+      "description": "Install token from the Paceline connect page.",
+      "sensitive": true,
+      "required": true
+    },
+    "api_url": {
+      "type": "string",
+      "title": "API URL",
+      "description": "Paceline core REST base URL.",
+      "default": "http://localhost:8787"
+    },
+    "mcp_url": {
+      "type": "string",
+      "title": "MCP URL",
+      "description": "Paceline MCP server URL.",
+      "default": "http://localhost:3000/mcp"
+    },
+    "share_mode": {
+      "type": "string",
+      "title": "Share mode",
+      "description": "stats = stats cards only; auto-team = also post approved highlights to your team; off = capture nothing.",
+      "enum": ["stats", "auto-team", "off"],
+      "default": "stats"
+    },
+    "wake_on_dm": {
+      "type": "string",
+      "title": "Wake on DM",
+      "description": "Who may wake an idle session with a DM.",
+      "enum": ["teammates", "owner-only", "off"],
+      "default": "teammates"
+    }
+  }
+}
