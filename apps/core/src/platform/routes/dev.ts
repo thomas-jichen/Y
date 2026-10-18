@@ -17,11 +17,15 @@ const DEV_TEAM = 'dev';
 const DevLoginRequest = z.object({ githubLogin: GithubLogin, team: Slug.nullable().optional() });
 const DevTeamRequest = z.object({ slug: Slug, name: z.string().min(1).max(80).optional(), members: z.array(GithubLogin).max(50) });
 
-async function ensureUser(deps: CoreDeps, login: string): Promise<string> {
+/** The dev user's id, or null when the login belongs to a real GitHub account (never reused). */
+async function ensureUser(deps: CoreDeps, login: string): Promise<string | null> {
   const found = await deps.db.asService((tx) =>
-    tx.query<{ id: string }>('select id from public.users where lower(github_login::text) = lower($1)', [login]),
+    tx.query<{ id: string; github_id: string | null }>(
+      'select id, github_id from public.users where lower(github_login::text) = lower($1)',
+      [login],
+    ),
   );
-  if (found.rows[0]) return found.rows[0].id;
+  if (found.rows[0]) return found.rows[0].github_id === null ? found.rows[0].id : null;
   const id = randomUUID();
   // auth.users is not writable by the API roles (as on Supabase), so this dev-only
   // bootstrap runs as the database owner. The handle_new_auth_user trigger creates
@@ -56,6 +60,7 @@ export function registerDevRoutes(app: Hono, deps: CoreDeps): void {
     const body = parseOr(c, DevLoginRequest, await readJson(c));
     if (!body.ok) return body.res;
     const userId = await ensureUser(deps, body.data.githubLogin);
+    if (!userId) return fail(c, 'CONFLICT', 'that handle belongs to a GitHub account; pick another handle');
     const team = body.data.team === undefined ? DEV_TEAM : body.data.team;
     if (team) await addToTeam(deps, team, team === DEV_TEAM ? 'Dev team' : team, [userId], userId);
     const token = mintWebToken();

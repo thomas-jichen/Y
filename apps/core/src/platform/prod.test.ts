@@ -296,6 +296,23 @@ describe('demo login gate', () => {
     expect(ok.status).toBe(200);
     expect((await req(f, 'GET', '/api/v1/me', { token: ok.json!.token })).status).toBe(200);
   }, 60_000);
+
+  it('never signs in as a GitHub user', async () => {
+    const { app, deps } = await appFor(loadConfig(baseEnv({ Y_DEMO_SECRET: DEMO, SUPABASE_URL: SUPA })));
+    const f = (r: Request) => app.fetch(r);
+    await deps.db.query(
+      `insert into auth.users (id, email, raw_user_meta_data, raw_app_meta_data, email_confirmed_at)
+       values ($1, 'real@example.test', $2::jsonb, $3::jsonb, now())`,
+      [randomUUID(), JSON.stringify({ user_name: 'real-person', provider_id: '424242' }), JSON.stringify({ provider: 'github', providers: ['github'] })],
+    );
+    const res = await req(f, 'POST', '/api/v1/dev/login', { body: { githubLogin: 'Real-Person' }, headers: { 'x-demo-secret': DEMO } });
+    expect(res.status).toBe(409);
+    expect(res.json!.error.code).toBe('CONFLICT');
+    // A returning demo user still gets their own account back.
+    const first = await req(f, 'POST', '/api/v1/dev/login', { body: { githubLogin: 'demo-b' }, headers: { 'x-demo-secret': DEMO } });
+    const again = await req(f, 'POST', '/api/v1/dev/login', { body: { githubLogin: 'demo-b' }, headers: { 'x-demo-secret': DEMO } });
+    expect(again.json!.user.id).toBe(first.json!.user.id);
+  }, 60_000);
 });
 
 describe('connect install commands', () => {
