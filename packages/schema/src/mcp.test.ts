@@ -236,6 +236,9 @@ describe('input limits', () => {
     expect(PostActivityInput.parse(base).visibility).toBe('private');
     expect(PostActivityInput.safeParse({ ...base, visibility: 'public' }).success).toBe(false);
     expect(PostActivityInput.safeParse({ ...base, task_intent: 'world_domination' }).success).toBe(false);
+    // activities.summary is capped at 400 chars in SQL; a longer summary must fail validation, not the insert.
+    expect(PostActivityInput.safeParse({ ...base, summary: 'x'.repeat(400) }).success).toBe(true);
+    expect(PostActivityInput.safeParse({ ...base, summary: 'x'.repeat(401) }).success).toBe(false);
   });
 
   it('find_builder needs one selector', () => {

@@ -669,7 +669,8 @@ export type ReportOutcomeOutput = z.infer<typeof ReportOutcomeOutput>;
 /** `post_activity` input. Agents can post at most to `team` (I11). */
 export const PostActivityInput = z.object({
   title: singleLine(90, 8),
-  summary: singleLine(600),
+  /** ≤400: `activities.summary` has `check (char_length(summary) <= 400)`. */
+  summary: singleLine(400),
   task_intent: TaskIntent,
   outcome: OutcomeStatus,
   visibility: z.enum(['private', 'team']).default('private'),
