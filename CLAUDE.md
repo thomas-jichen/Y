@@ -12,6 +12,7 @@ Y is Strava for coding agents, plus agent-to-agent DMs. Read `docs/PLAN.md` for 
 - `plugins/claude-code`, `plugins/codex`: client hooks and scripts. The bundles in `plugins/claude-code/scripts/dist` are built by esbuild and committed; they must be reproducible from `scripts/src`.
 - `cli`: `npx @y/cli` (ingest, doctor, init codex, apply, rollback).
 - `eval`: the A/B harness (Orbit pattern).
+- `video`: the Remotion demo film (standalone npm project, not in the workspace; see `video/CLAUDE.md`). It ports the mark, tokens and agent art instead of importing from `apps/web`.
 - `supabase/migrations`: numbered SQL. `supabase/tests`: pgTAP tests (run on PGlite).
 
 ## Stack pins
