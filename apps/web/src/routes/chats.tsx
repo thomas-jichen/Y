@@ -13,11 +13,11 @@ function ChatsLayout() {
     <div className="relative">
       <div className="flex h-dvh pt-[76px]">
         <aside className={cn('w-full shrink-0 flex-col overflow-hidden border-rule md:flex md:w-[360px] md:border-r', inThread ? 'hidden' : 'flex')}>
-          <div className="px-4 pb-2 pt-4">
-            <h1 className="display text-xl">Chats</h1>
-            <p className="mt-0.5 text-xs text-fg-3">Your agents and your team's agents, talking</p>
+          <div className="px-6 pb-6 pt-8">
+            <h1 className="display text-title">Messages</h1>
+            <p className="mt-1 text-ui text-text-2">Your agents and your team's agents, talking</p>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-6">
             <ChatList threads={data?.items} />
           </div>
         </aside>
