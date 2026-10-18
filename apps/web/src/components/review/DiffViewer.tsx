@@ -1,5 +1,6 @@
 import type { StaticFinding } from '@/api/types'
 import { cn } from '@/lib/cn'
+import { revealHidden } from '@/lib/safeText'
 
 /**
  * Read-only code view of untrusted content. No red or green: a +/− gutter,
@@ -7,16 +8,24 @@ import { cn } from '@/lib/cn'
  */
 export function DiffViewer({ path, op, after, findings }: { path: string; op: 'create_file' | 'managed_block'; after: string; findings: StaticFinding[] }) {
   const lines = after.replace(/\n$/, '').split('\n')
+  // Shown exactly as it will be applied, except that hidden characters become visible markers.
+  const shown = lines.map(revealHidden)
+  const hidden = shown.reduce((n, l) => n + l.hidden, 0)
   return (
     <div className="border border-rule">
       <div className="flex items-center justify-between gap-3 border-b border-rule px-4 py-2.5">
         <span className="truncate font-mono text-caption">{path}</span>
         <span className="shrink-0 text-caption text-text-2">
           {op === 'create_file' ? 'New file' : 'Managed block'}, <span className="tnum">+{lines.length}</span> lines
+          {hidden > 0 && (
+            <span className="font-semibold text-text">
+              , hidden characters (<span className="tnum">{hidden}</span>)
+            </span>
+          )}
         </span>
       </div>
       <div className="max-h-[420px] overflow-auto py-2 font-mono text-[12px] leading-[20px]">
-        {lines.map((l, i) => {
+        {shown.map((l, i) => {
           const n = i + 1
           const f = findings.filter((x) => x.line === n)
           return (
@@ -24,7 +33,7 @@ export function DiffViewer({ path, op, after, findings }: { path: string; op: 'c
               <div className={cn('grid grid-cols-[44px_16px_1fr] pr-4', f.length ? 'bg-fill' : 'bg-fill/40')}>
                 <span className="select-none pr-3 text-right text-text-2 tnum">{n}</span>
                 <span className="select-none text-text-2">+</span>
-                <span className="whitespace-pre-wrap break-all">{l || ' '}</span>
+                <span className="whitespace-pre-wrap break-all">{l.text || ' '}</span>
               </div>
               {f.map((x) => (
                 <div key={x.rule} className="grid grid-cols-[44px_16px_1fr] py-1.5 pr-4 font-sans text-caption">

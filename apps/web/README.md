@@ -20,6 +20,7 @@ Mocks are on by default (no backend needed): they stay on while `VITE_API_URL` i
 | `VITE_DEMO_SECRET` | Sent as `X-Demo-Secret` on dev login. It ships in the bundle, so it only gates a demo. |
 | `VITE_DEV_LOGIN` | `1` shows the dev login form even with Supabase configured, `0` hides it. Default: shown without Supabase or with a demo secret. |
 | `Y_CORE_URL` | Dev server only: where the `/api` proxy points (default `http://127.0.0.1:8787`). |
+| `Y_WEB_LAN_API` | Dev and preview servers only: `1` lets other devices on the LAN use the `/api` proxy (phone testing in real mode). Default: the proxy, and with it the local dev login, answers this machine only; the app itself is still served to the LAN. |
 
 Against a local core (docs/RUNNING.md):
 
@@ -27,6 +28,8 @@ Against a local core (docs/RUNNING.md):
 Y_DATA_DIR=memory pnpm --filter @y/core start   # repo root, port 8787
 cd apps/web && VITE_MOCKS=0 npm run dev                        # proxies /api to core
 ```
+
+Tests: `npm test` (vitest from the monorepo root, so run `pnpm install` there first; test files are kept out of `tsconfig.json` so the Vercel build never needs vitest).
 
 Sign in with any GitHub-style login on the dev form. Every request sends `Authorization: Bearer <token>`. A 401 returns to the login screen; a 401 `STEP_UP_REQUIRED` opens a re-auth prompt.
 

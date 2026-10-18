@@ -33,6 +33,31 @@ function set(patch: Partial<AuthState>) {
   subs.forEach((s) => s())
 }
 
+/**
+ * Which sign-in the current token belongs to: the dev token itself, or the Supabase user id (its
+ * access token changes on every refresh, the user doesn't). A request made under one key never
+ * signs out, or retries under, another.
+ */
+let sessionKey: string | undefined
+const supabaseKey = (session: { user?: { id?: string } | null } | null | undefined) => (session?.user?.id ? `sb:${session.user.id}` : 'sb:')
+
+/**
+ * Per-tab values that belong to one signed-in account: the agent install token minted on /connect
+ * (routes/connect.tsx) and a pending Slack link token (routes/slack.link.tsx). The next account to
+ * sign in to this tab must never see them.
+ */
+export const CONNECT_KEY = 'y-connect'
+export const SLACK_LINK_KEY = 'y.slackLinkToken'
+function clearTab(keys: string[]) {
+  for (const k of keys) {
+    try {
+      sessionStorage.removeItem(k)
+    } catch {
+      /* storage unavailable */
+    }
+  }
+}
+
 function saveDev(token: string | null, login?: string) {
   try {
     if (token) localStorage.setItem(KEY, JSON.stringify({ token, login }))
@@ -53,6 +78,7 @@ function loadDev(): { token: string; login?: string } | null {
 }
 
 let started = false
+let refreshing: Promise<string | null> | null = null
 /** Restore a session (dev token or Supabase session). Safe to call more than once. */
 export async function initAuth(): Promise<void> {
   if (MOCKS || started) return
@@ -62,11 +88,21 @@ export async function initAuth(): Promise<void> {
     try {
       const client = await sb
       client.auth.onAuthStateChange((event, session) => {
-        if (session?.access_token) set({ status: 'signed_in', token: session.access_token, method: 'supabase', stepUp: false, notice: undefined })
-        else if (event === 'SIGNED_OUT' && state.method === 'supabase') set({ status: 'signed_out', token: undefined, method: undefined })
+        if (session?.access_token) {
+          const key = supabaseKey(session)
+          // A different GitHub account in this tab: drop the previous one's minted install token.
+          if (sessionKey && sessionKey !== key) clearTab([CONNECT_KEY])
+          sessionKey = key
+          set({ status: 'signed_in', token: session.access_token, method: 'supabase', stepUp: false, notice: undefined })
+        } else if (event === 'SIGNED_OUT' && state.method === 'supabase') {
+          sessionKey = undefined
+          clearTab([CONNECT_KEY])
+          set({ status: 'signed_out', token: undefined, method: undefined })
+        }
       })
       const { data } = await client.auth.getSession()
       if (data.session?.access_token) {
+        sessionKey = supabaseKey(data.session)
         set({ status: 'signed_in', token: data.session.access_token, method: 'supabase' })
         return
       }
@@ -75,8 +111,10 @@ export async function initAuth(): Promise<void> {
     }
   }
   const dev = loadDev()
-  if (dev) set({ status: 'signed_in', token: dev.token, method: 'dev', login: dev.login })
-  else if (state.status === 'loading') set({ status: 'signed_out' })
+  if (dev) {
+    sessionKey = dev.token
+    set({ status: 'signed_in', token: dev.token, method: 'dev', login: dev.login })
+  } else if (state.status === 'loading') set({ status: 'signed_out' })
 }
 
 export const auth = {
@@ -96,6 +134,7 @@ export const auth = {
     const body = (await res.json().catch(() => null)) as { token?: string; error?: { message?: string } } | null
     if (!res.ok || !body?.token) throw new Error(body?.error?.message ?? `Login failed (${res.status})`)
     saveDev(body.token, githubLogin)
+    sessionKey = body.token
     set({ status: 'signed_in', token: body.token, method: 'dev', login: githubLogin, stepUp: false, notice: undefined })
   },
 
@@ -112,6 +151,7 @@ export const auth = {
     const body = (await res.json().catch(() => null)) as { token?: string; error?: { message?: string } } | null
     if (!res.ok || !body?.token) throw new Error(body?.error?.message ?? `Demo sign-in failed (${res.status})`)
     saveDev(body.token, DEMO_ACCOUNT)
+    sessionKey = body.token
     set({ status: 'signed_in', token: body.token, method: 'dev', login: DEMO_ACCOUNT, stepUp: false, notice: undefined })
   },
 
@@ -123,12 +163,61 @@ export const auth = {
     if (error) throw new Error(error.message)
   },
 
+  /** Which sign-in the current token belongs to (see `sessionKey`). */
+  sessionKey: () => sessionKey,
+
   /** Drop the session. `notice` explains why on the login screen (e.g. an expired token). */
   async signOut(notice?: string): Promise<void> {
     const method = state.method
     saveDev(null)
+    sessionKey = undefined
+    clearTab([CONNECT_KEY, SLACK_LINK_KEY])
     set({ status: 'signed_out', token: undefined, method: undefined, stepUp: false, notice })
     if (method === 'supabase') await (await supabase())?.auth.signOut().catch(() => undefined)
+  },
+
+  /**
+   * The session ended on its own (core said 401). Unlike the user's Sign out, this ends only this
+   * browser's Supabase session (scope 'local'): other devices stay signed in. A pending Slack link
+   * token stays so the visitor can sign in and finish linking.
+   */
+  async expire(notice?: string): Promise<void> {
+    const method = state.method
+    saveDev(null)
+    sessionKey = undefined
+    clearTab([CONNECT_KEY])
+    set({ status: 'signed_out', token: undefined, method: undefined, stepUp: false, notice })
+    if (method === 'supabase') await (await supabase())?.auth.signOut({ scope: 'local' }).catch(() => undefined)
+  },
+
+  /**
+   * A request sent with `usedToken` under session `key` got a 401. Returns a token to retry with,
+   * from the same sign-in only: one refreshed since the request left, or (Supabase) a fresh refresh.
+   * Null means there is nothing to retry with.
+   */
+  async recover(key: string | undefined, usedToken: string | undefined): Promise<string | null> {
+    if (!usedToken || !key || sessionKey !== key || state.status !== 'signed_in') return null
+    if (state.token && state.token !== usedToken) return state.token
+    if (state.method !== 'supabase') return null
+    refreshing ??= (async () => {
+      try {
+        const { data } = (await (await supabase())?.auth.refreshSession()) ?? { data: null }
+        return data?.session?.access_token && supabaseKey(data.session) === key ? data.session.access_token : null
+      } catch {
+        return null
+      } finally {
+        refreshing = null
+      }
+    })()
+    const fresh = await refreshing
+    if (!fresh || fresh === usedToken || sessionKey !== key) return null
+    if (state.token !== fresh) set({ token: fresh })
+    return fresh
+  },
+
+  /** Expire the session only if it is still the one the failed request was made under. */
+  async expireIf(key: string | undefined, notice?: string): Promise<void> {
+    if (sessionKey === key) await auth.expire(notice)
   },
 
   requestStepUp() {
@@ -146,7 +235,7 @@ export const auth = {
     if (state.method === 'supabase') return auth.githubLogin()
     if (state.method === 'dev' && state.login === DEMO_ACCOUNT) return auth.demoAccount()
     if (state.method === 'dev' && state.login) return auth.devLogin(state.login)
-    await auth.signOut('Sign in again to continue')
+    await auth.expire('Sign in again to continue')
   },
 }
 

@@ -1,8 +1,9 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import { fileURLToPath, URL } from 'node:url'
+import { devProxyGuard } from './src/lib/devProxyGuard'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -13,8 +14,20 @@ export default defineConfig(({ mode }) => {
     !mocks && !env.VITE_API_URL
       ? { '/api': { target: env.Y_CORE_URL || 'http://127.0.0.1:8787', changeOrigin: false } }
       : undefined
+  // The server stays reachable on the LAN (host: true), but the /api proxy to a local core (and its
+  // secret-free dev login) answers this machine only unless Y_WEB_LAN_API=1 (src/lib/devProxyGuard.ts).
+  const guard = devProxyGuard(env.Y_WEB_LAN_API === '1')
+  const lanGuard: Plugin = {
+    name: 'y-dev-proxy-guard',
+    configureServer(server) {
+      if (proxy) server.middlewares.use(guard)
+    },
+    configurePreviewServer(server) {
+      if (proxy) server.middlewares.use(guard)
+    },
+  }
   return {
-    plugins: [tanstackRouter({ target: 'react', autoCodeSplitting: true }), react(), tailwindcss()],
+    plugins: [lanGuard, tanstackRouter({ target: 'react', autoCodeSplitting: true }), react(), tailwindcss()],
     resolve: {
       alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
     },

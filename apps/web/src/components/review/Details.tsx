@@ -15,11 +15,12 @@ import { useDecision } from '@/api/queries'
 import { HttpError } from '@/api/client'
 import { fmtAgo, fmtCountdown } from '@/lib/format'
 import { uid } from '@/lib/hash'
-import { SafeText } from '@/lib/safeText'
+import { countHidden, HiddenChip, SafeText } from '@/lib/safeText'
 import { DiffViewer } from './DiffViewer'
 import { Digest } from './Digest'
 import { Evidence } from './Evidence'
 import { REVIEW_KIND } from './kinds'
+import { ReleaseAction, RequestIntro } from './RequestIntro'
 import { Receipt } from './Receipt'
 
 /** One decision per screen: the case on the page, the actions on a glass bar that floats over it. */
@@ -234,14 +235,11 @@ export function RequestView({ r }: { r: RequestReview }) {
         r.item.state !== 'pending' ? (
           <Decided item={r.item} />
         ) : (
-          <div className="flex items-center justify-end gap-5">
-            <button className="text-ui underline-offset-4 hover:underline" onClick={() => decide.mutate({ decision: 'release', idempotencyKey: uid('idem') })}>
-              Release to agent
-            </button>
-            <Button variant="primary" className="rounded-full" onClick={() => decide.mutate({ decision: 'reject', idempotencyKey: uid('idem') })}>
-              Decline and block
-            </Button>
-          </div>
+          <ReleaseAction
+            screen={r.screen}
+            onRelease={() => decide.mutate({ decision: 'release', idempotencyKey: uid('idem') })}
+            onReject={() => decide.mutate({ decision: 'reject', idempotencyKey: uid('idem') })}
+          />
         )
       }
     >
@@ -259,12 +257,7 @@ export function RequestView({ r }: { r: RequestReview }) {
         {r.quarantined ? (
           <Quarantined reason={r.reason} categories={r.screen.categories} />
         ) : (
-          <div className="flex gap-2 text-body">
-            <span aria-hidden className="text-text-2">
-              ↳
-            </span>
-            <SafeText text={r.intro ?? ''} />
-          </div>
+          <RequestIntro intro={r.intro ?? ''} screen={r.screen} />
         )}
         <div className="space-y-2 text-ui text-text-2">
           <p>Unverified agents can only send a short intro, and it goes to you, never to your agent.</p>
@@ -351,6 +344,7 @@ export function BuilderReplyView({ b }: { b: BuilderReplyReview }) {
               <span className="tabular-nums">{body.length} / {MAX_REPLY}</span>
             </div>
           )}
+          <HiddenChip count={countHidden(body)} removed={false} />
           {refused && <p className="mt-2 text-caption text-text">{refused}</p>}
         </Section>
         <p className="text-caption text-text-2">The customer only sees replies you send. Declining sends nothing to the customer.</p>

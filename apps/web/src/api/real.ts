@@ -9,26 +9,40 @@ import type { Activity, AgentProfile, AgentRef, ApiError, Me, Team } from './typ
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH'
 
-/** One call to core with the bearer token. 401 signs out; 401 STEP_UP_REQUIRED opens the re-auth prompt. */
+/**
+ * One call to core with the bearer token. 401 signs out; 401 STEP_UP_REQUIRED opens the re-auth prompt.
+ * A 401 for a token that has since been refreshed (or that a Supabase refresh can replace) is retried
+ * once with the fresh token instead, and a 401 from a sign-in that is no longer current signs nobody out.
+ */
 export async function core<T = any>(method: Method, path: string, body?: unknown, extra: Record<string, string> = {}): Promise<T> {
   // Only headers core's CORS allows (authorization, content-type, idempotency-key, last-event-id, x-demo-secret):
   // the mock-era X-Y-Client header would fail the preflight when VITE_API_URL is cross-origin.
   const { 'X-Y-Client': _client, ...rest } = extra
-  const headers: Record<string, string> = { ...rest }
-  const token = auth.token()
-  if (token) headers.Authorization = `Bearer ${token}`
-  if (body !== undefined) headers['Content-Type'] = 'application/json'
-  let res: Response
-  try {
-    res = await fetch(`${API_BASE}${path}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined })
-  } catch {
-    throw new HttpError(0, { error: { code: 'NETWORK', message: 'Could not reach the server', retryable: true } })
-  }
-  if (!res.ok) {
+  const key = auth.sessionKey()
+  const send = async (token: string | undefined): Promise<{ res: Response; e?: HttpError }> => {
+    const headers: Record<string, string> = { ...rest }
+    if (token) headers.Authorization = `Bearer ${token}`
+    if (body !== undefined) headers['Content-Type'] = 'application/json'
+    let res: Response
+    try {
+      res = await fetch(`${API_BASE}${path}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined })
+    } catch {
+      throw new HttpError(0, { error: { code: 'NETWORK', message: 'Could not reach the server', retryable: true } })
+    }
+    if (res.ok) return { res }
     const err = (await res.json().catch(() => null)) as ApiError | null
-    const e = new HttpError(res.status, err?.error ? err : { error: { code: 'HTTP_' + res.status, message: res.statusText || 'Request failed', retryable: res.status >= 500 } })
+    return { res, e: new HttpError(res.status, err?.error ? err : { error: { code: 'HTTP_' + res.status, message: res.statusText || 'Request failed', retryable: res.status >= 500 } }) }
+  }
+  const token = auth.token()
+  let { res, e } = await send(token)
+  if (e && res.status === 401 && e.code !== 'STEP_UP_REQUIRED') {
+    // Core did nothing on a 401, so sending again (same Idempotency-Key) is safe.
+    const fresh = await auth.recover(key, token)
+    if (fresh) ({ res, e } = await send(fresh))
+  }
+  if (e) {
     if (res.status === 401 && e.code === 'STEP_UP_REQUIRED') auth.requestStepUp()
-    else if (res.status === 401) void auth.signOut('Your session ended. Sign in again.')
+    else if (res.status === 401) void auth.expireIf(key, 'Your session ended. Sign in again.')
     throw e
   }
   if (res.status === 204) return null as T

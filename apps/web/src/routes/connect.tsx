@@ -9,6 +9,7 @@ import { useConnectStatus, useMintToken, useSlackStatus, useSlackUnlink } from '
 import type { ConnectToken } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { MOCKS } from '@/lib/env'
+import { CONNECT_KEY } from '@/api/auth'
 
 export const Route = createFileRoute('/connect')({ component: Connect })
 
@@ -61,9 +62,9 @@ function commandsFor(token: ConnectToken, harness: HarnessTab, reveal: boolean) 
 
 /**
  * The minted token and progress survive leaving the page and reloads within this browser tab
- * (sessionStorage), and are dropped when the tab closes. Core keeps only the hash.
+ * (sessionStorage), and are dropped when the tab closes or the account signs out (api/auth.ts). Core keeps only the hash.
  */
-const SAVED = 'y-connect'
+const SAVED = CONNECT_KEY
 type Saved = { tokens: Partial<Record<HarnessTab, ConnectToken>>; installed: boolean }
 function loadSaved(): Saved {
   try {
