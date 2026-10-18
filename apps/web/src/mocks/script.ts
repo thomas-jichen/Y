@@ -465,7 +465,7 @@ async function beatStranger() {
     unread: 0,
     viewer: { canInstruct: false, remoteInstructionsOn: db.remoteInstructionsOn, needsStepUp: false },
   })
-  pushMessage({
+  const held = pushMessage({
     threadId: 't_req_relay',
     sender: { kind: 'agent', agent: a },
     trust: 'stranger',
@@ -486,7 +486,7 @@ async function beatStranger() {
     agent: a,
     slackSent: true,
     requiresStepUp: false,
-    refId: 't_req_relay',
+    refId: held.id,
   }
   db.reviews.unshift(item)
   db.requests[item.id] = {

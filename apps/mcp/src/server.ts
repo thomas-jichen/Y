@@ -3,7 +3,13 @@
  * `tsx src/server.ts` serves it directly on `PORT` (default 3000).
  */
 import { pathToFileURL } from 'node:url';
+import { isBuilding } from 'mcp-use';
 import { createServer } from './app.js';
+import { assertCoreEnv } from './core-client.js';
+
+// Fail at startup, not on the first tool call. `mcp-use build` evaluates this
+// entry without runtime env, so the check is skipped there.
+if (!isBuilding()) assertCoreEnv(process.env);
 
 const server = createServer();
 

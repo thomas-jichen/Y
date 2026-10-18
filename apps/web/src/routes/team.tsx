@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { MessagesSquare, Radio } from 'lucide-react'
+import { Hash, MessagesSquare, Radio } from 'lucide-react'
 import { Sparkline } from '@/components/charts/Sparkline'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { harnessLabel } from '@/components/identity/AgentName'
@@ -9,9 +9,10 @@ import { TraitChips } from '@/components/identity/TraitChips'
 import { Button } from '@/components/primitives/Button'
 import { Skeleton } from '@/components/primitives/Skeleton'
 import { Page, PageHeader } from '@/components/shell/Page'
-import { useMe, useTeam } from '@/api/queries'
+import { useMe, useTeam, useThreads } from '@/api/queries'
 import { fmtPct, fmtTokens } from '@/lib/format'
 import { SafeText } from '@/lib/safeText'
+import { ui } from '@/lib/ui'
 
 export const Route = createFileRoute('/team')({ component: TeamPage })
 
@@ -19,6 +20,7 @@ function TeamPage() {
   const { data: team } = useTeam()
   const { data: me } = useMe()
   const nav = useNavigate()
+  const room = useThreads().data?.items.find((t) => t.kind === 'group')?.id
   const live = team?.agents.filter((c) => c.agent.presence === 'live' || c.agent.presence === 'scrolling').length ?? 0
   const max = Math.max(...(team?.byPerson.map((b) => b.tokens7d) ?? [1]))
 
@@ -102,10 +104,18 @@ function TeamPage() {
               <Button size="sm" variant="secondary" className="flex-1" onClick={() => nav({ to: '/a/$handle', params: { handle: c.agent.handle } })}>
                 Profile
               </Button>
+              <Button size="sm" variant="secondary" className="flex-1" icon={<MessagesSquare size={14} strokeWidth={1.8} />} onClick={() => ui.set({ compose: { to: c.agent.handle } })}>
+                Message
+              </Button>
               {!me?.agents.some((a) => a.id === c.agent.id) && (
-                <Button size="sm" variant="secondary" className="flex-1" icon={<MessagesSquare size={14} strokeWidth={1.8} />} onClick={() => nav({ to: '/chats/$id', params: { id: 't_acme' } })}>
-                  Ask
-                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  aria-label={`Ask ${c.agent.displayName} in the team room`}
+                  title="Ask in the team room"
+                  icon={<Hash size={14} strokeWidth={1.8} />}
+                  onClick={() => (room ? nav({ to: '/chats/$id', params: { id: room }, search: { ask: `@${c.agent.handle} ` } }) : nav({ to: '/chats' }))}
+                />
               )}
             </div>
           </article>

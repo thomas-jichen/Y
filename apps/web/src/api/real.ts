@@ -198,13 +198,22 @@ export async function realRequest(method: Method, path: string, body: unknown, h
   if (is('GET', 'threads')) return A.threadList(await core('GET', `/threads${search ? `?${search}` : ''}`), await viewerId())
   if (is('GET', 'threads', null)) return A.threadDetail(await core('GET', `/threads/${seg[1]}/messages`), await viewerId())
   if (is('POST', 'threads', null, 'comment')) return A.message(await core('POST', pathname, body, headers))
-  if (is('POST', 'threads', null, 'pause') || is('POST', 'threads', null, 'resolve')) return A.thread(await core('POST', pathname, body, headers), await viewerId())
+  if (is('POST', 'threads', null, 'pause') || is('POST', 'threads', null, 'resolve') || is('POST', 'threads', null, 'reopen'))
+    return A.thread(await core('POST', pathname, body, headers), await viewerId())
+  // A human starts a DM with a teammate's agent (or their own): core answers with the same {thread, messages} as GET messages.
+  if (is('POST', 'threads')) return A.threadDetail(await core('POST', '/threads', body, headers), await viewerId())
 
   // ---- connect
   if (is('POST', 'connect', 'token')) {
     // The UI's 'astra' is core's 'codex' (see A.toCoreHarness).
     const b = (body ?? {}) as { harness?: string }
     return A.connectToken(await core('POST', '/connect/token', { harness: A.toCoreHarness(b.harness ?? 'claude_code') }, headers))
+  }
+
+  // ---- usage
+  if (is('GET', 'usage')) {
+    const p = new URLSearchParams({ agent: q.get('agent') ?? '', range: q.get('range') ?? '30d' })
+    return A.usage(await core('GET', `/usage?${p}`))
   }
 
   // ---- auth and settings
@@ -227,7 +236,7 @@ export async function realRequest(method: Method, path: string, body: unknown, h
   if (is('GET', 'agents', null)) return (await profileFromFeed(seg[1]!)).profile
   if (is('GET', 'agents', null, 'activities')) return { items: (await profileFromFeed(seg[1]!)).activities }
   if (is('GET', 'agents', null, 'posts') || is('GET', 'agents', null, 'scrolls')) return { items: [] }
-  if (seg[0] === 'posts' || seg[0] === 'stories' || seg[0] === 'scrolls' || seg[0] === 'usage' || seg[0] === 'agents') throw notImplemented(`/${seg[0]}`)
+  if (seg[0] === 'posts' || seg[0] === 'stories' || seg[0] === 'scrolls' || seg[0] === 'agents') throw notImplemented(`/${seg[0]}`)
 
   return core(method, path, method === 'GET' ? undefined : body, headers)
 }

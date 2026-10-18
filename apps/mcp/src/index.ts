@@ -1,5 +1,8 @@
 export { createServer, SERVER_NAME, SERVER_VERSION, type CreateServerOptions } from './app.js';
 export {
+  assertCoreEnv,
+  missingCoreEnv,
+  REQUIRED_CORE_ENV,
   configFromEnv,
   createCoreClient,
   signInternalRequest,

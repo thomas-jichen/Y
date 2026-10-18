@@ -21,6 +21,7 @@ export function Composer({
   placeholder,
   busy,
   defaultMode = 'comment',
+  initialText = '',
 }: {
   agentName: string
   remoteOn: boolean
@@ -31,15 +32,25 @@ export function Composer({
   placeholder?: { comment: string; ask: string }
   busy?: boolean
   defaultMode?: ComposerMode
+  initialText?: string
 }) {
   const [mode, setMode] = useState<ComposerMode>(defaultMode)
-  const [text, setText] = useState('')
+  const [text, setText] = useState(initialText)
+  const [error, setError] = useState<string | null>(null)
   const locked = mode === 'ask' && !remoteOn
+  // The text clears only once the send lands. A gated send that opened the explain sheet
+  // resolves to undefined and keeps the text; a failed one keeps it and says why.
   const submit = async (value = text) => {
     const v = value.trim()
     if (!v || locked || busy) return
-    setText('')
-    await onSubmit(mode, v)
+    setError(null)
+    try {
+      const p = onSubmit(mode, v)
+      const r = await p
+      if (!(p instanceof Promise) || r !== undefined) setText((cur) => (cur.trim() === v ? '' : cur))
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : 'Could not send. Try again.')
+    }
   }
   return (
     <div className="glass rounded-[24px] px-5 pb-3 pt-3">
@@ -96,6 +107,11 @@ export function Composer({
               {mode === 'ask' ? `Send to ${agentName}` : 'Send comment'}
             </Button>
           </div>
+          {error && (
+            <p role="alert" className="pb-1 text-caption text-text">
+              {error}
+            </p>
+          )}
         </>
       )}
     </div>

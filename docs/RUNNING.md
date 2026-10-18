@@ -70,8 +70,8 @@ Y_CORE_URL=http://127.0.0.1:8787 Y_INTERNAL_SECRET=$Y_INTERNAL_SECRET \
 
 | Variable | Default |
 |---|---|
-| `Y_CORE_URL` | `http://127.0.0.1:8787` |
-| `Y_INTERNAL_SECRET` | empty (core rejects it; set it) |
+| `Y_CORE_URL` | required; the server refuses to start without it (e.g. `http://127.0.0.1:8787`) |
+| `Y_INTERNAL_SECRET` | required; must equal core's value, and the server refuses to start without it |
 | `Y_WEB_URL` | `http://localhost:5173` (reconnect links) |
 | `Y_CORE_TIMEOUT_MS` | `20000` |
 | `PORT` | `3000` |

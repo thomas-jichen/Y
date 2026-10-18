@@ -16,10 +16,11 @@
  * | `GET /review/:id` | | `ReviewDetail` |
  * | `POST /review/:id/decision` | {@link DecisionRequest} | {@link DecisionResponse} |
  * | `GET /threads?unread=` | {@link ThreadsQuery} | {@link ThreadList} |
+ * | `POST /threads` | {@link NewThreadRequest} | {@link NewThreadResponse} |
  * | `GET /threads/:id/messages?cursor=` | {@link ThreadMessagesQuery} | {@link ThreadDetail} |
  * | `POST /threads/:id/comment` | {@link CommentRequest} | {@link CommentResponse} |
  * | `POST /threads/:id/instruct` | {@link InstructRequest} | {@link InstructResponse} |
- * | `POST /threads/:id/pause` · `/resolve` | | {@link ThreadControlResponse} |
+ * | `POST /threads/:id/pause` · `/resolve` · `/reopen` | | {@link ThreadControlResponse} |
  * | `GET /segments/:slug` | | `Segment` |
  * | `GET /setups/:id` | | `SharedComponentPage` |
  * | `POST /connect/token` | {@link ConnectTokenRequest} | {@link ConnectToken} |
@@ -32,6 +33,7 @@
  * | `GET/PUT /settings/notifications` | {@link NotificationPrefs} | {@link NotificationPrefs} |
  * | `GET /settings/slack-link` · `POST` | | {@link SlackLink} |
  * | `GET /safety/scorecard` | | {@link SafetyScorecard} |
+ * | `GET /usage?agent=&range=` | {@link UsageQuery} | {@link UsageSeries} |
  *
  * @module web
  */
@@ -42,6 +44,7 @@ import {
   AgentRef,
   Count,
   CursorString,
+  Handle,
   Harness,
   HighlightId,
   InstallId,
@@ -248,7 +251,24 @@ export const InstructResponse = z.object({
 });
 export type InstructResponse = z.infer<typeof InstructResponse>;
 
-/** `POST /threads/:id/pause` and `/resolve` return the updated thread. */
+/**
+ * `POST /api/v1/threads`: a human starts a DM with their own or a teammate's
+ * agent (strangers: 403 `DM_NOT_PERMITTED`, I4). The body is delivered as
+ * `human_comment` data, like a comment. An existing, non-archived DM between
+ * the viewer and that agent is reused. `subject` is shown once screened clean.
+ */
+export const NewThreadRequest = z.object({
+  to: Handle,
+  body: multiLine(MESSAGE_BODY_MAX, 1),
+  subject: singleLine(120).optional(),
+});
+export type NewThreadRequest = z.infer<typeof NewThreadRequest>;
+
+/** `POST /api/v1/threads` returns the thread and its messages, as `GET /threads/:id/messages` does. */
+export const NewThreadResponse = ThreadDetail;
+export type NewThreadResponse = ThreadDetail;
+
+/** `POST /threads/:id/pause`, `/resolve` and `/reopen` return the updated thread. */
 export const ThreadControlResponse = Thread;
 export type ThreadControlResponse = Thread;
 
@@ -444,3 +464,69 @@ export const SafetyScorecard = z.object({
     .max(11),
 });
 export type SafetyScorecard = z.infer<typeof SafetyScorecard>;
+
+/* ================================================================ usage */
+
+/** Usage window. */
+export const UsageRange = z.enum(['7d', '30d', '90d']);
+export type UsageRange = z.infer<typeof UsageRange>;
+
+/** Days in a {@link UsageRange}. */
+export const USAGE_RANGE_DAYS: Record<UsageRange, number> = { '7d': 7, '30d': 30, '90d': 90 };
+
+/** `GET /api/v1/usage` query: an agent handle (with or without `@`) and a window (default 30d). */
+export const UsageQuery = z.object({
+  agent: z.string().regex(/^@?[a-z0-9-]{3,32}$/, { error: 'agent must be a handle' }),
+  range: UsageRange.default('30d'),
+});
+export type UsageQuery = z.infer<typeof UsageQuery>;
+
+/**
+ * One UTC day of an agent's sessions (every activity counts, any status).
+ * `tokensIn` = input + cacheWrite + subagents, so in + out + cacheRead = tokens total.
+ * `green` = sessions that ended green or shipped; `tokensToGreen` = mean tokens of those (0 if none).
+ */
+export const UsageDay = z.object({
+  day: IsoTimestamp,
+  tokensIn: Count,
+  tokensOut: Count,
+  cacheRead: Count,
+  sessions: Count,
+  costUsd: Usd,
+  activeMs: Count,
+  green: Count,
+  tokensToGreen: Count,
+});
+export type UsageDay = z.infer<typeof UsageDay>;
+
+/** Window totals; `greenRate` = green / sessions. */
+export const UsageTotals = z.object({
+  tokens: Count,
+  sessions: Count,
+  activeMs: Count,
+  costUsd: Usd,
+  greenRate: Probability,
+});
+export type UsageTotals = z.infer<typeof UsageTotals>;
+
+/**
+ * `GET /api/v1/usage`. Days run oldest → newest and end today (UTC). `heat` is sessions per day
+ * over the range; `hours` is the share of sessions by UTC start hour (24 entries, sums to 1 or 0);
+ * `tools` sums built-in tool calls plus `MCP: <server>` totals; `models` is the share of tokens by
+ * model family; `prior` is the previous window of equal length; `streak` counts consecutive days
+ * through today with at least one session. `model` is the agent's most used model id in the window.
+ */
+export const UsageSeries = z.object({
+  agent: AgentRef,
+  model: ModelId.optional(),
+  range: UsageRange,
+  days: z.array(UsageDay).max(90),
+  heat: z.array(z.object({ day: IsoTimestamp, sessions: Count })).max(90),
+  hours: z.array(Probability).length(24),
+  tools: z.record(z.string().max(140), Count), // StatKey (<=128) plus the `MCP: ` prefix
+  models: z.object({ opus: Probability, sonnet: Probability, haiku: Probability }),
+  totals: UsageTotals.extend({ cacheShare: Probability }),
+  prior: UsageTotals,
+  streak: Count,
+});
+export type UsageSeries = z.infer<typeof UsageSeries>;

@@ -6,12 +6,15 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { MCP_ROOT, prepareDeploy } from './prepare-deploy.js';
 
 // Inside apps/mcp so the bundle's bare imports (mcp-use, zod) resolve from apps/mcp/node_modules.
 const out = path.join(MCP_ROOT, `.test-deploy-${process.pid}`);
 afterAll(() => fs.rmSync(out, { recursive: true, force: true }));
+afterEach(() => vi.unstubAllEnvs());
+
+const bundleUrl = (tag: string) => `${pathToFileURL(path.join(out, 'src', 'server.js')).href}?${tag}`;
 
 describe('prepare-deploy', () => {
   it('writes a standalone project and keeps the mcp-use link dir', async () => {
@@ -37,10 +40,26 @@ describe('prepare-deploy', () => {
   });
 
   it('the bundle default-exports an MCPServer with the slice tools', async () => {
-    const mod = (await import(pathToFileURL(path.join(out, 'src', 'server.js')).href)) as {
+    vi.stubEnv('Y_CORE_URL', 'http://127.0.0.1:8787');
+    vi.stubEnv('Y_INTERNAL_SECRET', 'test-secret');
+    const mod = (await import(bundleUrl('env'))) as {
       default: { tool: unknown; app: unknown };
     };
     expect(typeof mod.default.tool).toBe('function');
     expect(mod.default.app).toBeDefined();
+  });
+
+  it('the bundle refuses to start without Y_CORE_URL / Y_INTERNAL_SECRET', async () => {
+    vi.stubEnv('Y_CORE_URL', '');
+    vi.stubEnv('Y_INTERNAL_SECRET', '');
+    await expect(import(bundleUrl('noenv'))).rejects.toThrow(/Y_CORE_URL and Y_INTERNAL_SECRET must be set/);
+  });
+
+  it('mcp-use build (MCP_USE_PHASE=build) can still evaluate the bundle without env', async () => {
+    vi.stubEnv('Y_CORE_URL', '');
+    vi.stubEnv('Y_INTERNAL_SECRET', '');
+    vi.stubEnv('MCP_USE_PHASE', 'build');
+    const mod = (await import(bundleUrl('build'))) as { default: { tool: unknown } };
+    expect(typeof mod.default.tool).toBe('function');
   });
 });

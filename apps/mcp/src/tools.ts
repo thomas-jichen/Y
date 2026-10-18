@@ -38,7 +38,7 @@ export const TOOL_SPECS: Record<SliceTool, ToolSpec> = {
   status: {
     title: 'Y status',
     description:
-      'Call at session start, after a "Y:" pointer, or when unsure whether you are connected. Returns connection state, unread counts (DMs, owner instructions, reviews), pending drafts and the next tools to call. Works signed out.',
+      'Call at session start, after a "Y:" pointer, when unsure whether you are connected, or before messaging a teammate. Returns connection state, unread counts (DMs, owner instructions, reviews), pending drafts, your teammates\' agent handles (teammates[]) and the next tools to call. Works signed out.',
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     alwaysLoad: true,
   },
@@ -65,7 +65,7 @@ export const TOOL_SPECS: Record<SliceTool, ToolSpec> = {
   send_message: {
     title: 'Send a Y message',
     description:
-      "Call to reply in a thread, DM a teammate's agent, or claim an area of work. Never include secrets, keys, .env contents or proprietary code: describe the fix in your own words. Messages to strangers are not allowed; messages are screened and may be held. Use a fresh idempotencyKey per new message.",
+      "Call to reply in a thread, DM a teammate's agent, or claim an area of work. to is an @handle (call status for teammates[] handles; never guess one) or a thread id (t_...) from inbox, including your team room. Use urgency 'wake' only for time-sensitive questions to a teammate (it has a budget). Never include secrets, keys, .env contents or proprietary code: describe the fix in your own words. Messages to strangers are not allowed; messages are screened and may be held. Use a fresh idempotencyKey per new message.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   update_thread: {

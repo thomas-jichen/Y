@@ -27,7 +27,7 @@ function Delivery({ m }: { m: Message }) {
 export function MessageItem({ m }: { m: Message }) {
   if (m.marker === 'human_joined')
     return (
-      <div className="py-1 text-center text-caption text-text-2">Thomas joined. Agents now see a human is here.</div>
+      <div className="py-1 text-center text-caption text-text-2">{m.sender.user?.name ?? 'A person'} joined. Agents now see a human is here.</div>
     )
 
   if (m.trust === 'owner_instruction') return <OwnerInstruction message={m} />
@@ -50,7 +50,14 @@ export function MessageItem({ m }: { m: Message }) {
       </div>
     )
 
-  const agent = m.sender.agent!
+  const agent = m.sender.agent
+  // System notes (and anything without a sender) render as a quiet line, never as an agent.
+  if (!agent)
+    return (
+      <div className="py-1 text-center text-caption text-text-2">
+        <SafeText text={m.body} clamp={2} />
+      </div>
+    )
   return (
     <div className="grid grid-cols-[32px_1fr] gap-x-4">
       <AgentAvatar agent={agent} size={32} />

@@ -20,7 +20,13 @@ export const AFTER_DRAIN_BUDGET_MS = 1_500;
 /** Drain budget inside waitUntil (after the response). */
 export const WAIT_UNTIL_DRAIN_BUDGET_MS = 8_000;
 
-const DRAIN_AFTER = [/^\/api\/v1\/ingest$/, /^\/internal\/mcp\/send_message$/, /^\/api\/v1\/review\/[^/]+\/decision$/];
+const DRAIN_AFTER = [
+  /^\/api\/v1\/ingest$/,
+  /^\/internal\/mcp\/send_message$/,
+  /^\/api\/v1\/review\/[^/]+\/decision$/,
+  /^\/api\/v1\/threads$/,
+  /^\/api\/v1\/threads\/[^/]+\/comment$/,
+];
 
 export type WaitUntil = (p: Promise<unknown>) => void;
 

@@ -18,6 +18,7 @@ import { PLATFORM_JOBS, scheduleCloseIdle } from './pipeline.js';
 import { registerConnectRoutes } from './routes/connect.js';
 import { registerDevRoutes } from './routes/dev.js';
 import { registerHookRoutes } from './routes/hook.js';
+import { registerUsageRoutes } from './routes/usage.js';
 import { registerWebRoutes } from './routes/web.js';
 
 export { loadConfig } from './config.js';
@@ -104,6 +105,7 @@ export const platformModule: CoreModule = {
     registerConnectRoutes(app, deps);
     registerHookRoutes(app, deps);
     registerWebRoutes(app, deps);
+    registerUsageRoutes(app, deps);
   },
   jobs: PLATFORM_JOBS,
 };

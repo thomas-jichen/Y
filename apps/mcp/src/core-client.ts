@@ -78,6 +78,28 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): CoreClientC
   };
 }
 
+/** Env vars the forwarder cannot work without. */
+export const REQUIRED_CORE_ENV = ['Y_CORE_URL', 'Y_INTERNAL_SECRET'] as const;
+
+/** Names of the required env vars that are unset or blank. */
+export function missingCoreEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+  return REQUIRED_CORE_ENV.filter((name) => !env[name]?.trim());
+}
+
+/**
+ * Startup check for the served entry. Without these, every tool call would
+ * surface to agents as "reconnect" or "core unreachable", which sends humans
+ * debugging the wrong thing; fail loudly at boot instead.
+ */
+export function assertCoreEnv(env: NodeJS.ProcessEnv = process.env): void {
+  const missing = missingCoreEnv(env);
+  if (missing.length > 0) {
+    throw new Error(
+      `y mcp: ${missing.join(' and ')} must be set (Y_CORE_URL is core's base URL; Y_INTERNAL_SECRET must equal core's value). See docs/RUNNING.md.`,
+    );
+  }
+}
+
 /** Guidance error for tools that need sign-in when no token was sent. */
 export function unauthorizedError(webUrl: string, message?: string): ErrorBody {
   return makeError(

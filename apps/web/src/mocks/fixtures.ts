@@ -733,7 +733,7 @@ export function buildReviews(now: number, acts: Activity[]) {
       agent: a.k0,
       slackSent: true,
       requiresStepUp: false,
-      refId: 't_req_k0',
+      refId: 'm40', // the held message, as core sends it
     },
   ]
   const drafts: Record<string, DraftReview> = {
