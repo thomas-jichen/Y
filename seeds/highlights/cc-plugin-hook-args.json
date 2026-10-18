@@ -1,0 +1,66 @@
+{
+  "kind": "gotcha",
+  "title": "Plugin hook exec form puts the script in args",
+  "summary": "In a plugin's `hooks/hooks.json`, whether `args` is present is what decides exec form vs shell form. Exec form means `command` is the executable ONLY — putting `\"node script.js\"` in `command` alongside `args` fails to spawn. `${CLAUDE_PLUGIN_ROOT}` expands to the plugin's installed-version directory, which moves on every plugin update, so never write state under it.",
+  "body": {
+    "problem": "Your plugin's hook doesn't run, or runs with mangled arguments. Two causes dominate. First, exec form vs shell form is decided implicitly by whether you set `args`, not by any explicit field: with `args` present there is no shell at all, so `\"command\": \"node scripts/format.js\"` can never resolve (there is no executable literally named `node scripts/format.js`), and Claude Code logs a warning that the spawn will fail. Second, in shell form the expanded `${CLAUDE_PLUGIN_ROOT}` is re-tokenized by the shell, so an installation path containing a space silently breaks the hook unless you quoted the placeholder.",
+    "steps": [
+      "Put the plugin's hooks in `hooks/hooks.json` at the plugin root, with the event map wrapped in a top-level `\"hooks\"` key. A file holding only the bare event map fails to load. An optional top-level `\"description\"` is allowed.",
+      "Prefer exec form for anything that references a path placeholder: `{\"type\": \"command\", \"command\": \"node\", \"args\": [\"${CLAUDE_PLUGIN_ROOT}/scripts/format.js\", \"--fix\"]}`. Each `args` element is passed as exactly one argument, with no shell and no quoting needed.",
+      "Keep `command` to the executable name or path alone in exec form. Move every other token into `args`.",
+      "To run a bundled script directly rather than through an interpreter, make it executable and set `\"command\": \"${CLAUDE_PLUGIN_ROOT}/scripts/format.sh\", \"args\": []` — an empty `args` array still selects exec form.",
+      "Use shell form only when you need pipes, `&&`, redirects, or globs — and then double-quote every placeholder: `\"command\": \"node \\\"${CLAUDE_PLUGIN_ROOT}\\\"/scripts/format.js --fix\"`. `claude plugin validate` warns on an unquoted placeholder in a shell-form hooks-file command unless the hook sets `shell` to `\"powershell\"`.",
+      "Read `${CLAUDE_PLUGIN_ROOT}` as \"absolute path of the plugin's installed version\". It is also exported to the hook process as the `CLAUDE_PLUGIN_ROOT` env var (with `CLAUDE_PLUGIN_DATA`, `CLAUDE_PROJECT_DIR`, and `CLAUDE_PLUGIN_OPTION_<KEY>`), so a script can read `process.env.CLAUDE_PLUGIN_ROOT` regardless of which form launched it.",
+      "Never write state, caches, or `node_modules` under `${CLAUDE_PLUGIN_ROOT}` — it changes on plugin update. Use `${CLAUDE_PLUGIN_DATA}` (`~/.claude/plugins/data/<id>/`), which is created on first reference and kept across updates.",
+      "Run `claude plugin validate ./my-plugin` before shipping; it is the authoritative check for paths, quoting warnings, and manifest shape."
+    ],
+    "pitfalls": [
+      {
+        "tried": "`{\"command\": \"node ${CLAUDE_PLUGIN_ROOT}/scripts/format.js\", \"args\": [\"--fix\"]}`",
+        "whyFailed": "Setting `args` switches to exec form, where `command` is resolved as a single executable with no shell tokenization. There is no executable named `node <path>`; Claude Code logs a warning because the spawn will fail. Split it: `\"command\": \"node\"`, and the script path as the first `args` element."
+      },
+      {
+        "tried": "Shell form with a bare `${CLAUDE_PLUGIN_ROOT}/scripts/check.py` after `python3`.",
+        "whyFailed": "The shell re-tokenizes the expanded path, so an installation directory containing a space splits into two words and the script never runs. The docs give this its own error notification (\"Hook needs quotes around a path with a space\"). Quote the placeholder or switch to exec form with `args`."
+      },
+      {
+        "tried": "Exec form on Windows with `\"command\": \"eslint\"` or another `node_modules/.bin` entry.",
+        "whyFailed": "\"The `.cmd` and `.bat` shims that npm, npx, eslint, and other tools install in `node_modules/.bin` are not executables and can't be spawned without a shell.\" Invoke the underlying script with `node` directly, e.g. `\"command\": \"node\", \"args\": [\"${CLAUDE_PLUGIN_ROOT}/node_modules/eslint/bin/eslint.js\"]`, or use shell form."
+      },
+      {
+        "tried": "Referencing `${user_config.MY_KEY}` from a shell-form plugin hook command.",
+        "whyFailed": "A shell-form plugin hook whose `command` references `${user_config.*}` fails with an error instead of running, because the value would be re-parsed by a shell. Switch to exec form with `args`, or read `$CLAUDE_PLUGIN_OPTION_MY_KEY` from the environment. (Shell-form substitution did work before v2.1.207, so older examples mislead.)"
+      },
+      {
+        "tried": "Caching installed dependencies or writing a state file under `${CLAUDE_PLUGIN_ROOT}`.",
+        "whyFailed": "That path is the installed-version directory and moves when the plugin updates, so the state disappears. `${CLAUDE_PLUGIN_DATA}` is the documented persistent location."
+      },
+      {
+        "tried": "Matching the plugin's own MCP tools by server name in a hook `matcher`.",
+        "whyFailed": "A plugin-provided MCP tool is named `mcp__plugin_<plugin>_<server>__<tool>`; \"A matcher on the server name alone never fires.\" Write the full tool name."
+      },
+      {
+        "tried": "Setting `\"shell\": \"powershell\"` on a hook that also has `args`.",
+        "whyFailed": "The `shell` field is \"Ignored when `args` is set\" — exec form spawns no shell at all."
+      }
+    ],
+    "verification": "Build a minimal plugin with `hooks/hooks.json` containing a `PostToolUse` hook on `Write|Edit` in exec form, pointing at a bundled script that appends its received `$@` and `$CLAUDE_PLUGIN_ROOT` to a log file. Run `claude plugin validate ./my-plugin` (expect `Validation passed`), load the plugin with `--plugin-dir`, ask Claude to edit a file, then read the log: the arguments should appear exactly as written in `args` and `CLAUDE_PLUGIN_ROOT` should be the absolute installed-version path. To reproduce the failure mode, install the plugin under a directory whose name contains a space and switch the hook to shell form with the placeholder unquoted.",
+    "appliesWhen": "Plugin hooks declared in `hooks/hooks.json` at the plugin root, or inline/by path under the `hooks` key of `.claude-plugin/plugin.json` (both load and are merged). Verified against Claude Code docs for v2.1.302 (changelog dated 2026-10-16). The `onFailure` command-hook field requires v2.1.295 or later.",
+    "notAppliesWhen": "Monitor commands and MCP `headersHelper`, which reject `${user_config.*}` and (for monitors) receive no `CLAUDE_PLUGIN_OPTION_<KEY>` values and no exported path variables. Commands Claude runs through the Bash tool, in the main session or a subagent, never receive `CLAUDE_PLUGIN_ROOT` in their environment. Exec form on Windows does not apply to `.cmd`/`.bat` shims. Shell-form `${user_config.*}` substitution only worked before v2.1.207."
+  },
+  "tags": [
+    "claude-code",
+    "plugins",
+    "hooks",
+    "hooks-json",
+    "exec-form",
+    "claude-plugin-root",
+    "windows"
+  ],
+  "sources": [
+    "https://code.claude.com/docs/en/hooks.md",
+    "https://code.claude.com/docs/en/plugins-reference",
+    "https://code.claude.com/docs/en/plugins/manifest-reference.md",
+    "https://code.claude.com/docs/en/plugins/components.md"
+  ]
+}

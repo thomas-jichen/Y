@@ -1,0 +1,44 @@
+{
+  "kind": "gotcha",
+  "title": "Codex hook trust is a per-entry hash, so editing one hook silently disables just that hook",
+  "summary": "Codex records trust in ~/.codex/config.toml as one [hooks.state] entry per hook, keyed by source file, event and index, each with a trusted_hash. Change one entry in hooks.json and that single hook stops running while its siblings in the same file keep working — with no error and no warning in codex exec. Verified both directions: adding a statusMessage to the SessionStart entry killed only SessionStart, and restoring the original bytes restored trust with no re-review. Version hook behaviour inside the hook script, whose bytes are not hashed, not in hooks.json.",
+  "body": {
+    "problem": "Your Codex hooks work. You tweak one of them — add a timeout, a statusMessage, reorder a field — and that hook stops firing. Nothing reports this. In codex exec there is no warning on stdout, nothing in the --json event stream, and the other hooks in the same file continue to run normally, which is exactly the pattern that makes you suspect your script rather than the trust layer. The cause is that trust is not per-file, it is per-entry and content-addressed: ~/.codex/config.toml holds [hooks.state.\"<file>:<event>:<index>:<index>\"] with trusted_hash = \"sha256:...\". Editing the entry changes the hash, the hash no longer matches a trusted value, and the hook is treated as new and unreviewed. A related trap sits in the same table: an entry can carry enabled = false while still being trusted, and it is then skipped just as silently.",
+    "steps": [
+      "When one hook stops firing after an edit, check ~/.codex/config.toml for its [hooks.state] entry before touching the script.",
+      "Re-approve through the TUI: open codex in the repo, take 'Review hooks' at the startup prompt, drill into the event, and toggle the hook to Trusted with space.",
+      "Check for enabled = false on the entry — trusted and enabled are separate, and a disabled hook looks identical to an untrusted one at runtime.",
+      "Treat hooks.json as immutable after install. Put anything you expect to change — thresholds, endpoints, behaviour flags — in the hook script or its environment, because script bytes are not covered by the hash.",
+      "In an installer, re-prompt for trust after any hook-config change rather than assuming prior approval carries over."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Debugging the hook script after an edit to hooks.json",
+        "whyFailed": "The script was never executed. The entry's hash changed, so Codex skipped it before spawning anything."
+      },
+      {
+        "tried": "Assuming trusting a hooks.json file trusts the whole file",
+        "whyFailed": "Each event and index gets its own entry and its own hash; approving one does not cover the others, and 'Trust all' at the startup prompt also covers unrelated global and plugin hooks."
+      },
+      {
+        "tried": "Reverting the edit and expecting to re-approve",
+        "whyFailed": "No re-approval is needed — restoring the exact original bytes reproduces the original hash and the hook runs again immediately. Useful for bisecting which edit broke it."
+      }
+    ],
+    "verification": "With working hooks, add a harmless field to one entry in .codex/hooks.json and run codex exec with a hook that logs to a file. That one event disappears from the log while the others remain. Restore the file byte-for-byte and it returns without any prompt.",
+    "appliesWhen": "Codex CLI 0.163.0, hooks declared in .codex/hooks.json or ~/.codex/hooks.json",
+    "notAppliesWhen": "Runs passing --dangerously-bypass-hook-trust, which skip the persisted-trust requirement entirely"
+  },
+  "tags": [
+    "codex",
+    "hooks",
+    "trust",
+    "config-toml",
+    "trusted-hash",
+    "silent-failure"
+  ],
+  "sources": [
+    "https://learn.chatgpt.com/docs/hooks",
+    "docs/spikes/S6-codex-hooks.md"
+  ]
+}

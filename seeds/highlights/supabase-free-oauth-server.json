@@ -1,0 +1,60 @@
+{
+  "kind": "gotcha",
+  "title": "Supabase OAuth 2.1 server is on the Free plan — the gate is MAUs and auto-pause, not the plan",
+  "summary": "Supabase Auth's OAuth 2.1 authorization server, including the public RFC 7591 dynamic client registration endpoint that MCP clients need, is available on all plans including Free with no separate charge. It is still labelled beta (public beta since 2025-11-26). What actually bites on Free is the 50,000 MAU quota and the fact that a Free project with too little weekly database activity is auto-paused, taking your OAuth issuer offline with it.",
+  "body": {
+    "problem": "You want a Supabase project to be the OAuth provider for your own MCP server — Supabase handles login, consent, dynamic client registration and token issuance — and you need to know before committing the architecture whether that forces you onto Pro. Models trained before late 2025 either do not know this feature exists or assume an identity-provider feature must be a paid add-on, so they will tell you to pay or to bolt on a third-party IdP.",
+    "steps": [
+      "Enable it on the Free project: Dashboard > Authentication > OAuth Server > enable OAuth 2.1 server. Locally/CLI, set [auth.oauth_server] enabled = true plus authorization_url_path in supabase/config.toml, then supabase stop && supabase start.",
+      "Turn on dynamic client registration explicitly — it is a separate switch (same dashboard page; allow_dynamic_registration = true in config.toml; GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION=true self-hosted). Without it, /oauth/clients/register is unavailable and MCP clients that rely on self-registration fail.",
+      "Build the authorization endpoint (your own consent UI at the configured authorization_url_path). Supabase will not render consent for you.",
+      "Point MCP clients at https://<project-ref>.supabase.co/auth/v1; discovery lives at https://<project-ref>.supabase.co/.well-known/oauth-authorization-server/auth/v1 (note the /auth/v1 suffix after the well-known path — not the bare root).",
+      "Budget on MAUs, not on the feature: OAuth sign-ins count toward the project's Monthly Active Users, Free includes 50,000 MAU, and multiple agents acting for one user count as one MAU.",
+      "Keep the Free project awake, or accept that the issuer can disappear: a Free project with insufficient weekly database activity is paused after a warning email."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Assuming OAuth-provider / \"Sign in with your app\" capability is a Pro-and-above feature and provisioning a paid project (or a separate IdP) for an MCP auth spike.",
+        "whyFailed": "The pricing comparison table lists \"OAuth 2.1 Server\" as Included for Free, Pro, Team and Enterprise, and the docs state it is \"available on all Supabase plans. It has no separate charge.\""
+      },
+      {
+        "tried": "Enabling the OAuth server and expecting MCP clients to self-register.",
+        "whyFailed": "Dynamic client registration is a separate opt-in flag. With it off, the public /oauth/clients/register endpoint is not available and the client's registration step fails; the docs' troubleshooting for \"Dynamic registration fails\" points at exactly this setting plus rate limiting (the endpoint returns 429)."
+      },
+      {
+        "tried": "Treating the beta as a stable platform guarantee because it is on the pricing page.",
+        "whyFailed": "The docs still say \"OAuth 2.1 server is in beta\" as of 2026-10-17, and the roadmap discussion describes phase 1 as authorization code + PKCE + refresh tokens with scope management deferred to phase 2 — tokens carry full user privileges, so authorization has to come from RLS using the client_id claim."
+      },
+      {
+        "tried": "Leaving a Free project as the production OAuth issuer for an MCP integration with bursty, low-traffic usage.",
+        "whyFailed": "Free projects are paused for inactivity over a week-long window (paid plans are exempt), so the token endpoint and discovery documents go away until someone resumes the project from the dashboard."
+      }
+    ],
+    "verification": "Fetch https://<project-ref>.supabase.co/.well-known/oauth-authorization-server/auth/v1 on a Free project after enabling the server and confirm the metadata document lists a registration endpoint; then POST a client metadata document to https://<project-ref>.supabase.co/auth/v1/oauth/clients/register and confirm a 201 with client credentials (403/404 means dynamic registration is still off, 429 means you hit the registration rate limit).",
+    "appliesWhen": "Supabase hosted platform as of 2026-10-17, any plan including Free; OAuth 2.1 Server public beta (live since 2025-11-26); self-hosted Auth with GOTRUE_OAUTH_SERVER_ENABLED=true and GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION=true.",
+    "notAppliesWhen": "Not applicable to Auth releases before the 2025-11-26 public beta (no OAuth server at all). Does not mean unlimited: OAuth sign-ins consume the plan's MAU quota (Free 50,000), and scope-based authorization is not in phase 1. Enterprise SSO (SAML / Monthly Active SSO Users) is a different feature and is marked \"Unavailable on Free Plan\"."
+  },
+  "tags": [
+    "supabase",
+    "oauth",
+    "mcp",
+    "rfc7591",
+    "dynamic-client-registration",
+    "pricing",
+    "free-plan",
+    "auth",
+    "beta"
+  ],
+  "sources": [
+    "https://supabase.com/docs/guides/auth/oauth-server/getting-started",
+    "https://supabase.com/docs/guides/auth/oauth-server",
+    "https://supabase.com/docs/guides/auth/oauth-server/mcp-authentication",
+    "https://supabase.com/pricing",
+    "https://raw.githubusercontent.com/supabase/supabase/master/packages/shared-data/pricing.ts",
+    "https://raw.githubusercontent.com/supabase/supabase/master/apps/docs/content/guides/auth/oauth-server/getting-started.mdx",
+    "https://supabase.com/changelog/38022-oauth-2-1-server-capabilities-for-supabase-auth",
+    "https://github.com/orgs/supabase/discussions/38022",
+    "https://supabase.com/docs/guides/platform/free-project-pausing",
+    "https://raw.githubusercontent.com/supabase/supabase/master/apps/docs/content/guides/platform/billing-on-supabase.mdx"
+  ]
+}

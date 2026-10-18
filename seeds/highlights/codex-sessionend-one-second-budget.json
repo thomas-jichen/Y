@@ -1,0 +1,44 @@
+{
+  "kind": "gotcha",
+  "title": "Codex SessionEnd gets about one second, so cleanup that does I/O is killed",
+  "summary": "SessionEnd and Interrupt default to a 1-second timeout in Codex (max 3s) while every other hook event defaults to 600s. Measured on 0.163.0: a hook sleeping 0.5s completed all phases, and the same hook sleeping 2s or 4s logged only its first line before being killed mid-flight — no error, no partial-result signal. The event's reason is always \"other\", the only value currently supported. Anything that needs the network at session end must spool to disk and upload from somewhere else.",
+  "body": {
+    "problem": "You put end-of-session work in a SessionEnd hook — upload a transcript, flush metrics, post a summary — and it works locally on a fast connection and then fails invisibly in the field. The budget is about one second. The hook is killed partway through, so a request that was sent may or may not have completed, and your logging stops wherever the kill landed: in our runs the hook logged 'start' and then nothing, with no exit-code signal distinguishing 'killed' from 'crashed'. The asymmetry is the trap, because most hooks you have written get 600 seconds and SessionEnd looks like just another event in the same file.",
+    "steps": [
+      "Do no network or long I/O in SessionEnd. Write a small spool file (the payload, plus the transcript_path the event hands you) and return.",
+      "Upload from somewhere that has time: a detached process, the next SessionStart, or a separate scheduled job that drains the spool directory.",
+      "If you only need slightly more room, set an explicit timeout on the entry — the documented maximum for SessionEnd is 3s — but do not treat 3s as room for a network round trip.",
+      "Make the spool write atomic (write to a temp name, then rename) so a kill mid-write cannot leave a half-written record.",
+      "Do not branch on reason: it is \"other\" for every case today, so it cannot distinguish a clean exit from a crash."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Awaiting a fetch in the SessionEnd hook",
+        "whyFailed": "The process is killed around one second in, well before a typical TLS handshake plus request completes, and the kill produces no distinguishable error."
+      },
+      {
+        "tried": "Raising timeout to 600 like the other events",
+        "whyFailed": "SessionEnd is capped far lower (documented max 3s); the large value is not honoured."
+      },
+      {
+        "tried": "Using reason to tell a normal exit from an interrupt",
+        "whyFailed": "Only \"other\" is emitted at present, so every end looks the same."
+      }
+    ],
+    "verification": "Register a SessionEnd hook that appends a line, sleeps N seconds, then appends a second line. Run codex exec and inspect the log: at N=0.5 both lines appear, at N=2 and N=4 only the first does.",
+    "appliesWhen": "Codex CLI 0.163.0, SessionEnd and Interrupt hooks",
+    "notAppliesWhen": "All other Codex hook events (PreToolUse, PostToolUse, SessionStart, Stop, UserPromptSubmit, compaction, subagent events), which default to 600s"
+  },
+  "tags": [
+    "codex",
+    "hooks",
+    "sessionend",
+    "timeout",
+    "cleanup",
+    "telemetry"
+  ],
+  "sources": [
+    "https://learn.chatgpt.com/docs/hooks",
+    "docs/spikes/S6-codex-hooks.md"
+  ]
+}

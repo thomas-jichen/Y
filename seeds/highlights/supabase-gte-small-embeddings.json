@@ -1,0 +1,59 @@
+{
+  "kind": "gotcha",
+  "title": "gte-small embeddings in Edge Functions are alive and free — but it's the only built-in model, and CPU time is the real ceiling",
+  "summary": "new Supabase.ai.Session('gte-small') still generates 384-dim embeddings locally inside Edge Functions with no external API and no AI line item on any plan, including Free. Nothing in the docs, changelog or edge-runtime source deprecates it. The traps are that gte-small is the ONLY built-in model (any other name silently falls back to an external Ollama host you must provide via AI_INFERENCE_API_HOST), inputs truncate at 512 tokens and English only, and your real budget on Free is the 2 s CPU-time and 256 MB memory limits per request, not a pricing tier.",
+  "body": {
+    "problem": "You are deciding whether to build semantic search on Supabase's built-in embeddings or pay for an external embeddings API. You need to know whether Supabase.ai is a 2024 experiment that has since been pulled, and whether it works on a Free project. Models from before late 2026 tend to hedge toward \"that was experimental, use OpenAI instead\" or invent a plan gate that does not exist.",
+    "steps": [
+      "In an Edge Function, create the session once at module scope (not per request) so the ONNX model loads once per worker: const model = new Supabase.ai.Session('gte-small').",
+      "Call it per request with pooling and normalization: await model.run(input, { mean_pool: true, normalize: true }) — output is a 384-dimension vector suitable for a pgvector vector(384) column.",
+      "Import 'jsr:@supabase/functions-js/edge-runtime.d.ts' if you want types for Supabase.ai.",
+      "Chunk input before embedding: anything past 512 tokens is truncated, and the model is English-only.",
+      "Size the Free plan by Edge Function limits, not by an AI quota: 500,000 invocations/month, 256 MB memory, 2 s CPU time per request, 150 s wall clock (400 s on paid).",
+      "If you need an LLM rather than embeddings, stand up your own Ollama or Llamafile server and set AI_INFERENCE_API_HOST — hosted LLM inference is still early-access via a signup form."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Passing a different model name, e.g. new Supabase.ai.Session('bge-small') or ('mistral'), expecting the runtime to fetch it.",
+        "whyFailed": "The runtime branches on the literal string 'gte-small' and initializes the local ONNX model only for that value. Any other name switches the session into external-inference mode, which is enabled only if the AI_INFERENCE_API_HOST env var is set — otherwise run() has no backend to talk to. gte-small remains the sole built-in model."
+      },
+      {
+        "tried": "Embedding a long document in one call and trusting the vector.",
+        "whyFailed": "Input is truncated to 512 tokens, so the tail of the document silently contributes nothing; the docs warn truncation \"may affect the accuracy\". Embedding large batches in one request also runs into the 2 s CPU-time-per-request limit even though wall clock allows 150 s on Free."
+      },
+      {
+        "tried": "Looking for an \"AI inference\" or \"embeddings\" line on the pricing page to confirm Free-plan eligibility.",
+        "whyFailed": "There is no such row — the Edge Functions pricing category contains only Invocations. Plan availability for Supabase.ai is simply not stated plan-by-plan in current docs; the explicit \"available to all Edge Functions users, local, hosted and self-hosted\" statement lives in the April 2024 launch blog."
+      },
+      {
+        "tried": "Constructing the Session inside the request handler.",
+        "whyFailed": "Model init work gets repeated per invocation inside a 2 s CPU budget on a 256 MB worker; hoisting the session to module scope amortizes it across the requests a warm worker serves."
+      }
+    ],
+    "verification": "Deploy a Free-project function that returns await new Supabase.ai.Session('gte-small').run('hello world', { mean_pool: true, normalize: true }) and confirm a 384-element float array comes back with no external network egress; then confirm the invocation shows up only under Edge Function Invocations usage, with no AI/inference usage item on the bill.",
+    "appliesWhen": "Supabase hosted Edge Functions and supabase/edge-runtime main (v1.77.x, released 2026-10-01) as of 2026-10-17, local CLI, and self-hosted; model name exactly 'gte-small'; Free plan included.",
+    "notAppliesWhen": "Does not cover non-English text or inputs over 512 tokens; does not provide any other embedding model; does not provide hosted LLM inference (Ollama/Llamafile mode requires your own server via AI_INFERENCE_API_HOST, hosted access is early-access only). Not a statement about embedding throughput: 256 MB memory and 2 s CPU per request bound batch size, and bulk backfills will hit the 500,000-invocation Free quota."
+  },
+  "tags": [
+    "supabase",
+    "edge-functions",
+    "embeddings",
+    "gte-small",
+    "pgvector",
+    "ai",
+    "free-plan",
+    "deno"
+  ],
+  "sources": [
+    "https://supabase.com/docs/guides/functions/ai-models",
+    "https://raw.githubusercontent.com/supabase/supabase/master/apps/docs/content/guides/functions/ai-models.mdx",
+    "https://supabase.com/docs/guides/ai/quickstarts/generate-text-embeddings",
+    "https://raw.githubusercontent.com/supabase/edge-runtime/main/ext/ai/js/ai.js",
+    "https://raw.githubusercontent.com/supabase/edge-runtime/main/ext/ai/consts.rs",
+    "https://api.github.com/repos/supabase/edge-runtime/releases?per_page=5",
+    "https://raw.githubusercontent.com/supabase/supabase/master/apps/docs/content/guides/functions/limits.mdx",
+    "https://raw.githubusercontent.com/supabase/supabase/master/packages/shared-data/pricing.ts",
+    "https://supabase.com/pricing",
+    "https://supabase.com/blog/ai-inference-now-available-in-supabase-edge-functions"
+  ]
+}

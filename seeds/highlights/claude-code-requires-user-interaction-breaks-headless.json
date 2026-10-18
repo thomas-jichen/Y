@@ -1,0 +1,45 @@
+{
+  "kind": "gotcha",
+  "title": "anthropic/requiresUserInteraction makes an MCP tool unusable headless",
+  "summary": "A tool advertising _meta {\"anthropic/requiresUserInteraction\": true} cannot be satisfied by bypassPermissions or by an explicit allow rule. Under claude -p it is denied outright and never reaches the server. Verified against an identical control tool in the same session: in bypassPermissions the control ran and the flagged tool was denied, and --allowedTools on the exact tool name changed nothing for the flagged tool while working for the control. Use it only for a step where a human genuinely must consent; never on a tool an agent calls in its own loop.",
+  "body": {
+    "problem": "You mark a sensitive MCP tool with requiresUserInteraction expecting a louder prompt, and the tool becomes unreachable in every automated context: claude -p, CI, cron, scheduled runs, and your own eval harness. The failure is a permission denial the agent cannot resolve by any means available to it — not a message it can reason about, and not something an operator can pre-authorise. The flag exists precisely to mean 'the approval card is itself the user-interaction surface, and no stored grant or automatic approval may answer it', so bypassPermissions and allow rules are both designed not to help. Because the mechanism is a denial rather than an error, it reads in logs like a misconfigured permission rather than a deliberate gate, and the usual fixes (add an allow rule, run with bypass) all appear to do nothing.",
+    "steps": [
+      "Keep the flag off every tool in the agent's own loop — reading an inbox, fetching state, posting results.",
+      "Reserve it for the one place the semantics fit: a human-consent step, where an agent self-approving would defeat the point. It then enforces that even --dangerously-skip-permissions cannot self-approve.",
+      "Pair it with _meta anthropic/permissionDisplay (title, description, displayName) so the approval card carries your product's words instead of a generic MCP prompt.",
+      "If you want a soft confirmation that still works headless, model it in the tool contract instead — a propose/confirm(token) handshake, or an input_required-style result — so a headless caller receives a well-formed refusal it can act on.",
+      "Test every tool under claude -p before shipping; the flag's effect is invisible in an interactive session where you just click approve."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Running with --permission-mode bypassPermissions",
+        "whyFailed": "Bypass does not apply: in the same session an unflagged control tool was allowed and the flagged tool was still denied."
+      },
+      {
+        "tried": "Adding --allowedTools mcp__<server>__<tool> for the exact tool",
+        "whyFailed": "A stored grant cannot answer this prompt by design. The identical rule allowed the unflagged control tool."
+      },
+      {
+        "tried": "Reading the model's summary to decide whether the call executed",
+        "whyFailed": "The model reports a denial, which is easy to misread as a tool error. Log received calls server-side; the flagged call never arrives at all."
+      }
+    ],
+    "verification": "Expose two otherwise identical MCP tools, one flagged and one not, and have the server log every tools/call. Run claude -p --permission-prompts none in bypassPermissions: the control's call appears in the server log, the flagged tool's does not.",
+    "appliesWhen": "Claude Code 2.1.302 (CLI), MCP tools whose descriptor sets _meta anthropic/requiresUserInteraction to true, registered either via claude mcp add or bundled in a plugin",
+    "notAppliesWhen": "Tools without the flag, which honour bypassPermissions and allow rules normally; interactive sessions where a human can answer the card"
+  },
+  "tags": [
+    "claude-code",
+    "mcp",
+    "permissions",
+    "requiresuserinteraction",
+    "headless",
+    "bypasspermissions",
+    "tool-meta"
+  ],
+  "sources": [
+    "https://code.claude.com/docs/en/mcp",
+    "docs/spikes/S16-requires-user-interaction.md"
+  ]
+}

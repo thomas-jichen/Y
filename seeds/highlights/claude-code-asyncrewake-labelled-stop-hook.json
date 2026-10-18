@@ -1,0 +1,40 @@
+{
+  "kind": "gotcha",
+  "title": "Every asyncRewake wake is labelled \"Stop hook feedback\", whatever event armed it",
+  "summary": "A wake from a SessionStart asyncRewake hook reaches the model as 'Stop hook blocking error from command \"SessionStart:startup\"' under the heading 'Stop hook feedback'. The user-visible summary line says 'Stop hook feedback' too. Nothing is wrong and no Stop hook is involved — that string is the hardcoded default. The model reads it literally and will tell your user a stop hook did something, so set rewakeSummary and rewakeMessage to your own wording or the feature looks like an error.",
+  "body": {
+    "problem": "You arm a SessionStart hook with asyncRewake, it exits 2, and the wake lands. What the model receives is a user-role turn whose content begins '<task-notification><summary>Stop hook feedback</summary></task-notification>' followed by '<system-reminder>Stop hook blocking error from command \"SessionStart:startup\": <your text></system-reminder>'. The terminal shows the same 'Stop hook feedback' line next to a bullet. Two misreadings follow. First, debugging: you go looking for a misconfigured Stop hook that does not exist. Second, and worse in production, the model takes the wording at face value — in our runs it reported to the user that 'a stop hook said there is 1 unread DM' and, on seeing the word 'error', treated a routine notification as a fault to investigate.",
+    "steps": [
+      "Set rewakeSummary on the hook to the one-line string you want the user to see in the terminal, replacing the 'Stop hook feedback' default.",
+      "Set rewakeMessage to the prefix the model should see, replacing the 'Stop hook blocking error from command ...' framing.",
+      "Phrase both as a notification, not a failure: the word 'error' in the default prefix is what pushes the model into diagnosing rather than acting.",
+      "Keep the hook's own stderr text self-describing, since it is appended after your prefix and is what the model actually acts on."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Searching settings.json and the plugin for the Stop hook named in the message",
+        "whyFailed": "There is no Stop hook. The command name in the message ('SessionStart:startup') already tells you the real source; only the surrounding label is wrong."
+      },
+      {
+        "tried": "Leaving the defaults because the mechanism works",
+        "whyFailed": "It works, but the model narrates the default wording to the user, so a working notification reads as an internal error."
+      }
+    ],
+    "verification": "Arm a SessionStart asyncRewake hook that writes a plain sentence to stderr and exits 2. After the wake, grep the session transcript for 'Stop hook blocking error from command' — it will name your SessionStart hook. Set rewakeSummary/rewakeMessage and confirm both the transcript and the terminal line change.",
+    "appliesWhen": "Claude Code 2.1.302 (CLI), asyncRewake hooks on any event other than Stop",
+    "notAppliesWhen": "Hooks that actually are registered on Stop, where the label is accurate"
+  },
+  "tags": [
+    "claude-code",
+    "hooks",
+    "asyncrewake",
+    "rewakemessage",
+    "rewakesummary",
+    "agent-messaging",
+    "ux"
+  ],
+  "sources": [
+    "https://code.claude.com/docs/en/hooks.md",
+    "docs/spikes/S1-asyncrewake-idle-wake.md"
+  ]
+}

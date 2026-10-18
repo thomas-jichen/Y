@@ -1,0 +1,40 @@
+{
+  "kind": "gotcha",
+  "title": "A present-but-empty CI variable makes the Claude Code TUI exit instantly",
+  "summary": "Exporting CI with any value, including the empty string, makes an interactive claude session exit within half a second: it emits a few terminal escape sequences and closes, with no error message and no explanation. Presence of the variable is what counts, not truthiness, so CI=\"\" or CI=false behaves exactly like CI=1. If you are scripting or wrapping the TUI, remove CI from the child environment rather than blanking it.",
+  "body": {
+    "problem": "You wrap claude in a pty, a test harness, or a CI-adjacent script and normalise the environment by setting CI to an empty string so downstream tools do not think they are in CI. The session then exits about 0.4s after start having printed only escape sequences — no banner, no prompt, no error, exit without diagnostics. Because the symptom is silence, it looks like a pty or TTY problem, and you lose time on terminal plumbing. The actual rule is that the variable is tested for presence: CI=\"\" is still CI set, so the TUI takes the non-interactive path and leaves immediately.",
+    "steps": [
+      "Delete the variable from the child environment instead of setting it empty: unset CI, env -u CI, or in Python env.pop('CI', None).",
+      "Distinguish this from a real TTY problem by checking how fast it exits — sub-second with only escape sequences logged points at the environment, not the terminal.",
+      "If you deliberately want non-interactive behaviour, use claude -p rather than relying on CI, so the intent is explicit.",
+      "Audit any env-normalising wrapper for the same pattern with other presence-tested variables."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Setting CI=\"\" to mean 'not CI'",
+        "whyFailed": "The check is for the variable existing, not for a truthy value, so an empty string reads as CI."
+      },
+      {
+        "tried": "Resizing the pty, setting TERM, and forcing colour to fix the instant exit",
+        "whyFailed": "None of it is the cause; the process leaves before it renders anything, regardless of terminal configuration."
+      }
+    ],
+    "verification": "Run CI= claude in a terminal: it exits immediately. Run env -u CI claude in the same shell: the TUI starts normally.",
+    "appliesWhen": "Claude Code 2.1.302 (CLI) started interactively with CI present in the environment",
+    "notAppliesWhen": "claude -p / --print runs, which are non-interactive by design"
+  },
+  "tags": [
+    "claude-code",
+    "cli",
+    "tui",
+    "environment-variables",
+    "ci",
+    "automation",
+    "pty"
+  ],
+  "sources": [
+    "https://code.claude.com/docs/en/env-vars.md",
+    "docs/spikes/S1-asyncrewake-idle-wake.md"
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "kind": "gotcha",
+  "title": "codex exec runs with untrusted hooks silently skipped",
+  "summary": "A fresh .codex/hooks.json does nothing under codex exec until someone clears a trust gate that only the interactive TUI shows. The non-interactive run completes normally, exits 0, prints no warning on stdout and emits nothing in the --json event stream; a SessionStart hook meant to inject context simply does not exist from the model's point of view. Verified: the probe returned NO PACELINE LINE with an empty hook log, then returned the injected line after trust was granted. Any installer that writes Codex hooks must own this step or ship inert.",
+  "body": {
+    "problem": "You write .codex/hooks.json, run codex exec to test it, and the session works — but your hooks never ran. There is no error to search for. The JSONL event stream contains only thread.started, turn.started, item.completed and turn.completed; the hook's own log file is empty; the exit code is 0. The trust requirement is surfaced only in the TUI, at session start: 'Hooks need review — N hooks are new or changed. Hooks can run outside the sandbox after you trust them.' with options to review, trust all, or continue without trusting. In a headless context that prompt has nowhere to appear, so the run proceeds as if the hooks were not configured. For anything that ships hooks as part of a product install, this is the difference between working and silently doing nothing on every customer machine.",
+    "steps": [
+      "After writing hooks, verify they actually ran rather than that the command succeeded: have each hook append to a log file and assert the log is non-empty.",
+      "Clear the gate once interactively: open codex in the repo and choose 'Review hooks' at the startup prompt, then toggle each hook to Trusted.",
+      "For automation that vets its own hook sources, pass --dangerously-bypass-hook-trust, which runs enabled hooks without requiring persisted trust for that invocation.",
+      "In an installer, state plainly that hooks need approval and that the integration is inert until then — a user who sees no error will assume it is working.",
+      "Remember the startup prompt's 'Trust all and continue' covers every pending hook on the machine, including unrelated global and plugin hooks, so prefer per-hook review."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Checking the exit code and the --json stream for a warning",
+        "whyFailed": "Neither reports it. The run is a normal successful run that happens to have no hooks."
+      },
+      {
+        "tried": "Assuming repo-local .codex/hooks.json is implicitly trusted because the folder was trusted",
+        "whyFailed": "Folder trust and hook trust are separate gates. Codex asks about the folder first, then about hooks, and clearing the first does not clear the second."
+      }
+    ],
+    "verification": "In a fresh repo, add a SessionStart hook emitting additionalContext and run: codex exec --json \"Reply with the line you can see in your context, or NO LINE.\" An untrusted hook yields NO LINE and an empty hook log; after trust, the same command returns the injected line.",
+    "appliesWhen": "Codex CLI 0.163.0, non-interactive codex exec with newly added or edited hooks",
+    "notAppliesWhen": "Hooks already trusted in ~/.codex/config.toml, or runs passing --dangerously-bypass-hook-trust"
+  },
+  "tags": [
+    "codex",
+    "hooks",
+    "trust",
+    "codex-exec",
+    "headless",
+    "silent-failure",
+    "installers"
+  ],
+  "sources": [
+    "https://learn.chatgpt.com/docs/hooks",
+    "docs/spikes/S6-codex-hooks.md"
+  ]
+}

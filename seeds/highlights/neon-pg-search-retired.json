@@ -1,0 +1,76 @@
+{
+  "kind": "gotcha",
+  "title": "Neon retired pg_search; BM25 search moves to lakebase_text",
+  "summary": "`CREATE EXTENSION pg_search` no longer works on Neon, and neither do `USING bm25` indexes, the `@@@` operator, or `paradedb.score()`. Neon blocked new installs on 2026-03-19 and retired the extension from existing projects on 2026-09-21; the extensions table now lists pg_search as \"Unavailable\" for PG14 through PG18. The replacement is `lakebase_text` with a `lakebase_bm25` index, and it is not a rename: the index covers a tsvector you build yourself rather than raw columns, `@@@` splits into `@@` for filtering plus `<@> to_bm25query(...)` for ranking, and scores come back negative so `ORDER BY ... DESC` has to become ascending. lakebase_text also needs Postgres 16+, so PG14/PG15 projects get no BM25 path at all.",
+  "body": {
+    "problem": "You have a Neon Postgres project whose search is built on ParadeDB's pg_search: a `CREATE INDEX ... USING bm25 (id, description, category) WITH (key_field = 'id')` index, queries using `description @@@ 'keyboard'`, and ranking via `paradedb.score(id)` ordered DESC. That extension is gone from Neon. Neon deprecated it for new projects on March 19, 2026 (announced in the April 3, 2026 changelog) and retired it from existing projects on September 21, 2026. The extension page now carries the banner \"Neon's support for pg_search has been removed\", and the extensions table lists pg_search with a dash for every Postgres major from PG14 to PG18 plus the note \"Unavailable.\" Reinstalling it is not an option, and the `pg_search` entry in Neon's preloadable-library list is itself marked deprecated with \"do not add it for new projects.\" The replacement, `lakebase_text`, models BM25 differently enough that a find-and-replace on the extension name produces either an error or silently wrong result ordering. Two things make this worse than a typical extension swap: `lakebase_text` requires Postgres 16 or later (the extensions table shows `-` for PG14 and PG15, `0.1.3` for PG16-PG18), so an older Neon project has no BM25 replacement available at all; and three pg_search features (fuzzy matching, snippet highlighting, the JSON query DSL and ICU/Lindera tokenizers) have no lakebase_text equivalent.",
+    "steps": [
+      "Confirm the damage: `SELECT extname FROM pg_extension WHERE extname = 'pg_search';` and `SELECT * FROM pg_indexes WHERE indexdef LIKE '%bm25%';`. Also check your major version — `SHOW server_version;` — because lakebase_text requires Postgres 16+. On PG14/PG15 stop here and plan either a Postgres upgrade or a non-BM25 fallback (built-in tsvector + GIN, pg_trgm, pgvector).",
+      "Check that the replacement library is loaded: `SHOW shared_preload_libraries;`. Neon preloads `lakebase_text` by default, but if your project has customized preloaded libraries you must add it back via the Neon API and restart the compute before `CREATE EXTENSION` will work.",
+      "`CREATE EXTENSION IF NOT EXISTS lakebase_text;` — it has no extension dependencies (unlike `lakebase_vector`, which needs pgvector).",
+      "Replace the index. Build a tsvector over the same columns, ideally as a generated column so it stays in sync: `ALTER TABLE mock_items ADD COLUMN search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', coalesce(description,'') || ' ' || coalesce(category,''))) STORED;` then `CREATE INDEX mock_items_bm25 ON mock_items USING lakebase_bm25 (search_tsv);`. Create it after the data is loaded — BM25 scores read corpus statistics gathered at build time — and `VACUUM` after large bulk loads.",
+      "Rewrite each query into a filter plus a rank. `WHERE description @@@ 'keyboard' ORDER BY paradedb.score(id) DESC` becomes `SELECT id, description, search_tsv <@> to_bm25query(to_tsvector('english','keyboard'), 'mock_items_bm25') AS score FROM mock_items WHERE search_tsv @@ to_tsquery('english','keyboard') ORDER BY score LIMIT 10;`. Note the three changes: `@@` does the filtering, `to_bm25query` takes the index name as its second argument, and the sort is ascending.",
+      "For user-supplied or multi-word input use `websearch_to_tsquery('english', $1)` in both the filter and the rank clause rather than `to_tsquery`.",
+      "Close the feature gaps that do not carry over: `paradedb.match(..., distance => 1)` fuzzy matching → `pg_trgm` similarity; `paradedb.snippet()` highlighting → Postgres `ts_headline()`; JSON query objects and ICU/Lindera tokenizers → tsquery operators (`&`, `|`, `<->`) and Postgres text-search configurations (`SELECT cfgname FROM pg_ts_config;` lists what is available).",
+      "Once results look right, `DROP EXTENSION pg_search CASCADE;` — CASCADE also drops the dependent `bm25` indexes — then restart the compute from the Neon Console's compute ⋯ menu or the restart-endpoint API to finish.",
+      "If you genuinely need pg_search semantics (the JSON DSL, advanced tokenizers, fuzzy operators), Neon's own doc points at ParadeDB itself rather than a Neon-hosted option."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Re-running `CREATE EXTENSION pg_search;`, or adding `pg_search` back to the project's preloaded libraries via the Neon API, to restore search after it broke.",
+        "whyFailed": "Neon's extensions table shows pg_search unavailable on every Postgres major (PG14-PG18), and the preloaded-library reference marks the `pg_search` library deprecated with explicit instructions not to add it. The extension was retired from existing projects on 2026-09-21; there is no Neon-side toggle to bring it back."
+      },
+      {
+        "tried": "Mechanically swapping `@@@` for `<@> to_bm25query(...)` and leaving the rest of the query — including `ORDER BY score DESC` — intact.",
+        "whyFailed": "Two silent failures compound. `<@>` only scores, it never filters, so without a `WHERE ... @@ to_tsquery(...)` clause every row in the table comes back with non-matches scored 0. And lakebase_text's scores are negative, so DESC sorts the worst matches first; the correct ordering is ascending. The query runs clean and returns confidently wrong results."
+      },
+      {
+        "tried": "`CREATE INDEX ... USING lakebase_bm25 (description, category)` — pointing the new index type at the same raw text columns the old bm25 index covered.",
+        "whyFailed": "`lakebase_bm25` indexes a `tsvector`, not raw text columns, and there is no `key_field` option. Multi-column search means combining the columns into one tsvector (typically a `GENERATED ALWAYS ... STORED` column) and indexing that single expression."
+      },
+      {
+        "tried": "Assuming lakebase_text is available anywhere pg_search was, and scheduling the migration without checking the project's Postgres version.",
+        "whyFailed": "lakebase_text requires Postgres 16 or later — the extensions table lists it as `-` for PG14 and PG15, `0.1.3` for PG16-PG18. A Neon project on PG14 or PG15 has no BM25 replacement and needs either a major-version upgrade first or a different approach (tsvector + GIN, pg_trgm, pgvector)."
+      },
+      {
+        "tried": "Treating it as a pure index swap and porting fuzzy matching, result highlighting, and the JSON query DSL across unchanged.",
+        "whyFailed": "Neon documents these as gaps with no one-to-one mapping: `paradedb.match(..., distance => 1)` has no equivalent (use pg_trgm), `paradedb.snippet()` has none (use `ts_headline()`), and JSON query objects plus ICU/Lindera tokenizers are unsupported (use tsquery operators and Postgres text-search configurations)."
+      },
+      {
+        "tried": "Keeping `to_tsquery` for the search box's raw input after the rewrite.",
+        "whyFailed": "`to_tsquery` expects pre-formatted query syntax and errors on plain phrases containing spaces, so the first multi-word user query throws. `websearch_to_tsquery` accepts free text and belongs in both the filter and the ranking expression."
+      },
+      {
+        "tried": "Creating the `lakebase_bm25` index on an empty table as part of a schema migration, then bulk-loading rows afterward.",
+        "whyFailed": "BM25 relevance depends on corpus statistics captured when the index is built, so an index created before the data lands scores poorly. Build it after loading, and `VACUUM` after large bulk loads to keep scores accurate."
+      },
+      {
+        "tried": "`DROP EXTENSION pg_search;` without CASCADE, or dropping it and considering the migration finished.",
+        "whyFailed": "The old `bm25` indexes depend on the extension, so a bare DROP is blocked by those dependencies; `CASCADE` is what removes them along with it. Neon's guide also ends with a required compute restart to complete the migration."
+      }
+    ],
+    "verification": "After migration: `SELECT extname FROM pg_extension WHERE extname = 'pg_search';` returns no rows, and `SELECT installed_version FROM pg_available_extensions WHERE name = 'lakebase_text';` reports an installed version (0.1.3 is current per Neon's 2026-09-25 changelog; `default_version` from the same view shows the latest available). Confirm the new index is used and ordering is right by running the rewritten query and checking that scores are negative and increasing down the result set, with the best match first — e.g. the doc's example returns -0.8374048792080783 for the top hits. `EXPLAIN` should show the `lakebase_bm25` index rather than a sequential scan. Spot-check relevance against the old pg_search output if you captured it before the cutover; scores will not match numerically (pg_search returned 0.8236319 where lakebase_text returns -0.8374048792080783 for the same rows) so compare result ordering, not values. Before dropping pg_search, confirm no remaining `bm25` indexes: `SELECT indexname, indexdef FROM pg_indexes WHERE indexdef LIKE '%USING bm25%';`.",
+    "appliesWhen": "Neon Postgres projects that used the ParadeDB `pg_search` extension — `USING bm25` indexes, the `@@@` operator, `paradedb.score()`, `paradedb.match()`, `paradedb.snippet()`, or `pg_search` in shared_preload_libraries. Deprecated for new Neon projects on 2026-03-19; retired from existing Neon projects on 2026-09-21. The `lakebase_text` replacement path applies to Neon projects on Postgres 16, 17, or 18 (extension version 0.1.3 as of Neon's 2026-09-25 changelog).",
+    "notAppliesWhen": "Does not apply to ParadeDB itself — Neon's own docs point to paradedb.com for continued pg_search functionality, so self-hosted ParadeDB or other Postgres hosts that still ship pg_search are unaffected. Does not apply to code using only Postgres' built-in `tsvector`/`tsquery` with GIN indexes, which was never part of this retirement. The `lakebase_text` migration specifically does not apply to Neon projects on Postgres 14 or 15, where lakebase_text is unavailable (the extensions table shows `-` for both) and the fallback is built-in full-text search, pg_trgm, or pgvector instead. Separately, Neon's `pgrag` deprecation is a different item on the same page and is not covered by these dates."
+  },
+  "tags": [
+    "neon",
+    "postgres",
+    "pg_search",
+    "lakebase_text",
+    "paradedb",
+    "bm25",
+    "full-text-search",
+    "deprecation",
+    "extension-retired",
+    "migration"
+  ],
+  "sources": [
+    "https://neon.com/docs/extensions/pg_search",
+    "https://neon.com/docs/extensions/migrate-pg-search-to-lakebase-text",
+    "https://neon.com/docs/extensions/pg-extensions",
+    "https://neon.com/docs/extensions/lakebase-text",
+    "https://neon.com/docs/changelog/2026-04-03",
+    "https://neon.com/docs/changelog/2026-09-25"
+  ]
+}
