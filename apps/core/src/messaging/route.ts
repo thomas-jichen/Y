@@ -458,6 +458,25 @@ export function noteFor(state: MessageState, path: string | null): RouteResult['
   }
 }
 
+/**
+ * The route_message job's answer to a daily-cap refusal (DM requests, PLAN §10). Inline
+ * send_message withdraws the message and refuses the send; a deferred message was already
+ * accepted as 'queued', so retrying until the job dies would leave it queued for good. It is
+ * blocked instead, as a malicious stranger intro is (queued -> request_pending -> blocked):
+ * the sender sees a terminal state and no review item is filed.
+ */
+export async function blockCappedMessage(deps: CoreDeps, messageId: string): Promise<MessageState | null> {
+  return deps.db.asService(async (tx) => {
+    const r = await tx.query<{ state: MessageState }>('select state from public.messages where id = $1 for update', [messageId]);
+    const cur = r.rows[0]?.state;
+    if (cur !== 'queued') return cur ?? null;
+    let state = step(cur, { type: 'submit', permitted: false });
+    state = step(state, { type: 'verdict', action: 'block' });
+    await setState(tx, messageId, state, { trust: 'stranger' });
+    return state;
+  });
+}
+
 /** Route in its own service transaction and publish the resulting events. */
 export async function routeMessage(deps: CoreDeps, messageId: string): Promise<RouteResult> {
   const events: PushEvent[] = [];

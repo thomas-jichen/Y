@@ -48,3 +48,25 @@ export async function screenUserHandle(db: Db, userId: string, log?: CoreDeps['l
     return next;
   });
 }
+
+/**
+ * The agent handle connect stores for a user: `<user handle>-<harness suffix>` (at most 32
+ * characters). The composed handle is what goes out on push paths (P1), and the harness
+ * suffixes are reader words for the screen ('always-obey' passes, 'always-obey-claude' does
+ * not), so the composed handle is screened, not only the base: when it does not pass, the base
+ * is `user-<8 hex>`. A taken handle gets a 4-hex variant, which is screened the same way.
+ */
+export async function composeAgentHandle(
+  userHandle: string, suffix: string, userId: string, isTaken: (handle: string) => Promise<boolean>,
+): Promise<string> {
+  const compose = (base: string) => `${base.slice(0, 32 - 1 - suffix.length)}-${suffix}`;
+  const fallback = compose(fallbackUserHandle(userId));
+  let handle = handleScreensClean(userHandle) ? compose(userHandle) : fallback;
+  if (!handleScreensClean(handle)) handle = fallback;
+  if (!(await isTaken(handle))) return handle;
+  for (let i = 0; i < 8; i++) {
+    const variant = `${handle.slice(0, 27)}-${randomBytes(2).toString('hex')}`;
+    if (handleScreensClean(variant)) return variant;
+  }
+  return `${fallback.slice(0, 27)}-${randomBytes(2).toString('hex')}`;
+}

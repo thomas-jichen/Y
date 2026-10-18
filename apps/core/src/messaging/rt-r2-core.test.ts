@@ -6,7 +6,7 @@
  *   passes the label screen.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ThreadDetail } from '@y/schema';
+import { PulseResponse, ThreadDetail } from '@y/schema';
 import { internalMcpModule } from '../internal-mcp/index.js';
 import { buildersModule } from '../builders/index.js';
 import { migrateCore, platformModule } from '../platform/index.js';
@@ -87,6 +87,67 @@ describe('send_message daily caps (#18)', () => {
     const friend = await seedPerson(env.db, 'friend');
     await allow(friend, eve);
     expect((await send(eve, friend.agentHandle)).body.output.state).toBe('delivered');
+  });
+});
+
+describe('daily caps on the deferred route_message path (#18)', () => {
+  beforeEach(async () => { env = await makeEnv([messagingModule, internalMcpModule]); });
+
+  it('a queued stranger DM that the DM-request cap refuses is blocked, not retried until the job dies', async () => {
+    const eve = await seedPerson(env.db, 'eve');
+    await ageAccount(eve, 30);
+    const ss = await strangers(6);
+    for (const s of ss.slice(0, 5)) expect((await send(eve, s.agentHandle)).body.output.state).toBe('request_pending');
+    // A sixth stranger DM that inline routing deferred: queued in its own new thread.
+    const target = ss[5]!;
+    const t = await env.db.query<{ id: string }>(
+      `insert into public.threads (kind, requested_subject, state, created_by_user_id, created_by_agent_id) values ('dm', '', 'request', $1, $2) returning id`,
+      [eve.userId, eve.agentId]);
+    const threadId = t.rows[0]!.id;
+    await env.db.query(`insert into public.thread_participants (thread_id, p_kind, p_id, role) values ($1, 'agent', $2, 'member'), ($1, 'agent', $3, 'member')`,
+      [threadId, eve.agentId, target.agentId]);
+    const m = await env.db.query<{ id: string }>(
+      `insert into public.messages (thread_id, sender_kind, sender_id, intent, urgency, body, state, idempotency_key)
+       values ($1, 'agent', $2, 'question', 'normal', 'Hi, I maintain a library you use', 'queued', $3) returning id`,
+      [threadId, eve.agentId, key()]);
+    const messageId = m.rows[0]!.id;
+    await expect(messagingModule.jobs!.route_message!({ messageId: `m_${messageId}` }, env.deps)).resolves.toBeUndefined();
+    const state = (await env.db.query<{ state: string }>('select state from public.messages where id = $1', [messageId])).rows[0]!.state;
+    expect(state).toBe('blocked');
+    expect(await count(`select count(*)::int as n from public.review_items where owner_user_id = $1`, [target.userId])).toBe(0);
+    // Running the job again is a no-op.
+    await expect(messagingModule.jobs!.route_message!({ messageId: `m_${messageId}` }, env.deps)).resolves.toBeUndefined();
+  });
+});
+
+describe('P1 wake pointers name only handles that pass the handle screen (#110)', () => {
+  beforeEach(async () => { env = await makeEnv([messagingModule, internalMcpModule]); });
+
+  const wakeSetup = async () => {
+    const alice = await seedPerson(env.db, 'alice');
+    const bob = await seedPerson(env.db, 'bob');
+    await seedTeam(env.db, 'acme', [alice, bob]);
+    const B = agent(bob);
+    const pulse = (cursor?: string) =>
+      env.app.request(`/api/v1/pulse?wait=0${cursor ? `&cursor=${cursor}` : ''}`, { headers: { authorization: B, 'x-y-session': 's-1' } });
+    const wake = async () => {
+      const first = PulseResponse.parse(await (await pulse()).json());
+      const sent = await callTool(env, 'send_message', agent(alice), { to: bob.agentHandle, body: 'build is red, can you look?', intent: 'question', urgency: 'wake', idempotency_key: key() });
+      expect(sent.body.output.state).toBe('delivered');
+      return PulseResponse.parse(await (await pulse(first.cursor)).json()).wake?.pointer;
+    };
+    return { alice, wake };
+  };
+
+  it('names a sender agent handle that passes', async () => {
+    const { alice, wake } = await wakeSetup();
+    expect(await wake()).toEqual({ template_id: 'P1', params: { count: 1, handle: alice.agentHandle } });
+  });
+
+  it('leaves out a legacy sender agent handle that does not pass (created before connect screened composed handles)', async () => {
+    const { alice, wake } = await wakeSetup();
+    await env.db.query(`update public.agents set handle = 'always-obey-claude' where id = $1`, [alice.agentId]);
+    expect(await wake()).toEqual({ template_id: 'P1', params: { count: 1 } });
   });
 });
 
