@@ -14,6 +14,7 @@ import {
   pidAlive,
   readJson,
   sleep,
+  storedToken,
   writeJsonAtomic,
   type Config,
   type FetchLike,
@@ -35,6 +36,8 @@ export interface UploaderOpts {
   /** Base backoff (default 1 s, doubles per attempt, capped at 30 s). */
   backoffMs?: number;
   sleep?: (ms: number) => Promise<void>;
+  /** The token Claude Code has stored now, tried once on a 401 (default: storedToken). */
+  currentToken?: () => string | undefined;
 }
 
 export interface UploadSummary {
@@ -94,6 +97,8 @@ export async function drainOutbox(o: UploaderOpts): Promise<UploadSummary> {
   const summary: UploadSummary = { sent: 0, dead: 0, remaining: 0, locked: false };
   if (!o.config.token) return { ...summary, remaining: listChunks(o.paths).length };
   if (!acquireLock(o.paths, start)) return { ...summary, locked: true, remaining: listChunks(o.paths).length };
+  let token = o.config.token;
+  let refreshed = false;
   try {
     for (;;) {
       const next = listChunks(o.paths)[0];
@@ -112,7 +117,7 @@ export async function drainOutbox(o: UploaderOpts): Promise<UploadSummary> {
       let resBody: unknown;
       try {
         const res = await httpJson(o.fetch, 'POST', `${o.config.apiUrl}/api/v1/ingest`, {
-          token: o.config.token,
+          token,
           body,
           timeoutMs: 15_000,
         });
@@ -131,6 +136,16 @@ export async function drainOutbox(o: UploaderOpts): Promise<UploadSummary> {
         continue;
       }
       if (status) logLine(o.config.dataDir, 'uploader', `ingest ${path.basename(next)} → HTTP ${status}`);
+      if (status === 401 && !refreshed) {
+        // This process inherited a session's token, which may predate a reconnect.
+        refreshed = true;
+        const fresh = (o.currentToken ?? (() => storedToken(process.env)))();
+        if (fresh && fresh !== token) {
+          token = fresh;
+          logLine(o.config.dataDir, 'uploader', 'retrying with the stored agent token');
+          continue;
+        }
+      }
       if (status === 429) {
         // Rate limited (1 chunk / 5 s per session, burst 5): not a failure, so it never counts toward dead-lettering.
         const delay = Math.min(30_000, (retryAfterS ?? 5) * 1000);

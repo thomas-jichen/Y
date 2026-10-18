@@ -19,6 +19,7 @@ import {
   Me,
   ReviewItem,
   ReviewList,
+  emptyStats,
   formatInternalSignatureHeader,
   internalSigningString,
   makePointer,
@@ -349,6 +350,35 @@ describe('vertical slice', () => {
     expect(act.status).toBe('published');
     const s = await db.query<{ status: string; close_reason: string }>(`select status, close_reason from public.sessions where harness_session_id = 'sess-bob-idle'`);
     expect(s.rows[0]).toEqual({ status: 'closed', close_reason: 'idle_timeout' });
+  }, 60_000);
+
+  it('a resumed session reopens its warmup and later work starts a new card', async () => {
+    const sid = 'sess-bob-resume';
+    const send = async (seq: number, statsDelta: ReturnType<typeof emptyStats>, close = true) =>
+      IngestResponse.parse(
+        (
+          await call('POST', '/api/v1/ingest', S.bobAgent, {
+            ...fx.ingestChunk({ sessionId: sid, seq, statsDelta, digest: undefined, errorEpisodes: [] }),
+            ...(close ? { close: { reason: 'session_end' } } : {}),
+          })
+        ).json,
+      );
+    const status = async (id: string) => (await db.query<{ status: string }>('select status from public.activities where id = $1', [id.slice(2)])).rows[0]?.status;
+    // Plugin installed mid-session: the first SessionEnd carries no work, so it's a warmup.
+    const warm = await send(0, emptyStats());
+    await drainAll();
+    expect(await status(warm.activityId!)).toBe('archived');
+    // Resumed: the whole transcript arrives, then another close.
+    expect((await send(1, fx.stats(), false)).activityId).toBe(warm.activityId);
+    await send(2, emptyStats());
+    await drainAll();
+    expect(await status(warm.activityId!)).toBe('published');
+    // Resumed again after the card was posted: new work is a new card; a bare close is not.
+    const next = await send(3, fx.stats(), false);
+    expect(next.activityId).not.toBe(warm.activityId);
+    expect((await send(4, emptyStats())).activityId).toBe(next.activityId);
+    await drainAll();
+    expect(await status(next.activityId!)).toBe('published');
   }, 60_000);
 
   it('jobs: failures are retried with backoff', async () => {

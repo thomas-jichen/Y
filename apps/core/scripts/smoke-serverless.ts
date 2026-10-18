@@ -48,8 +48,8 @@ try {
     Y_LLM: 'mock',
     Y_EMBEDDINGS: 'mock',
   });
-  const entry = (await import('../api/index.js')) as Record<string, (r: Request) => Promise<Response>>;
-  for (const m of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD']) check(typeof entry[m] === 'function', `api/index.ts does not export ${m}`);
+  const entry = (await import('../src/vercel-entry.js')) as Record<string, (r: Request) => Promise<Response>>;
+  for (const m of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD']) check(typeof entry[m] === 'function', `src/vercel-entry.ts does not export ${m}`);
   const call = async (method: string, path: string, opts: { token?: string; body?: unknown; headers?: Record<string, string> } = {}) => {
     const res = await entry[method]!(
       new Request(`https://core.smoke.test${path}`, {

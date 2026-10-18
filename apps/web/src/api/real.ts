@@ -5,7 +5,7 @@ import { API_BASE } from '@/lib/env'
 import * as A from './adapt'
 import { auth } from './auth'
 import { HttpError } from './errors'
-import type { Activity, AgentRef, ApiError, Me, Team } from './types'
+import type { Activity, AgentProfile, AgentRef, ApiError, Me, Team } from './types'
 
 type Method = 'GET' | 'POST' | 'PUT'
 
@@ -92,6 +92,65 @@ async function teamFromFeed(): Promise<Team> {
   }
 }
 
+/**
+ * Core has no agent profile endpoint yet either. A profile is derived the same way as Team:
+ * the agent comes from /me or the team feed, its sessions are its feed cards, and the week and
+ * habits are summed from them. No bio, traits, follows or stories: core doesn't send them.
+ */
+async function profileFromFeed(handle: string): Promise<{ profile: AgentProfile; activities: Activity[] }> {
+  const me = lastMe ?? ((await realRequest('GET', 'me', undefined, {})) as Me)
+  const page = A.feed(await core('GET', '/feed?tab=all').catch(() => ({ items: [] })))
+  const mine = me.agents.find((a) => a.handle === handle)
+  const activities = page.items.filter((x) => x.agent.handle === handle)
+  const agent = mine ?? activities[0]?.agent
+  if (!agent) throw new HttpError(404, { error: { code: 'NOT_FOUND', message: `No agent @${handle} on your team`, retryable: false } })
+  const now = Date.now()
+  const at = (x: Activity) => Date.parse(x.endedAt ?? x.startedAt)
+  const week = activities.filter((x) => now - at(x) < 7 * DAY)
+  const green = (xs: Activity[]) => (xs.length ? xs.filter((x) => x.outcome.status === 'green' || x.outcome.status === 'shipped').length / xs.length : 0)
+  const sum = (xs: Activity[], f: (x: Activity) => number) => xs.reduce((n, x) => n + f(x), 0)
+  const n = activities.length
+  const hours = Array.from({ length: 24 }, (_, h) => activities.filter((x) => new Date(x.startedAt).getHours() === h).length / (n || 1))
+  const tokens = sum(activities, (x) => x.stats.tokens.total)
+  const toolShare: Record<string, number> = {}
+  for (const x of activities) for (const [k, v] of Object.entries(x.stats.toolCalls)) toolShare[k] = (toolShare[k] ?? 0) + v
+  const toolTotal = Object.values(toolShare).reduce((a, b) => a + b, 0)
+  for (const k of Object.keys(toolShare)) toolShare[k] = toolShare[k]! / (toolTotal || 1)
+  const latest = [...activities].sort((x, y) => at(y) - at(x))[0]
+  const profile: AgentProfile = {
+    agent,
+    bio: n ? `${n} session${n === 1 ? '' : 's'} on Y.` : 'No sessions posted yet.',
+    traits: [],
+    habits: {
+      peakHour: hours.indexOf(Math.max(...hours)),
+      hours,
+      avgSessionMs: n ? sum(activities, (x) => x.stats.activeMs) / n : 0,
+      sessionLengths: activities.map((x) => x.stats.activeMs),
+      testsPerSession: n ? sum(activities, (x) => x.stats.tests.runs) / n : 0,
+      toolShare,
+      cacheShare: tokens ? sum(activities, (x) => x.stats.tokens.cacheRead) / tokens : 0,
+      greenRate: green(activities),
+      tokensPerSession: n ? tokens / n : 0,
+    },
+    followers: 0,
+    following: 0,
+    viewerFollows: false,
+    week: {
+      tokens: sum(week, (x) => x.stats.tokens.total),
+      sessions: week.length,
+      activeMs: sum(week, (x) => x.stats.activeMs),
+      greenRate: green(week),
+      costUsd: sum(week, (x) => x.stats.costUsd),
+    },
+    setup: latest?.setup ?? { id: '', hash: '', model: agent.model ?? 'unknown', components: [] },
+    prs: [],
+    hasStories: false,
+    storiesSeen: false,
+    isMine: !!mine,
+  }
+  return { profile, activities }
+}
+
 const FEED_TAB: Record<string, string> = { for_you: 'all', team: 'all', all: 'all', following: 'following', highlights: 'highlights' }
 
 export async function realRequest(method: Method, path: string, body: unknown, headers: Record<string, string>): Promise<unknown> {
@@ -165,6 +224,9 @@ export async function realRequest(method: Method, path: string, body: unknown, h
   if (is('GET', 'scrolls', 'active')) return null
   if (is('GET', 'trending')) return []
   if (is('GET', 'team')) return teamFromFeed()
+  if (is('GET', 'agents', null)) return (await profileFromFeed(seg[1]!)).profile
+  if (is('GET', 'agents', null, 'activities')) return { items: (await profileFromFeed(seg[1]!)).activities }
+  if (is('GET', 'agents', null, 'posts') || is('GET', 'agents', null, 'scrolls')) return { items: [] }
   if (seg[0] === 'posts' || seg[0] === 'stories' || seg[0] === 'scrolls' || seg[0] === 'usage' || seg[0] === 'agents') throw notImplemented(`/${seg[0]}`)
 
   return core(method, path, method === 'GET' ? undefined : body, headers)

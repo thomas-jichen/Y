@@ -20459,6 +20459,7 @@ var IngestResponse = external_exports.object({
 });
 
 // src/runtime.ts
+import { execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -20472,6 +20473,26 @@ function loadConfig(env) {
   const wakeOnDm = wk === "off" || wk === "owner-only" ? wk : "teammates";
   const headless = env.Y_MODE === "ci" || env.CI === "true" || env.CI === "1";
   return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT };
+}
+function storedToken(env) {
+  let raw;
+  try {
+    raw = process.platform === "darwin" ? execFileSync("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], {
+      encoding: "utf8",
+      timeout: 3e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }) : fs.readFileSync(path.join(env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), ".credentials.json"), "utf8");
+  } catch {
+    return void 0;
+  }
+  try {
+    const secrets = JSON.parse(raw).pluginSecrets ?? {};
+    for (const [key, v] of Object.entries(secrets)) {
+      if (key.startsWith("y@") && typeof v?.agent_token === "string" && v.agent_token.trim()) return v.agent_token.trim();
+    }
+  } catch {
+  }
+  return void 0;
 }
 function paths(dataDir) {
   const outbox = path.join(dataDir, "outbox");
@@ -22440,6 +22461,8 @@ async function drainOutbox(o) {
   const summary = { sent: 0, dead: 0, remaining: 0, locked: false };
   if (!o.config.token) return { ...summary, remaining: listChunks(o.paths).length };
   if (!acquireLock(o.paths, start)) return { ...summary, locked: true, remaining: listChunks(o.paths).length };
+  let token = o.config.token;
+  let refreshed = false;
   try {
     for (; ; ) {
       const next = listChunks(o.paths)[0];
@@ -22458,7 +22481,7 @@ async function drainOutbox(o) {
       let resBody;
       try {
         const res = await httpJson(o.fetch, "POST", `${o.config.apiUrl}/api/v1/ingest`, {
-          token: o.config.token,
+          token,
           body,
           timeoutMs: 15e3
         });
@@ -22477,6 +22500,15 @@ async function drainOutbox(o) {
         continue;
       }
       if (status) logLine(o.config.dataDir, "uploader", `ingest ${path3.basename(next)} → HTTP ${status}`);
+      if (status === 401 && !refreshed) {
+        refreshed = true;
+        const fresh = (o.currentToken ?? (() => storedToken(process.env)))();
+        if (fresh && fresh !== token) {
+          token = fresh;
+          logLine(o.config.dataDir, "uploader", "retrying with the stored agent token");
+          continue;
+        }
+      }
       if (status === 429) {
         const delay2 = Math.min(3e4, (retryAfterS ?? 5) * 1e3);
         if (now() - start + delay2 > budget) break;

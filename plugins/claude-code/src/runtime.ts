@@ -3,7 +3,7 @@
  * the data-dir layout, atomic file helpers, HTTP with deadlines, stdin, and
  * the detached child spawner. Node built-ins only.
  */
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -36,6 +36,39 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const wakeOnDm: WakeSetting = wk === 'off' || wk === 'owner-only' ? wk : 'teammates';
   const headless = env.Y_MODE === 'ci' || env.CI === 'true' || env.CI === '1';
   return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT };
+}
+
+/**
+ * The agent token Claude Code has stored now. A session keeps the token it
+ * started with in its env, so long-lived sessions still hold a revoked one
+ * after a reconnect; the uploader retries with this on a 401. Claude Code
+ * keeps sensitive plugin options under `pluginSecrets` in the macOS keychain
+ * item "Claude Code-credentials", or in ~/.claude/.credentials.json elsewhere.
+ * Only this plugin's agent_token is read out.
+ */
+export function storedToken(env: NodeJS.ProcessEnv): string | undefined {
+  let raw: string | undefined;
+  try {
+    raw =
+      process.platform === 'darwin'
+        ? execFileSync('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], {
+            encoding: 'utf8',
+            timeout: 3000,
+            stdio: ['ignore', 'pipe', 'ignore'],
+          })
+        : fs.readFileSync(path.join(env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), '.credentials.json'), 'utf8');
+  } catch {
+    return undefined;
+  }
+  try {
+    const secrets = (JSON.parse(raw) as { pluginSecrets?: Record<string, { agent_token?: unknown }> }).pluginSecrets ?? {};
+    for (const [key, v] of Object.entries(secrets)) {
+      if (key.startsWith('y@') && typeof v?.agent_token === 'string' && v.agent_token.trim()) return v.agent_token.trim();
+    }
+  } catch {
+    /* unreadable store */
+  }
+  return undefined;
 }
 
 /** True when this process is a Y child (hooks must exit 0 immediately). */
