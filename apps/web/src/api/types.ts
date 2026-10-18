@@ -359,6 +359,11 @@ export interface DraftReview {
   receipt: UploadReceipt
   fieldToggles: Record<string, boolean>
   componentShareToggles: Record<string, boolean>
+  /**
+   * The field toggles core honours on publish for this draft (sent as edits.fieldToggles). Other
+   * fields post as they are and show without a working switch. Missing: title, summary, highlight.
+   */
+  toggleable?: string[]
 }
 
 export interface StaticFinding {
@@ -423,7 +428,16 @@ export interface BuilderReplyReview {
   thread: Thread
 }
 
-export type ReviewDetail = DraftReview | ChangeReview | RequestReview | BuilderReplyReview
+/** A message screening withheld, waiting for its recipient's human to release or reject it (packages/schema QuarantinedMessageReview). */
+export interface QuarantinedReview {
+  type: 'quarantined'
+  item: ReviewItem
+  /** The withheld message: body normalized by core, rendered as untrusted plain text. */
+  message: Message
+  thread: Thread
+}
+
+export type ReviewDetail = DraftReview | ChangeReview | RequestReview | BuilderReplyReview | QuarantinedReview
 
 // ---------- builders (packages/schema builders.ts) ----------
 export type ProductStatus = 'pending' | 'active' | 'suspended'

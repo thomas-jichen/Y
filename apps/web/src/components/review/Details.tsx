@@ -1,13 +1,12 @@
 import { Link } from '@tanstack/react-router'
 import { AnimatePresence, motion } from 'motion/react'
 import { useState, type ReactNode } from 'react'
-import type { BuilderReplyReview, ChangeReview, DraftReview, RequestReview, ReviewItem } from '@/api/types'
+import type { BuilderReplyReview, ChangeReview, DraftReview, QuarantinedReview, RequestReview, ReviewItem } from '@/api/types'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { AgentName } from '@/components/identity/AgentName'
 import { Button } from '@/components/primitives/Button'
 import { HoldButton } from '@/components/primitives/HoldButton'
 import { Spec } from '@/components/primitives/Spec'
-import { Switch } from '@/components/primitives/Switch'
 import { MessageItem } from '@/components/chats/MessageItem'
 import { Quarantined } from '@/components/trust/Quarantined'
 import { SCREEN } from '@/lib/trust'
@@ -15,11 +14,13 @@ import { useDecision } from '@/api/queries'
 import { HttpError } from '@/api/client'
 import { fmtAgo, fmtCountdown } from '@/lib/format'
 import { uid } from '@/lib/hash'
-import { countHidden, HiddenChip, SafeText } from '@/lib/safeText'
+import { countHidden, HiddenChip } from '@/lib/safeText'
 import { DiffViewer } from './DiffViewer'
+import { DraftFields, initialFields, publishEdits } from './DraftFields'
 import { Digest } from './Digest'
 import { Evidence } from './Evidence'
 import { REVIEW_KIND } from './kinds'
+import { QuarantinedAction, QuarantinedBody } from './QuarantinedMessage'
 import { ReleaseAction, RequestIntro } from './RequestIntro'
 import { Receipt } from './Receipt'
 
@@ -77,10 +78,8 @@ function Section({ title, note, children }: { title: string; note?: string; chil
 // ---------- draft ----------
 export function DraftView({ d }: { d: DraftReview }) {
   const decide = useDecision(d.item.id)
-  const [fields, setFields] = useState(d.fieldToggles)
-  const [share, setShare] = useState(d.componentShareToggles)
-  const h = d.activity.highlights[0]
-  const FIELD: Record<string, string> = { title: 'Title', summary: 'Summary', highlight: 'Highlight', repoLabel: 'Repo name' }
+  const [fields, setFields] = useState(() => initialFields(d))
+  const edits = publishEdits(fields)
   return (
     <Shell
       item={d.item}
@@ -94,7 +93,12 @@ export function DraftView({ d }: { d: DraftReview }) {
             <button className="text-ui underline-offset-4 hover:underline" onClick={() => decide.mutate({ decision: 'reject', idempotencyKey: uid('idem') })}>
               Keep private
             </button>
-            <Button variant="primary" className="rounded-full" disabled={decide.isPending} onClick={() => decide.mutate({ decision: 'publish', idempotencyKey: uid('idem') })}>
+            <Button
+              variant="primary"
+              className="rounded-full"
+              disabled={decide.isPending}
+              onClick={() => decide.mutate({ decision: 'publish', ...(edits ? { edits } : {}), idempotencyKey: uid('idem') })}
+            >
               Publish to team
             </Button>
           </div>
@@ -103,39 +107,7 @@ export function DraftView({ d }: { d: DraftReview }) {
     >
       <div className="grid gap-12 xl:grid-cols-2">
         <Section title="What will be posted" note="Turn off anything you would rather keep">
-          <div className="border border-rule p-5 text-body">
-            {fields.title && <div className="font-medium">{d.activity.title}</div>}
-            {fields.summary && d.activity.summary && (
-              <div className="mt-1 text-text-2">
-                <SafeText text={d.activity.summary} />
-              </div>
-            )}
-            {fields.highlight && h && (
-              <div className="mt-4 grid grid-cols-[72px_1fr] gap-x-4 text-ui">
-                <span className="font-semibold">Gotcha</span>
-                <SafeText text={h.title} />
-              </div>
-            )}
-            {fields.repoLabel && <div className="mt-3 text-caption text-text-2">in {d.activity.repoLabel}</div>}
-            {!fields.title && !fields.summary && !fields.highlight && <div className="text-ui text-text-2">Only stats and the setup card will post.</div>}
-          </div>
-          <div className="mt-6 divide-y divide-rule border-y border-rule">
-            {Object.entries(fields).map(([k, v]) => (
-              <label key={k} className="flex items-center justify-between py-3 text-ui">
-                {FIELD[k] ?? k}
-                <Switch checked={v} onCheckedChange={(x) => setFields({ ...fields, [k]: x })} label={FIELD[k] ?? k} />
-              </label>
-            ))}
-          </div>
-          <h3 className="mb-1 mt-8 text-caption text-text-2">Share component content</h3>
-          <div className="divide-y divide-rule border-y border-rule">
-            {Object.entries(share).map(([k, v]) => (
-              <label key={k} className="flex items-center justify-between py-3">
-                <span className="font-mono text-ui">{k}</span>
-                <Switch checked={v} onCheckedChange={(x) => setShare({ ...share, [k]: x })} label={`Share ${k}`} />
-              </label>
-            ))}
-          </div>
+          <DraftFields d={d} fields={fields} onChange={setFields} />
         </Section>
         <Section title="What left your machine" note="Redacted on device before upload, then checked again on the server">
           {d.redactedDigest ? (
@@ -263,6 +235,44 @@ export function RequestView({ r }: { r: RequestReview }) {
           <p>Unverified agents can only send a short intro, and it goes to you, never to your agent.</p>
           <p>Declining blocks future requests from this agent and flags it for review.</p>
         </div>
+      </div>
+    </Shell>
+  )
+}
+
+// ---------- quarantined message ----------
+export function QuarantinedView({ q }: { q: QuarantinedReview }) {
+  const decide = useDecision(q.item.id)
+  const from = q.message.sender.agent ?? q.item.agent
+  return (
+    <Shell
+      item={q.item}
+      title="A message to your agent was withheld"
+      subtitle="Screening held it before any agent could read it. Release delivers it as it is; reject keeps it from your agent."
+      actions={
+        q.item.state !== 'pending' ? (
+          <Decided item={q.item} approved="Released" />
+        ) : (
+          <QuarantinedAction
+            busy={decide.isPending}
+            onRelease={() => decide.mutate({ decision: 'release', idempotencyKey: uid('idem') })}
+            onReject={() => decide.mutate({ decision: 'reject', idempotencyKey: uid('idem') })}
+          />
+        )
+      }
+    >
+      <div className="max-w-[640px] space-y-8">
+        <div className="flex items-center gap-4">
+          {from && <AgentAvatar agent={from} size={48} presence={false} />}
+          <div>
+            <div className="text-ui font-medium">{from?.displayName ?? 'Unknown sender'}</div>
+            <div className="text-caption text-text-2">
+              In {q.thread.subject}, sent {fmtAgo(q.message.createdAt)}
+              {q.item.expiresAt && `, expires in ${fmtCountdown(q.item.expiresAt)}`}
+            </div>
+          </div>
+        </div>
+        <QuarantinedBody message={q.message} />
       </div>
     </Shell>
   )
