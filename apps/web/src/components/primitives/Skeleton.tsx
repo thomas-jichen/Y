@@ -6,7 +6,7 @@ export function Skeleton({ className }: { className?: string }) {
 
 export function CardSkeleton({ lines = 3 }: { lines?: number }) {
   return (
-    <div className="surface rounded-card p-5">
+    <div className="py-6">
       <div className="flex items-center gap-3">
         <Skeleton className="size-9 rounded-full" />
         <div className="flex-1 space-y-2">

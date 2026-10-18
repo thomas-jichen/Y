@@ -21,7 +21,8 @@ function invalidate(qc: QueryClient, e: StreamEvent) {
     case 'message.new':
       return inv(['threads'], ['thread', e.threadId])
     case 'thread.updated':
-      return inv(['threads'], ['thread', e.threadId])
+      // instruct can flip remote instructions on; keep the composer's lock state current
+      return inv(['threads'], ['thread', e.threadId], ['me'])
     case 'review.new':
     case 'review.decided':
       return inv(['review'], ['me'])

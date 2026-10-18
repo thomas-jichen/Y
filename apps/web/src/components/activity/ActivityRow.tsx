@@ -1,39 +1,32 @@
 import { Link } from '@tanstack/react-router'
 import type { Activity } from '@/api/types'
 import { LapsBars } from '@/components/charts/LapsBars'
+import { agentColor } from '@/lib/art'
 import { fmtAgo, fmtDuration, fmtTokens, fmtUsd } from '@/lib/format'
-import { OutcomePill } from './OutcomePill'
+import { OUTCOME } from './OutcomePill'
 import { TitleSegments } from './TitleSegments'
 
-/** A Strava-style row: title, the four numbers that matter, laps, outcome. */
+/** One session as text: what it was, the outcome, the four numbers, turns in the agent's color. */
 export function ActivityRow({ a }: { a: Activity }) {
   const tools = Object.values(a.stats.toolCalls).reduce((x, y) => x + y, 0)
   return (
-    <Link to="/activity/$id" params={{ id: a.id }} className="surface block rounded-card p-4 transition-colors hover:border-line-strong">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[15px] font-medium">
-            <TitleSegments title={a.title} chipClassName="h-5 text-2xs" />
-          </div>
-          <div className="mt-0.5 text-xs text-fg-3">
-            {a.repoLabel}, {fmtAgo(a.endedAt ?? a.startedAt)}
-          </div>
-        </div>
-        <OutcomePill status={a.outcome.status} />
+    <Link to="/activity/$id" params={{ id: a.id }} className="group block">
+      <div className="flex items-baseline justify-between gap-3 text-caption text-text-2">
+        <span>
+          Session · {a.repoLabel} · <span className="font-medium text-text">{OUTCOME[a.outcome.status]}</span>
+        </span>
+        <span className="tnum">{fmtAgo(a.endedAt ?? a.startedAt)}</span>
       </div>
-      <div className="mt-4 grid grid-cols-[repeat(4,minmax(0,1fr))_96px] items-end gap-4">
-        {[
-          [fmtTokens(a.stats.tokens.total), 'Tokens'],
-          [String(tools), 'Tool calls'],
-          [fmtDuration(a.stats.activeMs), 'Active'],
-          [fmtUsd(a.stats.costUsd), 'Cost'],
-        ].map(([v, l]) => (
-          <div key={l} className="min-w-0">
-            <div className="display text-lg">{v}</div>
-            <div className="text-xs text-fg-3">{l}</div>
-          </div>
-        ))}
-        <LapsBars laps={a.laps.map((l) => l.tokens)} errors={a.laps.map((l) => l.errors)} height={30} className="hidden sm:flex" />
+      <div className="grid grid-cols-[1fr_auto] items-end gap-6">
+      <div className="min-w-0">
+        <div className="mt-1 text-ui font-medium group-hover:underline group-hover:decoration-1 group-hover:underline-offset-4">
+          <TitleSegments title={a.title} />
+        </div>
+        <div className="mt-1 text-ui text-text-2 tnum">
+          {fmtTokens(a.stats.tokens.total)} tokens, {tools} tool calls, {fmtDuration(a.stats.activeMs)}, {fmtUsd(a.stats.costUsd)}
+        </div>
+      </div>
+      <LapsBars laps={a.laps.map((l) => l.tokens)} errors={a.laps.map((l) => l.errors)} height={28} color={agentColor(a.agent)} className="hidden w-24 sm:flex" />
       </div>
     </Link>
   )

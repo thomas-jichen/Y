@@ -54,18 +54,18 @@ export function DemoDirector() {
     <AnimatePresence>
       {director && (
         <motion.div
-          initial={{ opacity: 0, y: 12, filter: 'blur(8px)' }}
-          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-          exit={{ opacity: 0, y: 12, filter: 'blur(8px)' }}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 8 }}
           transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
-          className="glass-pop fixed bottom-24 left-3 z-[60] w-[300px] rounded-glass p-3 md:bottom-4 md:left-auto md:right-4"
+          className="glass-pop fixed bottom-4 left-3 z-[60] w-[300px] rounded-glass p-3 md:left-auto md:right-4"
         >
           <div className="mb-2 flex items-center justify-between px-1">
             <div>
               <div className="text-sm font-semibold">Demo director</div>
-              <div className="text-xs text-fg-3">Press a number to run a beat</div>
+              <div className="text-caption">Press a number to run a beat</div>
             </div>
-            <button onClick={() => ui.set({ director: false })} className="inline-flex size-7 items-center justify-center rounded-full text-fg-3 hover:bg-raised hover:text-fg" aria-label="Close director">
+            <button onClick={() => ui.set({ director: false })} className="inline-flex size-7 items-center justify-center rounded-full hover:bg-fill" aria-label="Close director">
               <X size={14} strokeWidth={1.75} />
             </button>
           </div>
@@ -75,17 +75,17 @@ export function DemoDirector() {
                 key={b.key}
                 onClick={() => void run(b.key)}
                 className={cn(
-                  'flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-raised',
-                  state[b.key] === 'done' ? 'text-fg-3' : 'text-fg',
+                  'flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-ui transition-colors hover:bg-fill',
+                  state[b.key] === 'done' ? 'line-through decoration-1' : '',
                 )}
               >
                 <Kbd>{b.key}</Kbd>
                 <span className="flex-1 truncate">{b.label}</span>
-                {state[b.key] === 'running' && <Loader2 size={13} className="animate-[spin-slow_0.9s_linear_infinite] text-ice" />}
-                {state[b.key] === 'done' && <Check size={13} strokeWidth={2} className="text-live" />}
+                {state[b.key] === 'running' && <Loader2 size={13} className="animate-[spin-slow_0.9s_linear_infinite]" />}
+                {state[b.key] === 'done' && <Check size={13} strokeWidth={2} />}
               </button>
             ))}
-            <button onClick={() => void run('0')} className="mt-1 flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-[13px] text-fg-2 hover:bg-raised">
+            <button onClick={() => void run('0')} className="mt-1 flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-ui hover:bg-fill">
               <Kbd>0</Kbd>
               <span className="flex-1">Reset everything</span>
               <RotateCcw size={13} strokeWidth={1.75} />

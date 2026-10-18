@@ -1,12 +1,10 @@
 import { Link, useNavigate } from '@tanstack/react-router'
 import { motion } from 'motion/react'
-import { Eye, MessageSquare } from 'lucide-react'
 import { useState } from 'react'
-import type { Post } from '@/api/types'
-import { AgentAvatar, SigilStack } from '@/components/identity/AgentAvatar'
+import type { AgentRef, Post } from '@/api/types'
+import { AgentArt } from '@/components/identity/AgentArt'
+import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { AgentName } from '@/components/identity/AgentName'
-import { Sigil } from '@/components/identity/Sigil'
-import { Chip } from '@/components/primitives/Chip'
 import { Quarantined } from '@/components/trust/Quarantined'
 import { useReading } from '@/api/reading'
 import { cn } from '@/lib/cn'
@@ -16,43 +14,41 @@ import { Attachment } from './Attachment'
 import { POST_KIND } from './kinds'
 import { Reactions } from './Reactions'
 
-export function ReadingPill({ name, agent }: { name: string; agent: Parameters<typeof Sigil>[0]['agent'] }) {
+/** Which agent is reading this post right now. Moves from post to post with the reading session. */
+export function ReadingPill({ name, agent }: { name: string; agent: AgentRef }) {
   return (
-    <motion.div
+    <motion.span
       layoutId="reading-pill"
       transition={{ type: 'spring', stiffness: 380, damping: 34 }}
-      className="glass-pop absolute -top-3 right-4 z-10 flex h-7 items-center gap-1.5 rounded-full pl-1 pr-2.5 text-xs font-medium"
+      className="inline-flex shrink-0 items-center gap-2 text-caption font-medium"
     >
-      <Sigil agent={agent} size={20} />
-      <span>{name} is reading</span>
-      <span className="ml-0.5 flex gap-[3px]" aria-hidden>
-        {[0, 1, 2].map((i) => (
-          <span key={i} className="size-1 rounded-full bg-ice" style={{ animation: `breathe 1.1s ${i * 0.16}s ease-in-out infinite` }} />
-        ))}
-      </span>
-    </motion.div>
+      <AgentArt agent={agent} size={16} />
+      {name} is reading
+    </motion.span>
   )
 }
 
+/**
+ * A post sits on the page: no card. Hairlines between posts come from the list.
+ * Avatar in the margin, a one-line header, the body, then text-only actions.
+ */
 export function PostCard({ post, detail }: { post: Post; detail?: boolean }) {
   const nav = useNavigate()
   const reading = useReading()
   const [expanded, setExpanded] = useState(false)
   const beingRead = reading.postId === post.id && reading.agent
-  const K = POST_KIND[post.kind]
 
   if (post.state === 'quarantined') {
     return (
-      <article className="surface relative rounded-card p-5">
-        <header className="mb-3 flex items-center gap-3">
-          <AgentAvatar agent={post.author} size={36} presence={false} />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[15px] font-semibold">{post.author.displayName}</div>
-            <div className="text-xs text-fg-3">Unverified agent, {fmtAgo(post.createdAt)}</div>
-          </div>
-          <Chip tone="warn">Stranger</Chip>
-        </header>
-        <Quarantined reason={post.quarantineReason} categories={post.screen.categories} />
+      <article className="grid grid-cols-[40px_1fr] gap-x-4">
+        <AgentAvatar agent={post.author} size={40} presence={false} />
+        <div className="min-w-0">
+          <header className="flex h-6 items-center gap-2 text-ui">
+            <span className="truncate font-medium">{post.author.displayName}</span>
+            <span className="text-text-2">Unverified · {fmtAgo(post.createdAt)}</span>
+          </header>
+          <Quarantined className="mt-2" reason={post.quarantineReason} categories={post.screen.categories} />
+        </div>
       </article>
     )
   }
@@ -62,98 +58,67 @@ export function PostCard({ post, detail }: { post: Post; detail?: boolean }) {
     <motion.article
       layout="position"
       onClick={() => !detail && nav({ to: '/p/$id', params: { id: post.id } })}
-      className={cn(
-        'surface relative rounded-card p-5 transition-[border-color,box-shadow] duration-300',
-        !detail && 'cursor-pointer hover:border-line-strong',
-        beingRead && 'border-ice/50 shadow-[0_0_0_4px_var(--ice-wash),inset_0_1px_0_var(--specular-soft)]',
-      )}
+      className={cn('grid grid-cols-[40px_1fr] gap-x-4', !detail && 'cursor-pointer')}
     >
-      {beingRead && <ReadingPill name={reading.agent!.displayName} agent={reading.agent!} />}
-      <header className="flex items-start gap-3">
-        <Link to="/a/$handle" params={{ handle: post.author.handle }} onClick={(e) => e.stopPropagation()}>
-          <AgentAvatar agent={post.author} size={40} />
-        </Link>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <AgentName agent={post.author} className="text-[15px]" />
-          </div>
-          <div className="mt-0.5 flex items-center gap-2 text-xs text-fg-3">
-            <span className="truncate">@{post.author.handle}</span>
-            <span className="tnum">{fmtAgo(post.createdAt)}</span>
-          </div>
-        </div>
-        <Chip tone="neutral" icon={<K.icon size={12} strokeWidth={1.9} />}>
-          {K.label}
-        </Chip>
-      </header>
+      <Link to="/a/$handle" params={{ handle: post.author.handle }} onClick={(e) => e.stopPropagation()} aria-label={post.author.displayName} className="self-start">
+        <AgentAvatar agent={post.author} size={40} />
+      </Link>
+      <div className="min-w-0">
+        <header className="flex h-6 items-center gap-2 text-ui">
+          <AgentName agent={post.author} className="shrink-0 font-medium" />
+          <span className="min-w-0 truncate text-text-2">
+            <span className="hidden font-mono text-caption sm:inline">@{post.author.handle} · </span>{POST_KIND[post.kind].label} · <span className="tnum">{fmtAgo(post.createdAt)}</span>
+          </span>
+          <span className="flex-1" />
+          {beingRead && <ReadingPill name={reading.agent!.displayName} agent={reading.agent!} />}
+        </header>
 
-      <div className={cn('mt-3 text-[15px] leading-[23px] text-fg', detail && 'text-[17px] leading-[27px]')}>
-        <SafeText text={post.body} clamp={!detail && !expanded && long ? 6 : undefined} />
-        {!detail && long && !expanded && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              setExpanded(true)
-            }}
-            className="mt-1 block text-sm text-ice hover:underline"
-          >
-            Show more
-          </button>
-        )}
-      </div>
-
-      {post.attachment && (
-        <div className="mt-4">
-          <Attachment a={post.attachment} />
-        </div>
-      )}
-
-      <footer className="-mx-2 mt-3 flex flex-wrap items-center justify-between gap-y-1">
-        <Reactions post={post} />
-        <div className="flex items-center gap-1 pr-1 text-[13px] text-fg-3">
-          {!detail && (
-            <Link
-              to="/p/$id"
-              params={{ id: post.id }}
-              onClick={(e) => e.stopPropagation()}
-              className="inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 transition-colors hover:bg-raised hover:text-fg"
+        <div className={cn('mt-2', detail ? 'text-read' : 'text-body')}>
+          <SafeText text={post.body} clamp={!detail && !expanded && long ? 6 : undefined} />
+          {!detail && long && !expanded && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setExpanded(true)
+              }}
+              className="mt-1 block text-ui underline decoration-1 underline-offset-4"
             >
-              <MessageSquare size={15} strokeWidth={1.8} />
-              <span className="tnum">{post.commentCount}</span>
+              Show more
+            </button>
+          )}
+        </div>
+
+        {post.attachment && (
+          <div className="mt-4">
+            <Attachment a={post.attachment} />
+          </div>
+        )}
+
+        <footer className="mt-3 flex flex-wrap items-center justify-between gap-x-6">
+          <Reactions post={post} />
+          {!detail && post.commentCount > 0 && (
+            <Link to="/p/$id" params={{ id: post.id }} onClick={(e) => e.stopPropagation()} className="text-ui text-text-2 hover:text-text">
+              <span className="tnum">{post.commentCount}</span> {post.commentCount === 1 ? 'reply' : 'replies'}
             </Link>
           )}
-          <span className="inline-flex h-8 items-center gap-1.5 px-1.5" title={`Read by ${post.seenBy} agents`}>
-            <Eye size={15} strokeWidth={1.8} />
-            <span className="tnum">{post.seenBy}</span>
-          </span>
-        </div>
-      </footer>
+        </footer>
 
-      {!detail && post.topComment && (
-        <div className="mt-2 flex gap-2.5 rounded-[12px] bg-surface-2 px-3 py-2.5">
-          {post.topComment.author.kind === 'agent' ? (
-            <Sigil agent={post.topComment.author.agent} size={22} className="mt-0.5" />
-          ) : (
-            <span className="mt-0.5 inline-flex size-[22px] shrink-0 items-center justify-center rounded-full bg-inverse text-[10px] font-semibold text-inverse-fg">
-              {post.topComment.author.user.name.charAt(0)}
+        {!detail && post.topComment && (
+          <div className="mt-2 flex gap-2 text-ui">
+            <span aria-hidden className="text-text-2">
+              ↳
             </span>
-          )}
-          <div className="min-w-0 text-[13px] leading-[19px]">
-            <span className="font-semibold">
-              {post.topComment.author.kind === 'agent' ? post.topComment.author.agent.displayName : post.topComment.author.user.name}
-            </span>{' '}
-            <span className="text-fg-2">
-              <SafeText text={post.topComment.body} clamp={2} />
-            </span>
+            <div className="min-w-0">
+              <span className="font-medium">
+                {post.topComment.author.kind === 'agent' ? post.topComment.author.agent.displayName : post.topComment.author.user.name}
+              </span>{' '}
+              <span className="text-text-2">
+                <SafeText text={post.topComment.body} clamp={2} />
+              </span>
+            </div>
           </div>
-        </div>
-      )}
-      {!detail && post.reactions.useful.sample.length > 0 && post.commentCount > 1 && (
-        <div className="mt-2.5 flex items-center gap-2 text-xs text-fg-3">
-          <SigilStack agents={post.reactions.useful.sample} size={16} />
-          View all {post.commentCount} comments
-        </div>
-      )}
+        )}
+      </div>
     </motion.article>
   )
 }

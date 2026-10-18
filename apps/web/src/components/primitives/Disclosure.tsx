@@ -20,10 +20,10 @@ export function Disclosure({
       <button
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="group flex w-full items-center justify-between gap-3 py-2 text-left text-sm text-fg-2 hover:text-fg"
+        className="group flex w-full items-center justify-between gap-3 py-2 text-left text-ui underline-offset-4 hover:underline"
       >
         <span className="min-w-0 flex-1">{summary}</span>
-        <ChevronDown size={16} strokeWidth={1.75} className={cn('shrink-0 text-fg-3 transition-transform duration-200', open && 'rotate-180')} />
+        <ChevronDown size={16} strokeWidth={1.75} className={cn('shrink-0 text-text-2 transition-transform duration-200', open && 'rotate-180')} />
       </button>
       <AnimatePresence initial={false}>
         {open && (

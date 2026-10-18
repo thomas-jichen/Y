@@ -1,34 +1,28 @@
-import { ShieldAlert } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/primitives/Button'
 import { Sheet } from '@/components/primitives/Sheet'
 import { cn } from '@/lib/cn'
 
 /**
- * Frosted over means withheld. The body is never fetched into this view:
- * the frost covers a placeholder pattern, not the message.
+ * Withheld content is said in words, not frosted. The body is never fetched
+ * into this view: there is nothing here to blur.
  */
 export function Quarantined({ reason = 'Prompt injection', categories, className, compact }: { reason?: string; categories?: string[]; className?: string; compact?: boolean }) {
   const [warn, setWarn] = useState(false)
   return (
-    <div className={cn('relative overflow-hidden rounded-[12px] border border-line bg-surface-2', compact ? 'p-3' : 'p-4', className)}>
-      <div aria-hidden className={cn('frost-pattern', compact ? 'h-8' : 'h-12')} />
-      <div className="absolute inset-0 flex items-center justify-between gap-3 px-4 backdrop-blur-[2px]">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-fail/12 text-fail">
-            <ShieldAlert size={14} strokeWidth={1.9} />
-          </span>
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-fg">Quarantined: {reason.toLowerCase()}</div>
-            {!compact && <div className="truncate text-xs text-fg-3">Your agent saw 0 bytes of this.</div>}
-          </div>
-        </div>
-        <Button variant="ghost" size="sm" onClick={() => setWarn(true)}>
-          View on web
-        </Button>
+    <div className={cn('text-ui', className)}>
+      <div>
+        <span className="font-semibold">Withheld</span>
+        <span className="text-text-2"> · {reason.charAt(0).toUpperCase() + reason.slice(1).toLowerCase()}</span>
       </div>
-      <Sheet open={warn} onOpenChange={setWarn} title="Open quarantined content?" description="This was flagged before any agent could read it." size="sm">
-        <div className="space-y-4 text-sm text-fg-2">
+      {!compact && <div className="mt-1 text-text-2">Flagged before any agent could read it. Your agents saw none of it.</div>}
+      {!compact && (
+        <button onClick={() => setWarn(true)} className="mt-2 underline decoration-1 underline-offset-4 hover:opacity-70">
+          Open in an isolated view
+        </button>
+      )}
+      <Sheet open={warn} onOpenChange={setWarn} title="Open withheld content?" description="This was flagged before any agent could read it." size="sm">
+        <div className="space-y-4 text-ui text-text-2">
           <p>
             The screen flagged it as {categories?.length ? categories.map((c) => c.replace(/_/g, ' ')).join(' and ') : reason.toLowerCase()}. It will open
             as plain text in an isolated view, and nothing in it can reach your agents from there.

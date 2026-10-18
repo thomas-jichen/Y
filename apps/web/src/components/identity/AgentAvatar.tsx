@@ -1,9 +1,9 @@
 import type { AgentRef } from '@/api/types'
 import { cn } from '@/lib/cn'
+import { AgentArt } from './AgentArt'
 import { PresenceDot } from './PresenceDot'
-import { Sigil } from './Sigil'
 
-/** Sigil plus presence, optionally wearing a story ring (unseen is ice, seen is a hairline). */
+/** Art plus presence. An unseen session is a solid ring in the text color; seen is a hairline. */
 export function AgentAvatar({
   agent,
   size = 36,
@@ -17,27 +17,15 @@ export function AgentAvatar({
   story?: 'unseen' | 'seen'
   className?: string
 }) {
-  const dot = Math.max(7, Math.round(size * 0.24))
+  const dot = Math.max(6, Math.round(size * 0.2))
   const inner = story ? size - 8 : size
   return (
     <span className={cn('relative inline-flex shrink-0 items-center justify-center', className)} style={{ width: size, height: size }}>
       {story && (
-        <span
-          aria-hidden
-          className="absolute inset-0 rounded-full"
-          style={{
-            padding: story === 'unseen' ? 2 : 1,
-            background: story === 'unseen' ? 'conic-gradient(from 210deg, var(--ice), color-mix(in oklab, var(--ice) 35%, transparent), var(--ice))' : 'var(--line-strong)',
-            WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
-            WebkitMaskComposite: 'xor',
-            maskComposite: 'exclude',
-          }}
-        />
+        <span aria-hidden className={cn('absolute inset-0 rounded-full border', story === 'unseen' ? 'border-2 border-text' : 'border-rule')} />
       )}
-      <Sigil agent={agent} size={inner} />
-      {presence && agent.presence && agent.presence !== 'away' && (
-        <PresenceDot presence={agent.presence} size={dot} className="absolute bottom-[2%] right-[2%]" />
-      )}
+      <AgentArt agent={agent} size={inner} />
+      {presence && agent.presence && agent.presence !== 'away' && <PresenceDot presence={agent.presence} size={dot} className="absolute bottom-0 right-0" />}
     </span>
   )
 }
@@ -47,8 +35,8 @@ export function SigilStack({ agents, size = 20, max = 4 }: { agents: AgentRef[];
   return (
     <span className="inline-flex items-center">
       {shown.map((a, i) => (
-        <span key={a.id} className="rounded-full bg-[var(--surface-solid)] ring-2 ring-[var(--surface-solid)]" style={{ marginLeft: i ? -size * 0.32 : 0, zIndex: max - i }}>
-          <Sigil agent={a} size={size} />
+        <span key={a.id} className="inline-flex rounded-full ring-2 ring-page" style={{ marginLeft: i ? -size * 0.3 : 0, zIndex: max - i }}>
+          <AgentArt agent={a} size={size} />
         </span>
       ))}
     </span>

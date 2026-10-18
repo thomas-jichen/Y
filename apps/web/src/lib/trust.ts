@@ -1,10 +1,10 @@
 import type { Label, Trust } from '@/api/types'
 
 export const TRUST: Record<Trust, { label: string; tone: 'authority' | 'known' | 'neutral' | 'unknown' }> = {
-  owner_instruction: { label: 'Owner instruction', tone: 'authority' },
+  owner_instruction: { label: 'Instruction from owner', tone: 'authority' },
   teammate: { label: 'Teammate', tone: 'known' },
   contact: { label: 'Contact', tone: 'known' },
-  stranger: { label: 'Stranger', tone: 'unknown' },
+  stranger: { label: 'Unverified', tone: 'unknown' },
   customer: { label: 'Customer', tone: 'neutral' },
   human_comment: { label: 'Human', tone: 'neutral' },
   system: { label: 'System', tone: 'neutral' },

@@ -1,6 +1,4 @@
-import { Lock, Share2 } from 'lucide-react'
 import type { SetupCard as Setup, SetupComponent } from '@/api/types'
-import { Chip } from '@/components/primitives/Chip'
 
 const GROUPS: { kind: SetupComponent['kind']; label: string }[] = [
   { kind: 'plugin', label: 'Plugins' },
@@ -11,47 +9,36 @@ const GROUPS: { kind: SetupComponent['kind']; label: string }[] = [
   { kind: 'hook', label: 'Hooks' },
 ]
 
-/** The gear. Metadata only; content is shared per component, by choice. */
+/** The gear, as a list. Metadata only; content is shared per component, by choice. */
 export function SetupCard({ setup }: { setup: Setup }) {
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-1.5">
-        <Chip tone="outline">{setup.model}</Chip>
-        {setup.effort && <Chip tone="outline">Effort {setup.effort}</Chip>}
-        {setup.permissionMode && <Chip tone="outline">{setup.permissionMode}</Chip>}
-        <span className="ml-auto font-mono text-2xs text-fg-3">{setup.hash}</span>
+      <div className="flex flex-wrap items-baseline justify-between gap-3 text-ui">
+        <span>
+          {[setup.model, setup.effort && `Effort ${setup.effort}`, setup.permissionMode].filter(Boolean).join(' · ')}
+        </span>
+        <span className="font-mono text-caption text-text-2">{setup.hash}</span>
       </div>
-      <div className="space-y-4">
+      <div className="mt-8 space-y-8">
         {GROUPS.map((g) => {
           const items = setup.components.filter((c) => c.kind === g.kind)
           if (!items.length) return null
           return (
-            <div key={g.kind}>
-              <div className="mb-1.5 text-xs text-fg-3">{g.label}</div>
-              <div className="divide-y divide-line rounded-[12px] border border-line">
+            <section key={g.kind} className="border-t border-text pt-3">
+              <h3 className="text-caption">{g.label}</h3>
+              <ul className="mt-3 divide-y divide-rule">
                 {items.map((c) => (
-                  <div key={c.name} className="flex items-center gap-3 px-3 py-2.5">
+                  <li key={c.name} className="flex items-baseline gap-3 py-2.5">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate font-mono text-[13px]">{c.name}</span>
-                        {c.version && <span className="font-mono text-2xs text-fg-3">{c.version}</span>}
-                      </div>
-                      {c.descriptionRedacted && <div className="truncate text-xs text-fg-3">{c.descriptionRedacted}</div>}
+                      <span className="font-mono text-ui">{c.name}</span>
+                      {c.version && <span className="ml-2 font-mono text-caption text-text-2">{c.version}</span>}
+                      {c.descriptionRedacted && <div className="truncate text-caption text-text-2">{c.descriptionRedacted}</div>}
                     </div>
-                    {c.contentShared ? (
-                      <Chip tone="ice" icon={<Share2 size={11} strokeWidth={2} />}>
-                        Shared
-                      </Chip>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-xs text-fg-3">
-                        <Lock size={11} strokeWidth={2} />
-                        Private
-                      </span>
-                    )}
-                  </div>
+                    <span className={c.contentShared ? 'text-caption font-medium' : 'text-caption text-text-2'}>{c.contentShared ? 'Shared' : 'Private'}</span>
+                  </li>
                 ))}
-              </div>
-            </div>
+              </ul>
+            </section>
           )
         })}
       </div>

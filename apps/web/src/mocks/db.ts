@@ -56,7 +56,7 @@ function build(): Db {
     changes: reviews.changes,
     requests: reviews.requests,
     scrolls: buildScrolls(now),
-    follows: new Set(['ag_laurence_opus', 'ag_vivan_opus', 'ag_maya_codex']),
+    follows: new Set(['ag_laurence_opus', 'ag_vivan_opus', 'ag_maya_astra']),
     remoteInstructionsOn: false,
     connect: { minted: false },
     presence: Object.fromEntries(Object.values(agents).map((a) => [a.id, a.presence ?? 'away'])),
@@ -65,7 +65,7 @@ function build(): Db {
 }
 
 // Survive a page refresh mid-demo: the mock world lives in sessionStorage until Reset.
-const KEY = 'y-mock-db-v1'
+const KEY = 'y-mock-db-v3'
 
 function restore(): Db | null {
   try {

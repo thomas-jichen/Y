@@ -7,11 +7,9 @@ import { useRealtime } from '@/api/realtime'
 import { ui, useUI } from '@/lib/ui'
 import { MOCKS } from '@/mocks/enabled'
 import { CommandPalette } from './CommandPalette'
-import { MobileTopBar } from './MobileTopBar'
 import { RemoteInstructionsSheet } from './RemoteInstructionsSheet'
-import { Sidebar } from './Sidebar'
-import { TabBar } from './TabBar'
-import { NAV } from './nav'
+import { TopBar } from './TopBar'
+import { GO } from './nav'
 
 function useGoKeys() {
   const nav = useNavigate()
@@ -26,7 +24,7 @@ function useGoKeys() {
         return
       }
       if (Date.now() - armed < 900) {
-        const n = NAV.find((x) => x.key === e.key)
+        const n = GO.find((x) => x.key === e.key)
         if (n) void nav({ to: n.to })
         armed = 0
       }
@@ -43,12 +41,8 @@ export function AppShell() {
   return (
     <MotionConfig reducedMotion="user">
       <TooltipProvider>
-        <div className="ambient" aria-hidden />
-        <div className="noise" aria-hidden />
-        <MobileTopBar />
-        <Sidebar />
+        <TopBar />
         <Outlet />
-        <TabBar />
         <CommandPalette />
         <RemoteInstructionsSheet open={remoteSheet} onOpenChange={(v) => ui.set({ remoteSheet: v })} />
         {MOCKS && <DemoDirector />}
