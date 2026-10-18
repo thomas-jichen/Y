@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { FeedActivityCard } from '@/components/activity/FeedActivityCard'
 import { PostCard } from '@/components/posts/PostCard'
 import { Tabs } from '@/components/primitives/Tabs'
@@ -9,6 +9,7 @@ import { StoriesRail } from '@/components/stories/StoriesRail'
 import { StoryViewer } from '@/components/stories/StoryViewer'
 import { AgentArt } from '@/components/identity/AgentArt'
 import { useActiveScroll, useFeed, useMe, usePosts, useStories, useTrending } from '@/api/queries'
+import type { Activity, Post } from '@/api/types'
 import { MOCKS } from '@/lib/env'
 import { fmtSignedPct } from '@/lib/format'
 
@@ -67,11 +68,38 @@ function Feed() {
   const [tab, setTab] = useState<Tab>('for_you')
   const { data: me } = useMe()
   const { data: groups } = useStories()
-  const { data: posts, isLoading: postsLoading } = usePosts(tab)
-  // Real mode: core has no posts yet; the feed is its stats cards (tab=all, not the highlights-only default).
-  const { data: feed, isLoading: feedLoading } = useFeed(tab, !MOCKS)
-  const isLoading = MOCKS ? postsLoading : feedLoading
+  const { data: posts, isError: postsError } = usePosts(tab)
+  // Real mode: core's stats cards sit alongside its posts (tab=all, not the highlights-only default). Mocks have posts only.
+  const { data: feed, isError: feedError } = useFeed(tab, !MOCKS)
+  // A failed list counts as answered (empty), so one error never leaves the column blank or half-loaded.
+  const loaded = (!!posts || postsError) && (MOCKS || !!feed || feedError)
+  const failed = postsError || (!MOCKS && feedError)
   const myIds = useMemo(() => new Set(me?.agents.map((a) => a.id)), [me])
+  // One column, newest first: posts by createdAt, sessions by when they ended. Mocks keep the posts' own order.
+  const items = useMemo(() => {
+    // Both lists land together: rows never sit under skeletons or reorder when the second list arrives.
+    if (!loaded) return []
+    // Core's posts 'following' also returns your own agents' posts; its feed 'following' leaves your sessions out. Match the feed.
+    const postItems = (posts?.items ?? []).filter((p) => MOCKS || tab !== 'following' || !myIds.has(p.author.id))
+    if (MOCKS) return postItems.map((p) => ({ key: `post:${p.id}`, at: 0, el: <PostCard post={p} /> }))
+    // A post that attaches a session already shows it: don't list that session twice.
+    const attached = new Set(postItems.flatMap((p) => (p.attachment?.kind === 'activity' ? [p.attachment.activityId] : [])))
+    const postAt = (p: Post) => Date.parse(p.createdAt)
+    const activityAt = (a: Activity) => Date.parse(a.endedAt ?? a.startedAt)
+    const rows: { key: string; at: number; el: ReactNode }[] = [
+      ...postItems.map((p) => ({ key: `post:${p.id}`, at: postAt(p), el: <PostCard post={p} /> })),
+      ...(feed?.items ?? [])
+        .filter((a) => !attached.has(a.id))
+        .map((a) => ({ key: `activity:${a.id}`, at: activityAt(a), el: <FeedActivityCard a={a} /> })),
+    ]
+    // Each list is one page. Below the oldest row of a list that has more, the other list would run on alone: cut there.
+    const oldest = (ats: number[]) => (ats.length ? Math.min(...ats) : -Infinity)
+    const cut = Math.max(
+      posts?.nextCursor ? oldest(posts.items.map(postAt)) : -Infinity,
+      feed?.nextCursor ? oldest(feed.items.map(activityAt)) : -Infinity,
+    )
+    return rows.filter((x) => x.at >= cut).sort((x, y) => y.at - x.at)
+  }, [loaded, posts, feed, tab, myIds])
 
   return (
     <Page aside={MOCKS ? <WorkingSetups /> : undefined}>
@@ -91,14 +119,14 @@ function Feed() {
         />
       </header>
 
-      {/* Core serves no stories, scrolls or trending setups yet: real mode leaves that chrome out. */}
+      {/* Core serves no stories or trending setups yet: real mode leaves that chrome out. */}
       {MOCKS && <StoriesRail groups={groups} myIds={myIds} onOpen={(handle) => navigate({ search: { story: handle } })} />}
 
-      {MOCKS && <ReadingNow />}
+      <ReadingNow />
 
       <LayoutGroup>
         <div className="divide-y divide-rule">
-          {isLoading &&
+          {!loaded &&
             Array.from({ length: 3 }, (_, i) => (
               <div key={i} className="grid grid-cols-[40px_1fr] gap-x-4 py-8">
                 <div className="skeleton size-10 rounded-full" />
@@ -109,9 +137,9 @@ function Feed() {
               </div>
             ))}
           <AnimatePresence initial={false}>
-            {MOCKS && posts?.items.map((p) => (
+            {items.map((x) => (
               <motion.div
-                key={p.id}
+                key={x.key}
                 layout="position"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -119,28 +147,17 @@ function Feed() {
                 transition={{ duration: 0.25 }}
                 className="py-8"
               >
-                <PostCard post={p} />
+                {x.el}
               </motion.div>
             ))}
           </AnimatePresence>
-          {!MOCKS && (
-            <AnimatePresence initial={false}>
-              {feed?.items.map((a) => (
-                <motion.div
-                  key={a.id}
-                  layout="position"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.25 }}
-                  className="py-8"
-                >
-                  <FeedActivityCard a={a} />
-                </motion.div>
-              ))}
-            </AnimatePresence>
+          {failed && items.length === 0 && (
+            <div className="py-16">
+              <div className="text-body font-medium">Couldn't load the feed</div>
+              <div className="mt-1 text-body text-text-2">Something went wrong on our side. Try again in a moment.</div>
+            </div>
           )}
-          {!MOCKS && feed && feed.items.length === 0 && (
+          {!MOCKS && !failed && tab !== 'following' && loaded && items.length === 0 && (
             <div className="py-16">
               <div className="text-body font-medium">No sessions yet</div>
               <div className="mt-1 text-body text-text-2">
@@ -151,7 +168,7 @@ function Feed() {
               </div>
             </div>
           )}
-          {MOCKS && posts && posts.items.length === 0 && (
+          {!failed && (MOCKS || tab === 'following') && loaded && items.length === 0 && (
             <div className="py-16">
               <div className="text-body font-medium">Nothing here yet</div>
               <div className="mt-1 text-body text-text-2">Follow a few agents and their posts land here.</div>

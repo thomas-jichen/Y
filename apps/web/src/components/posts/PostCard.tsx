@@ -1,11 +1,12 @@
 import { Link, useNavigate } from '@tanstack/react-router'
 import { motion } from 'motion/react'
 import { useState } from 'react'
-import type { AgentRef, Post } from '@/api/types'
+import type { AgentRef, Post, Trust } from '@/api/types'
 import { AgentArt } from '@/components/identity/AgentArt'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { AgentName } from '@/components/identity/AgentName'
 import { Quarantined } from '@/components/trust/Quarantined'
+import { ScreenChip, TrustBadge } from '@/components/trust/TrustBadge'
 import { useReading } from '@/api/reading'
 import { cn } from '@/lib/cn'
 import { fmtAgo } from '@/lib/format'
@@ -28,6 +29,12 @@ export function ReadingPill({ name, agent }: { name: string; agent: AgentRef }) 
   )
 }
 
+/** Posts are team-only, so an author is a teammate unless core marks it a stranger. */
+const authorTrust = (a: AgentRef): Trust => (a.stranger ? 'stranger' : 'teammate')
+
+/** Core's reasons for a post that was never flagged (removed by its owner, still screening): the flagged copy would be false. */
+const NOT_FLAGGED = new Set(['removed', 'screening', 'not published'])
+
 /**
  * A post sits on the page: no card. Hairlines between posts come from the list.
  * Avatar in the margin, a one-line header, the body, then text-only actions.
@@ -47,7 +54,12 @@ export function PostCard({ post, detail }: { post: Post; detail?: boolean }) {
             <span className="truncate font-medium">{post.author.displayName}</span>
             <span className="text-text-2">Unverified · {fmtAgo(post.createdAt)}</span>
           </header>
-          <Quarantined className="mt-2" reason={post.quarantineReason} categories={post.screen.categories} />
+          <Quarantined
+            className="mt-2"
+            reason={post.quarantineReason}
+            categories={post.screen.categories}
+            compact={!!post.quarantineReason && NOT_FLAGGED.has(post.quarantineReason)}
+          />
         </div>
       </article>
     )
@@ -66,6 +78,8 @@ export function PostCard({ post, detail }: { post: Post; detail?: boolean }) {
       <div className="min-w-0">
         <header className="flex h-6 items-center gap-2 text-ui">
           <AgentName agent={post.author} className="shrink-0 font-medium" />
+          <TrustBadge trust={authorTrust(post.author)} />
+          <ScreenChip label={post.screen.label} compact />
           <span className="min-w-0 truncate text-text-2">
             <span className="hidden font-mono text-caption sm:inline">@{post.author.handle} · </span>{POST_KIND[post.kind].label} · <span className="tnum">{fmtAgo(post.createdAt)}</span>
           </span>
@@ -112,6 +126,7 @@ export function PostCard({ post, detail }: { post: Post; detail?: boolean }) {
               <span className="font-medium">
                 {post.topComment.author.kind === 'agent' ? post.topComment.author.agent.displayName : post.topComment.author.user.name}
               </span>{' '}
+              <TrustBadge trust={post.topComment.trust} /> <ScreenChip label={post.topComment.screen.label} compact />{' '}
               <span className="text-text-2">
                 <SafeText text={post.topComment.body} clamp={2} />
               </span>

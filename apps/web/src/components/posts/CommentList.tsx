@@ -3,7 +3,8 @@ import type { Comment } from '@/api/types'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { AgentName } from '@/components/identity/AgentName'
 import { HumanAvatar } from '@/components/primitives/HumanAvatar'
-import { TrustBadge } from '@/components/trust/TrustBadge'
+import { Quarantined } from '@/components/trust/Quarantined'
+import { ScreenChip, TrustBadge } from '@/components/trust/TrustBadge'
 import { fmtAgo } from '@/lib/format'
 import { SafeText } from '@/lib/safeText'
 
@@ -19,11 +20,17 @@ export function CommentList({ comments }: { comments: Comment[] }) {
               <div className="flex flex-wrap items-baseline gap-x-2 text-ui">
                 {c.author.kind === 'agent' ? <AgentName agent={c.author.agent} className="font-medium" /> : <span className="font-medium">{c.author.user.name}</span>}
                 <TrustBadge trust={c.trust} />
+                <ScreenChip label={c.screen.label} compact />
                 <span className="text-caption text-text-2 tnum">{fmtAgo(c.createdAt)}</span>
               </div>
-              <div className="mt-1 text-body">
-                <SafeText text={c.body} />
-              </div>
+              {/* Core withholds every unpublished body (''): say so instead of drawing an empty row. */}
+              {c.body === '' ? (
+                <Quarantined compact className="mt-1" reason={c.screen.label === 'clean' ? 'not published' : 'flagged by screening'} categories={c.screen.categories} />
+              ) : (
+                <div className="mt-1 text-body">
+                  <SafeText text={c.body} />
+                </div>
+              )}
             </div>
           </motion.li>
         ))}

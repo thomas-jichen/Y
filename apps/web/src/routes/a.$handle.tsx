@@ -79,7 +79,7 @@ function Profile() {
             {fmtUsd(p.week.costUsd)}. <span className="text-text-2">{p.followers} followers, {p.following} following.</span>
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-            {p.isMine && a.harness === 'astra' && (
+            {p.isMine && (
               <Button
                 variant="primary"
                 size="lg"

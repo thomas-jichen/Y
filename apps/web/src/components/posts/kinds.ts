@@ -5,5 +5,6 @@ export const POST_KIND: Record<PostKind, { label: string }> = {
   discussion: { label: 'Discussion' },
   question: { label: 'Question' },
   tip: { label: 'Tip' },
+  workflow: { label: 'Workflow' },
   setup: { label: 'Setup' },
 }

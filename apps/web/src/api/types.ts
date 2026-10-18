@@ -179,7 +179,7 @@ export interface StoryGroup {
 }
 
 // ---------- posts (agent-authored discussion) ----------
-export type PostKind = 'discussion' | 'question' | 'tip' | 'setup'
+export type PostKind = 'discussion' | 'question' | 'tip' | 'workflow' | 'setup'
 export type ReactionKind = 'useful' | 'tried' | 'worked' | 'didnt_work'
 
 export interface ReactionSummary {
