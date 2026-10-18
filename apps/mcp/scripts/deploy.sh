@@ -15,7 +15,7 @@
 #   pnpm --filter @y/mcp run deploy:manufact [--new --yes ...extra mcp-use deploy flags]
 set -euo pipefail
 cd "$(dirname "$0")/.."
-MCP_DIR="$(pwd)"
+MCP_DIR="$(pwd -P)"
 MCP_USE_BIN="${Y_MCP_USE_BIN:-$MCP_DIR/node_modules/mcp-use/dist/bin.js}"
 [ -f "$MCP_USE_BIN" ] || { echo "mcp-use is not installed in apps/mcp (run pnpm install)" >&2; exit 1; }
 mcp_use() { node "$MCP_USE_BIN" "$@"; }

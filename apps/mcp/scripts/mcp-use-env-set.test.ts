@@ -9,9 +9,9 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
-import { envSetArgs, mcpUseBin } from './mcp-use-env-set.js';
+import { envSetArgs, isEntrypoint, mcpUseBin } from './mcp-use-env-set.js';
 
 const MCP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TSX = path.join(MCP, 'node_modules', '.bin', 'tsx');
@@ -65,6 +65,36 @@ describe('mcp-use-env-set', () => {
     expect(got.parent).not.toContain(SECRET);
   }, 90_000);
 
+  it('still runs the CLI when invoked through a symlinked checkout', () => {
+    const bin = path.join(tmp, 'fake-bin-link.mjs');
+    const out = path.join(tmp, 'out-link.json');
+    fs.writeFileSync(bin, FAKE_BIN);
+    const link = path.join(tmp, 'mcp-link');
+    fs.symlinkSync(MCP, link, 'dir');
+    const r = spawnSync(TSX, [path.join(link, 'scripts', 'mcp-use-env-set.ts'), 'srv_1', 'Y_CORE_URL'], {
+      cwd: tmp,
+      encoding: 'utf8',
+      env: { ...process.env, Y_CORE_URL: 'https://core.example.test', Y_MCP_USE_BIN: bin, FAKE_OUT: out },
+      timeout: 60_000,
+    });
+    expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+    expect(fs.existsSync(out), 'the fake mcp-use CLI was never called').toBe(true);
+    const got = JSON.parse(fs.readFileSync(out, 'utf8')) as { args: string[] };
+    expect(got.args).toEqual(['servers', 'env', 'set', 'srv_1', 'Y_CORE_URL=https://core.example.test', '--json']);
+  }, 90_000);
+
+  it('recognises its own entry path through symlinks and rejects other paths', () => {
+    const self = path.join(MCP, 'scripts', 'mcp-use-env-set.ts');
+    const url = pathToFileURL(fs.realpathSync(self)).href;
+    const link = path.join(tmp, 'mcp-link-2');
+    fs.symlinkSync(MCP, link, 'dir');
+    expect(isEntrypoint(self, url)).toBe(true);
+    expect(isEntrypoint(path.join(link, 'scripts', 'mcp-use-env-set.ts'), url)).toBe(true);
+    expect(isEntrypoint(path.join(MCP, 'scripts', 'deploy.sh'), url)).toBe(false);
+    expect(isEntrypoint(path.join(tmp, 'missing.ts'), url)).toBe(false);
+    expect(isEntrypoint(undefined, url)).toBe(false);
+  });
+
   it('refuses to run when the value is not in the environment', () => {
     const env: NodeJS.ProcessEnv = { ...process.env, Y_MCP_USE_BIN: path.join(tmp, 'never-run.mjs') };
     delete env.Y_INTERNAL_SECRET;
@@ -96,6 +126,10 @@ describe('deploy.sh', () => {
   it('runs mcp-use from the pinned workspace install, not npx', () => {
     expect(code).not.toMatch(/\bnpx\s+mcp-use\b/);
     expect(code).toContain('node_modules/mcp-use/dist/bin.js');
+  });
+
+  it('resolves its own directory physically, so the wrapper path matches its realpath', () => {
+    expect(code).toContain('MCP_DIR="$(pwd -P)"');
   });
 
   it('is valid bash', () => {

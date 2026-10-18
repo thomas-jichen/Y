@@ -4,6 +4,12 @@
 # (@y/capture, redact, pointers, schema) and fails when the committed bundles
 # differ: a hand-edited bundle, or a library fix merged without a rebuild.
 # Fix a failure with `pnpm --filter @y/plugin-claude-code build` and commit dist.
+#
+# This check runs after a push, and the marketplace serves main HEAD, so it
+# blocks nothing by itself. It protects installs only when `plugin-dist /
+# verify` is a required status check on main and .github/workflows/** plus
+# plugins/claude-code/scripts/build.ts need owner review (a pull_request run
+# uses the PR's own copy of this file and of build.ts).
 name: plugin-dist
 
 on:

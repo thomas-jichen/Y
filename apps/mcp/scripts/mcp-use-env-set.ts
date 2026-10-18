@@ -44,7 +44,22 @@ async function main(argv: string[]): Promise<void> {
   await import(pathToFileURL(bin).href);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/**
+ * True when this file is the process entry. Compares realpaths: argv[1] is the
+ * path as invoked (possibly through a symlinked checkout or /tmp -> /private/tmp)
+ * while import.meta.url is already resolved, so a plain path compare would skip
+ * main() and exit 0 without setting anything.
+ */
+export function isEntrypoint(argv1: string | undefined, moduleUrl: string): boolean {
+  if (!argv1) return false;
+  try {
+    return realpathSync(path.resolve(argv1)) === realpathSync(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntrypoint(process.argv[1], import.meta.url)) {
   main(process.argv.slice(2)).catch((e: unknown) => {
     console.error(`mcp-use-env-set: ${e instanceof Error ? e.message : String(e)}`);
     process.exit(1);
