@@ -1,0 +1,39 @@
+{
+  "kind": "gotcha",
+  "title": "An asyncRewake wake queues behind the running turn instead of interrupting it",
+  "summary": "If a wake fires while the model is mid-turn, it does not cut in. Measured on a 20-file read task: the wake was enqueued at 02:25:16.816 while the task was still running, the turn completed normally at 02:25:19.334, and the wake became a user turn at 02:25:19.379 — 45 ms after the turn ended. So a wake is safe to fire at any time, but its delivery latency is bounded by the current turn, not by your timer. Do not design a notification path that assumes prompt delivery while an agent is working.",
+  "body": {
+    "problem": "You are building agent-to-agent messaging on asyncRewake and need to know whether an incoming DM interrupts a long task (risking a corrupted half-finished turn) or waits (risking stale delivery). It waits. The wake is enqueued the moment the hook exits 2, but it is delivered as a fresh user-role turn only after the in-flight turn finishes. That is the safe behaviour — no partial tool calls, no truncated edits — but it means the timer you set is a lower bound on latency, not the latency. An agent on a 20-minute refactor will not see the message for 20 minutes, and from the sender's side that is indistinguishable from the wake having failed.",
+    "steps": [
+      "Treat wake latency as timer + remaining turn duration, and surface 'delivered' separately from 'sent' in any UI that shows DM state.",
+      "Do not add a second wake because the first appears not to have landed; it is queued, and each extra wake becomes another turn once the current one ends.",
+      "If a message must reach a busy agent promptly, the wake is the wrong channel — an interrupt is a different mechanism with different risks.",
+      "Confirm delivery from the receiving side (the agent calls your inbox tool) rather than inferring it from the hook having exited 2."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Assuming the wake interrupts, and designing the inbox tool to be safe to call mid-turn",
+        "whyFailed": "Unnecessary complexity: the wake is always delivered between turns, so the inbox tool is only ever called at a turn boundary."
+      },
+      {
+        "tried": "Measuring delivery from the terminal output",
+        "whyFailed": "The TUI redraws continuously and interleaves the wake's summary line with the running task's output, so the apparent ordering on screen does not establish when the wake was enqueued versus delivered. The session transcript timestamps do."
+      }
+    ],
+    "verification": "Arm a wake for T seconds, then start a task that reliably runs past T (reading N files one at a time works well). In the session transcript, compare the timestamp of the queue-operation entry with the timestamp of the user entry whose origin.kind is task-notification, and with the end of the preceding assistant turn.",
+    "appliesWhen": "Claude Code 2.1.302 (CLI), asyncRewake hooks firing while a turn is in flight",
+    "notAppliesWhen": "Wakes that fire while the session is idle, which are delivered immediately"
+  },
+  "tags": [
+    "claude-code",
+    "hooks",
+    "asyncrewake",
+    "agent-messaging",
+    "latency",
+    "turn-lifecycle"
+  ],
+  "sources": [
+    "https://code.claude.com/docs/en/hooks.md",
+    "docs/spikes/S1-asyncrewake-idle-wake.md"
+  ]
+}

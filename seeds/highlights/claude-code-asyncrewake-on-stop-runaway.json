@@ -1,0 +1,46 @@
+{
+  "kind": "gotcha",
+  "title": "asyncRewake on a Stop hook self-triggers forever",
+  "summary": "An asyncRewake hook registered on Stop re-arms every time a turn ends — including the turns its own wakes create — so one wake becomes an unbounded chain of model turns. Measured: 13 self-triggered turns in 5 minutes from a single 45-second timer, with intervals collapsing to 11s as overlapping timers accumulated. Claude Code sets stop_hook_active for synchronous Stop hooks, but an asyncRewake hook is a detached process that gets no such flag, so nothing stops the loop but killing the session. Only arm the wake when there is real news to deliver, and never register the same unconditional wake on both SessionStart and Stop.",
+  "body": {
+    "problem": "You want an idle agent to notice an incoming message, so you put an asyncRewake hook on SessionStart to poll, and add the same hook to Stop so it re-arms after each turn. The re-arm works — and that is the bug. Stop fires after every assistant turn, including the turn a wake just produced, so each wake schedules the next. Worse, each Stop event arms its own independent timer, so the timers accumulate and overlap rather than forming a tidy chain: with WAKE_AFTER_S=45 the observed gaps between wakes were 38s, 11s, 38s, 21s, 33s, 15s — tightening, not steady. The session burns tokens on a conversation with itself until someone notices. The usual guard does not save you: the stop_hook_active flag that lets a synchronous Stop hook detect its own re-entry is not delivered to a backgrounded asyncRewake process, and the wake payload is injected regardless of what the hook knows.",
+    "steps": [
+      "Register the wake on SessionStart only. It stays armed for the life of the session; you do not need Stop to keep it alive.",
+      "Make the hook conditional: poll your backend and exit 0 when there is nothing new. Exit code 2 is the wake signal, so exiting 2 unconditionally is what creates the loop.",
+      "If you genuinely need to re-arm on Stop, make the hook idempotent against its own output: have it record the id of the last delivered item and exit 0 when the backend has nothing newer.",
+      "Add a hard ceiling in the hook itself — a wake counter or a minimum interval persisted to a state file — so a backend bug cannot translate into unbounded model turns.",
+      "Watch for it in the transcript: repeated queue-operation entries whose summary is the same string, each followed by an assistant turn, is the signature."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Checking stop_hook_active in the hook's stdin payload",
+        "whyFailed": "An asyncRewake hook is spawned detached and backgrounded; it is not the synchronous Stop handler, so it does not receive the stop_hook_active guard that would let it detect re-entry."
+      },
+      {
+        "tried": "Relying on the model to stop responding once it has nothing useful to do",
+        "whyFailed": "The model did recognise the situation — it replied 'this will repeat until the hook is changed' — and the wakes kept arriving anyway. Delivery is the harness's decision, not the model's."
+      },
+      {
+        "tried": "Setting a long timeout so the hook eventually dies",
+        "whyFailed": "timeout bounds one hook process, not the chain. Each new Stop event starts a fresh process with a fresh timeout."
+      }
+    ],
+    "verification": "Register an asyncRewake hook on both SessionStart and Stop, say hi, then leave the session idle and read the session transcript under ~/.claude/projects/<slug>/<session-id>.jsonl. Count entries of type queue-operation containing task-notification. A correct setup produces exactly one per genuine event; the runaway produces one per turn, indefinitely.",
+    "appliesWhen": "Claude Code 2.1.302 (CLI), hooks declaring asyncRewake: true on the Stop event",
+    "notAppliesWhen": "Synchronous Stop hooks, which do receive stop_hook_active and can decline to re-block; or an asyncRewake hook that exits 2 only when its backend reports new work"
+  },
+  "tags": [
+    "claude-code",
+    "hooks",
+    "asyncrewake",
+    "stop-hook",
+    "infinite-loop",
+    "agent-messaging",
+    "token-burn"
+  ],
+  "sources": [
+    "https://code.claude.com/docs/en/hooks.md",
+    "https://code.claude.com/docs/en/hooks",
+    "docs/spikes/S1-asyncrewake-idle-wake.md"
+  ]
+}

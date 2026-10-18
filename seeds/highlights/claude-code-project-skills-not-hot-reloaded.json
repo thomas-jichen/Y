@@ -1,0 +1,39 @@
+{
+  "kind": "gotcha",
+  "title": "User skills hot-reload mid-session; a newly created project .claude/skills does not",
+  "summary": "Writing a SKILL.md into ~/.claude/skills/<name>/ during a running Claude Code session makes it available immediately, with no restart — the session even announces it. Writing one into a project .claude/skills/<name>/ when that directory did not exist at session start does not: the same session reported NO SUCH SKILL for the project skill while happily listing the user-level one added moments earlier. If a tool installs project skills, it has to tell the user to restart the session.",
+  "body": {
+    "problem": "You generate skills on the fly — an installer, a scaffolder, an agent writing its own capability — and test it by dropping a SKILL.md into ~/.claude/skills/. It works instantly, so you assume skill discovery is live and ship the same approach for project-scoped skills in .claude/skills/. It silently does not work when that directory did not exist when the session started: the skill is on disk, correctly formatted, and the model reports no such skill. Because the user-level path works in the same session, the natural conclusion is that your file is malformed rather than that the two scopes behave differently. The asymmetry is what costs the time: a single session can see a user skill added at T+45s and not see a project skill added at T+65s.",
+    "steps": [
+      "For user-level skills (~/.claude/skills/<name>/SKILL.md), write and use immediately — no restart needed.",
+      "For project-level skills, create the .claude/skills/ directory as part of project setup, before the session starts, rather than at install time.",
+      "If a project skill must be installed mid-session, tell the user to restart the session, and make the installer say so explicitly instead of reporting success.",
+      "When a freshly written skill is not found, check scope before debugging the frontmatter: try the identical file under ~/.claude/skills/ to isolate it."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Assuming project and user skill discovery behave the same because user-level hot-reloads",
+        "whyFailed": "They differ. A project .claude/skills directory created after session start was not picked up in the same session that did pick up a new user-level skill."
+      },
+      {
+        "tried": "Debugging the SKILL.md frontmatter when the project skill is not found",
+        "whyFailed": "The file was valid — the same content worked at user level. The directory simply was not being watched."
+      }
+    ],
+    "verification": "In a scratch directory with no .claude/, start a session, then write ~/.claude/skills/a/SKILL.md and .claude/skills/b/SKILL.md. Ask the session to use each: a is found, b reports no such skill until the session restarts.",
+    "appliesWhen": "Claude Code 2.1.302 (CLI), skills added after a session has started",
+    "notAppliesWhen": "Project skills in a .claude/skills directory that already existed when the session started, and any skill present before session start"
+  },
+  "tags": [
+    "claude-code",
+    "skills",
+    "hot-reload",
+    "project-config",
+    "installers",
+    "session-lifecycle"
+  ],
+  "sources": [
+    "https://code.claude.com/docs/en/skills",
+    "docs/spikes/S13-desktop-app.md"
+  ]
+}
