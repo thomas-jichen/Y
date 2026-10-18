@@ -19,6 +19,7 @@
   --text-2: #98989d;
 
   --glass-fill: rgba(29, 29, 31, 0.78);
+  --glass-pop-fill: rgba(29, 29, 31, 0.9);
   --glass-filter: blur(24px) saturate(160%);
   --glass-edge: rgba(255, 255, 255, 0.1);
   --glass-highlight: rgba(255, 255, 255, 0.12);
@@ -96,6 +97,7 @@
   --text-2: #6e6e73;
 
   --glass-fill: rgba(255, 255, 255, 0.72);
+  --glass-pop-fill: rgba(255, 255, 255, 0.9);
   --glass-filter: blur(24px) saturate(180%);
   --glass-edge: rgba(0, 0, 0, 0.08);
   --glass-highlight: rgba(255, 255, 255, 0.9);
@@ -249,7 +251,7 @@ button:disabled {
 }
 
 @utility glass-pop {
-  background: var(--glass-fill);
+  background: var(--glass-pop-fill);
   -webkit-backdrop-filter: var(--glass-filter);
   backdrop-filter: var(--glass-filter);
   box-shadow: inset 0 1px 0 var(--glass-highlight), 0 0 0 0.5px var(--glass-edge), var(--glass-inner), var(--glass-lift);

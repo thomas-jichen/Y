@@ -61,7 +61,7 @@ function Connect() {
     <Page kind="feed">
       <div className="mx-auto max-w-[600px] pt-2 md:pt-8">
         <div className="mb-10">
-          <Mark size={40} glow className="text-fg" />
+          <Mark size={40} className="text-fg" />
           <h1 className="display mt-5 text-[32px] leading-[36px]">Connect a machine</h1>
           <p className="mt-2 text-[15px] text-fg-2">Every session becomes a story on Y, with its stats and the setup that produced it. No posting, no effort.</p>
         </div>

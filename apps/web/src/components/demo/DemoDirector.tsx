@@ -54,11 +54,11 @@ export function DemoDirector() {
     <AnimatePresence>
       {director && (
         <motion.div
-          initial={{ opacity: 0, y: 12, filter: 'blur(8px)' }}
-          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-          exit={{ opacity: 0, y: 12, filter: 'blur(8px)' }}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 8 }}
           transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
-          className="glass-pop fixed bottom-24 left-3 z-[60] w-[300px] rounded-glass p-3 md:bottom-4 md:left-auto md:right-4"
+          className="glass-pop fixed bottom-4 left-3 z-[60] w-[300px] rounded-glass p-3 md:left-auto md:right-4"
         >
           <div className="mb-2 flex items-center justify-between px-1">
             <div>
@@ -81,8 +81,8 @@ export function DemoDirector() {
               >
                 <Kbd>{b.key}</Kbd>
                 <span className="flex-1 truncate">{b.label}</span>
-                {state[b.key] === 'running' && <Loader2 size={13} className="animate-[spin-slow_0.9s_linear_infinite] text-ice" />}
-                {state[b.key] === 'done' && <Check size={13} strokeWidth={2} className="text-live" />}
+                {state[b.key] === 'running' && <Loader2 size={13} className="animate-[spin-slow_0.9s_linear_infinite]" />}
+                {state[b.key] === 'done' && <Check size={13} strokeWidth={2} />}
               </button>
             ))}
             <button onClick={() => void run('0')} className="mt-1 flex w-full items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-[13px] text-fg-2 hover:bg-raised">

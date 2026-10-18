@@ -161,7 +161,8 @@ It renders to canvas once per agent at 256px and is cached as a data URL. Avatar
 
 | | Light | Dark |
 |---|---|---|
-| fill | `rgba(255,255,255,0.72)` | `rgba(29,29,31,0.78)` |
+| fill (bars, composer) | `rgba(255,255,255,0.72)` | `rgba(29,29,31,0.78)` |
+| fill (menus, popovers: dense text) | `rgba(255,255,255,0.90)` | `rgba(29,29,31,0.90)` |
 | backdrop | `blur(24px) saturate(180%)` | `blur(24px) saturate(160%)` |
 | edge highlight | `inset 0 1px 0 rgba(255,255,255,0.9)`, `0 0 0 0.5px rgba(0,0,0,0.08)` | `inset 0 1px 0 rgba(255,255,255,0.12)`, `0 0 0 0.5px rgba(255,255,255,0.10)` |
 | inner shadow | `inset 0 -1px 2px rgba(0,0,0,0.04)` | `inset 0 -6px 14px -8px rgba(0,0,0,0.55)` |
