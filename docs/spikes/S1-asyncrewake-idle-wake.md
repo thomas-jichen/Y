@@ -4,8 +4,9 @@
 - **Versions:** Claude Code **2.1.302** (CLI, `claude --version`) · macOS 27.0.1 · Node 24.21.0
   - A second, older install exists on this machine at `/usr/local/bin/claude` = **2.1.240**. Every run below used
     2.1.302, which is first on `PATH`. Desktop app: not installed (see [S13](S13-desktop-app.md)).
-- **Verdict: PASS.** An idle session wakes itself and starts a new turn on the hook's text, reliably, from 20
-  seconds to 53 minutes. Two caveats change the design: never arm it on `Stop`, and relabel the message.
+- **Verdict: PASS.** An idle session wakes itself and starts a new turn on the hook's text, reliably, at every
+  delay tested from 20 seconds to 83 minutes, with no drift. Two caveats change the design: never arm it on
+  `Stop`, and relabel the message.
 
 ## Question
 
@@ -86,16 +87,16 @@ Each run: fresh session, say "hi", then idle. "Fired at" is the `queue-operation
 | C | 900 | 3300 | 02:06:35 | 02:21:35.410 | **900.0 s** | woke |
 | D | 1800 | 3300 | 02:06:37 | 02:36:37.278 | **1800.0 s** | woke |
 | E | 3200 | 3300 | 02:06:39 | 02:59:59.793 | **3200.0 s** | woke |
-| F | 5000 | 7200 | 02:06:40 | — | — | **still in flight when this was pushed — see note** |
+| F | 5000 | 7200 | 02:06:40 | 03:30:02.014 | **5000.0 s** | woke |
 
-**Run F is still running at the time of this commit** (5000 s delay, due ~03:31Z). It is the only cell testing a
-`timeout` above 3300, i.e. whether a window larger than the doc's suggested ceiling is actually honoured. Nothing
-in the decision below depends on it: re-arming after each delivery is the pattern we are shipping, and 3200 s is
-already far beyond any poll interval we would use. This row will be filled in when it lands.
+Run F answers the remaining question — whether a `timeout` **above** the doc's suggested 3300 is honoured. It is:
+an 83-minute single-shot wake fired at exactly 5000.0 s, and the hook process survived the whole window without
+being reaped. So the practical ceiling is at least 7200 s, though we never need it (see the decision below: we
+re-arm after each delivery rather than relying on one long sleep).
 
 No drift at any delay — the timer is the hook's own `setTimeout`, and the harness honours the full `timeout`
 window without reaping the process early. The doc's suggested 120 s case was not run as its own cell; 20 s,
-75 s, 110 s, 900 s, 1800 s and 3200 s all fired exactly, which brackets it.
+75 s, 110 s, 900 s, 1800 s, 3200 s and 5000 s all fired exactly, which brackets it.
 
 ### 4. Mid-turn: it queues, it does not interrupt
 
@@ -159,8 +160,9 @@ disproved.
   *"Stop hook blocking error from command `SessionStart:startup`"* — no Stop hook involved, and the word "error"
   pushed the model into diagnosing a fault instead of reading its mail. In our runs it told the user "a stop hook
   said there's 1 unread DM", which is not the product we are shipping.
-- **`timeout: 3300` with a long poll is proven to 3200 s.** Re-arming after each delivery is the pattern, not a
-  single long sleep, so this is ample.
+- **Long timeouts are honoured: proven to 5000 s under `timeout: 7200`.** We still re-arm after each delivery
+  rather than relying on one long sleep, so `timeout: 3300` is ample — but a longer poll interval is available
+  if we ever want one.
 - **Treat delivery as "after the current turn".** Show *sent* and *delivered* separately in the DM UI, and
   confirm delivery when the agent actually calls the inbox tool — not when the hook exits.
 

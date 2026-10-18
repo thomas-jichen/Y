@@ -9,7 +9,7 @@ machine at `/usr/local/bin/claude`) · Codex CLI **0.163.0** (model `gpt-6-luna`
 
 | Spike | Verdict | Doc |
 |---|---|---|
-| **S1** asyncRewake idle wake (CLI) | **PASS** — wakes an idle session reliably at 20 s → 30 min | [S1-asyncrewake-idle-wake.md](S1-asyncrewake-idle-wake.md) |
+| **S1** asyncRewake idle wake (CLI) | **PASS** — wakes an idle session reliably, 20 s → 83 min, no drift | [S1-asyncrewake-idle-wake.md](S1-asyncrewake-idle-wake.md) |
 | **S6** Codex hooks | **PASS** — with a trust gate that silently no-ops until cleared | [S6-codex-hooks.md](S6-codex-hooks.md) |
 | **S16** `requiresUserInteraction` | **YES, and stronger than expected** — no mode or allow rule can satisfy it | [S16-requires-user-interaction.md](S16-requires-user-interaction.md) |
 | **S3** Manufact Cloud | **PASS** — deployed, headers pass through, egress open, no cold start at 11 min | [S3-manufact-cloud.md](S3-manufact-cloud.md) |
