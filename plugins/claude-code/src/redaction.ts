@@ -190,13 +190,32 @@ const COMMON_NAME_WORDS = new Set(
   ).split(/\s+/),
 );
 
+/**
+ * Tool, product and code words that show up as git names of bots and agents
+ * ("Claude Code", "GitHub Actions", "Deploy Bot"), plus `@y/redact`'s common
+ * words: never a term on their own, and a name made only of them is not one either.
+ */
+const TECH_WORDS = new Set(
+  (
+    'claude code codex copilot cursor devin agent agents bot bots github gitlab bitbucket actions action workflow workflows ' +
+    'docker compose kubernetes server servers client data deploy deployer deployment release releases bump automation ' +
+    'auto runner runners pipeline service services system sync merge renovate dependabot ci cd ops devops infra platform ' +
+    'cloud web app apps api core lib src test tests main dev local localhost repo project docs packages users home tmp www ' +
+    'com org the and node user admin root build builder'
+  ).split(/\s+/),
+);
+
 /** Terms for a git name: the full name, plus its parts of ≥ 4 chars that aren't common words. */
 export function nameTerms(name: string): string[] {
   const full = name.trim();
   if (!full) return [];
-  const parts = full.split(/\s+/).filter((t) => t.length >= 4 && !COMMON_NAME_WORDS.has(t.toLowerCase()));
+  const words = full.split(/\s+/);
+  const parts = words.filter((t) => t.length >= 4 && !COMMON_NAME_WORDS.has(t.toLowerCase()) && !TECH_WORDS.has(t.toLowerCase()));
   // A one-word name is only a term when it passes the same filter as a part.
-  return /\s/.test(full) ? [full, ...parts] : parts;
+  if (!/\s/.test(full)) return parts;
+  // A name made only of tool words ("Claude Code") would redact ordinary text.
+  if (words.every((w) => TECH_WORDS.has(w.toLowerCase()))) return parts;
+  return [full, ...parts];
 }
 
 export function identityTerms(cwd: string | undefined): IdentityTerms | undefined {

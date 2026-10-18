@@ -50,6 +50,58 @@ const CONFIG_VALUE = '<REDACTED:config_value>';
 const SECRET_NAME =
   '(?:[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?)[A-Za-z0-9_]*|(?:[A-Za-z0-9_]*_)?(?:PASS|PW)(?:_[A-Za-z0-9_]*)?)';
 const ENV_ASSIGN_RE = new RegExp(`(^|[\\s;&|(])((?:export\\s+)?${SECRET_NAME})=("[^"]*"|'[^']*'|\\S+)`, 'gi');
+/** Names that only describe a secret (a count, limit, lifetime or the shell's working dirs), not hold one: `MAX_TOKENS`, `TOKEN_TTL`, `OLDPWD`. */
+const NOT_A_SECRET_NAME_RE = /(?:^|_)(?:MAX|MIN|NUM|COUNT|LIMIT|LEN|LENGTH|SIZE|TTL|EXPIRY|EXPIRES|TIMEOUT)(?:_|$)|TOKENS(?:_|$)|^(?:OLD)?PWD$/i;
+/** The `PASS`/`PW` alternative only (not `PASSWORD`, `TOKEN` …): env-style upper case only, so `pass_through=true` is an argument. */
+const SHORT_PASS_NAME_RE = /^(?:[A-Za-z0-9_]*_)?(?:PASS|PW)(?:_[A-Za-z0-9_]*)?$/i;
+const LONG_SECRET_NAME_RE = /PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?/i;
+
+/** Whether an assigned name holds a secret (see {@link ENV_ASSIGN_RE}). */
+function secretAssignName(name: string): boolean {
+  const n = name.replace(/^export\s+/, '');
+  if (NOT_A_SECRET_NAME_RE.test(n)) return false;
+  if (LONG_SECRET_NAME_RE.test(n)) return true;
+  return SHORT_PASS_NAME_RE.test(n) && n === n.toUpperCase();
+}
+
+/**
+ * Split a shell command into segments at `;`, `&`, `|` and newlines outside
+ * quotes, keeping the separators, so per-tool masks (`mysql -pX`, `docker
+ * login -p X`) apply only to that tool's own arguments.
+ */
+function shellSegments(cmd: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let quote = '';
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i]!;
+    if (c === '\\' && quote !== "'" && i + 1 < cmd.length) {
+      cur += c + cmd[++i];
+      continue;
+    }
+    if (quote) {
+      if (c === quote) quote = '';
+    } else if (c === '"' || c === "'") quote = c;
+    else if (c === ';' || c === '&' || c === '|' || c === '\n') {
+      if (cur) out.push(cur);
+      let sep = c;
+      while (i + 1 < cmd.length && /[;&|\n]/.test(cmd[i + 1]!)) sep += cmd[++i];
+      out.push(sep);
+      cur = '';
+      continue;
+    }
+    cur += c;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/** Apply `mask` to each segment of `cmd` that `when` matches. */
+function perSegment(cmd: string, when: RegExp, mask: (segment: string) => string): string {
+  return shellSegments(cmd)
+    .map((seg) => (when.test(seg) ? mask(seg) : seg))
+    .join('');
+}
 const MYSQL_RE = /\b(?:mysql\w*|mariadb\w*)\b/;
 const ARG = `("[^"]*"|'[^']*'|\\S+)`;
 
@@ -76,13 +128,18 @@ export function maskCliSecrets(cmd: string): string {
   let out = cmd
     .replace(new RegExp(`(\\bsshpass\\s+-p\\s*)${ARG}`, 'g'), `$1${CLI_SECRET}`)
     .replace(new RegExp(`(\\s--(?:[a-z]+-)?(?:password|passwd)(?:=|\\s+))(?!-)${ARG}`, 'gi'), `$1${CLI_SECRET}`)
-    .replace(ENV_ASSIGN_RE, (_m, pre: string, name: string) => `${pre}${name}=${CLI_SECRET}`);
-  if (/\b(?:curl|wget|http)\b/.test(out)) out = out.replace(/(\s(?:-u\s*|--user(?:=|\s+))["']?[^\s:"'-][^\s:"']*:)([^\s"']+)/g, `$1${CLI_SECRET}`);
-  if (MYSQL_RE.test(out)) out = out.replace(/(\s-p)(?![\s-])("[^"]*"|'[^']*'|\S+)/g, `$1${CLI_SECRET}`);
-  if (/\b(?:docker|podman|nerdctl|buildah|skopeo|helm\s+registry)\s+login\b/.test(out)) {
-    out = out.replace(new RegExp(`(\\s-p\\s*)(?!-)${ARG}`, 'g'), `$1${CLI_SECRET}`);
+    .replace(ENV_ASSIGN_RE, (m, pre: string, name: string) => (secretAssignName(name) ? `${pre}${name}=${CLI_SECRET}` : m));
+  // Tool-specific flags are masked only inside that tool's own command segment
+  // (`mkdir -pv out && mysql …` keeps `-pv`; `docker run -p 8080:80` after a login keeps its port).
+  if (/\b(?:curl|wget|http)\b/.test(out)) {
+    out = perSegment(out, /\b(?:curl|wget|http)\b/, (seg) => seg.replace(/(\s(?:-u\s*|--user(?:=|\s+))["']?[^\s:"'-][^\s:"']*:)([^\s"']+)/g, `$1${CLI_SECRET}`));
   }
-  if (/\bredis-cli\b/.test(out)) out = out.replace(new RegExp(`(\\s(?:-a\\s*|--pass\\s+))(?!-)${ARG}`, 'g'), `$1${CLI_SECRET}`);
+  if (MYSQL_RE.test(out)) out = perSegment(out, MYSQL_RE, (seg) => seg.replace(/(\s-p)(?![\s-])("[^"]*"|'[^']*'|\S+)/g, `$1${CLI_SECRET}`));
+  const LOGIN_RE = /\b(?:docker|podman|nerdctl|buildah|skopeo|helm\s+registry)\s+login\b/;
+  if (LOGIN_RE.test(out)) out = perSegment(out, LOGIN_RE, (seg) => seg.replace(new RegExp(`(\\s-p\\s*)(?!-)${ARG}`, 'g'), `$1${CLI_SECRET}`));
+  if (/\bredis-cli\b/.test(out)) {
+    out = perSegment(out, /\bredis-cli\b/, (seg) => seg.replace(new RegExp(`(\\s(?:-a\\s*|--pass\\s+))(?!-)${ARG}`, 'g'), `$1${CLI_SECRET}`));
+  }
   if (/\bhtpasswd\b/.test(out)) out = maskHtpasswd(out);
   return out;
 }

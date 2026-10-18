@@ -148,9 +148,16 @@ export function lintCommands(text: string): CommandFinding[] {
  *   `cat .env`", "our linter flags cat .env").
  *
  * "Same clause" means no `,` `;` `:` `(` `)` and no sentence end in between.
+ * For a negation cue, a parenthetical aside ("don't do this in CI (it bit
+ * us): curl … | sh") does not break the clause, and the demonstrative before
+ * a `:` may carry a short place phrase ("this in CI:").
+ *
+ * A previous sentence that is about a detector and points forward at what
+ * follows ("Our CI rule blocks this.", "We added a detection for this.") also
+ * frames the next sentence.
  */
 const STRONG_CUE_G =
-  /\b(?:beware|warn(?:s|ing)?|attack(?:er|ers|s)?|malicious|exploit\w*|vulnerab\w*|phishing|threats?|dangerous|risky|unsafe|insecure|e\.g\.|such\s+as|for\s+example|(?:block|deny|black)[\s-]?list(?:ed|s)?|red[\s-]?team\w*)\b/gi;
+  /\b(?:beware|warn(?:s|ing)?|attack(?:er|ers|s)?|malicious|exploit\w*|vulnerab\w*|phishing|threats?|dangerous|risky|unsafe|insecure|e\.g\.|such\s+as|for\s+(?:example|instance)|(?:block|deny|black)[\s-]?list(?:ed|s)?|red[\s-]?team\w*)\b/gi;
 /** A strong cue right after one of these reads the other way ("nothing risky here"). */
 const NEGATED_BEFORE_RE = /(?:\b(?:no|nothing|not|zero|without)|n['’]t)\s+(?:\w+\s+)?$/i;
 const NEGATION_CUE_G = /\b(?:never|don['’]t|do\s+not|avoid|should\s+not|shouldn['’]t|must\s+not|stop\s+using)\b/gi;
@@ -159,7 +166,13 @@ const NOT_A_PROHIBITION_RE = /^\s+(?:\w+\s+)?(?:worry|mind|hesitate|panic|bother
 const WEAK_CUE_G =
   /\b(?:patterns?|rules?|flag(?:s|ged)?|block(?:s|ed)?|signatures?|lint(?:er|ers|s)?|detect\w*|classifiers?|quarantin\w*|reject(?:s|ed)?|scanners?)\b/gi;
 const CLAUSE_BREAK_RE = /[,;:()]|[.!?](?:\s|$)|\n/;
-const DEMONSTRATIVE_COLON_RE = /\b(?:this|that|these|those|following|like|ever)\s*:\s*$/i;
+const DEMONSTRATIVE_COLON_RE =
+  /\b(?:this|that|these|those|following|like|ever)(?:\s+(?:in|on|at|for|from|with|inside|within|under)\s+[\w.\/-]{1,30})?\s*:\s*$/i;
+/** A balanced parenthetical aside without nesting or line breaks ("(it bit us)"). */
+const PARENTHETICAL_G = /\([^()\n.!?]{0,60}\)/g;
+/** A previous sentence about a detector that points at what follows: "Our CI rule blocks this." */
+const FORWARD_WEAK_CUE_RE =
+  /\b(?:patterns?|rules?|flag(?:s|ged)?|block(?:s|ed)?|signatures?|lint(?:er|ers|s)?|detect\w*|classifiers?|quarantin\w*|reject(?:s|ed)?|scanners?)\b[^,;:()\n.!?]{0,30}\b(?:this|these)\s*[.!]?\s*$/i;
 const NEGATION_REACH = 60;
 const WEAK_REACH = 40;
 
@@ -174,6 +187,28 @@ function sameClause(between: string, allowDemonstrativeColon: boolean): boolean 
   return DEMONSTRATIVE_COLON_RE.test(head) && !CLAUSE_BREAK_RE.test(head.slice(0, -1)) && !CLAUSE_BREAK_RE.test(tail);
 }
 
+/** The current and previous sentence/line before `start` (up to 200 chars), and the sentence cuts in that window. */
+function cueWindow(text: string, start: number): { prefix: string; cuts: number[] } {
+  const prefix = text.slice(Math.max(0, start - 200), start);
+  const cuts = [...prefix.matchAll(/[.!?](?:\s|$)|\n/g)].map((m) => (m.index ?? 0) + m[0].length);
+  return cuts.length >= 2 ? { prefix: prefix.slice(cuts[cuts.length - 2] ?? 0), cuts } : { prefix, cuts };
+}
+
+function hasStrongCue(prefix: string): boolean {
+  for (const m of prefix.matchAll(STRONG_CUE_G)) {
+    if (!NEGATED_BEFORE_RE.test(prefix.slice(0, m.index ?? 0))) return true;
+  }
+  return false;
+}
+
+/**
+ * True when a STRONG cue (about attacks: "attackers", "phishing", "beware" …),
+ * not negated, sits in the current or previous sentence before `start`.
+ */
+export function strongCueBefore(text: string, start: number): boolean {
+  return hasStrongCue(cueWindow(text, start).prefix);
+}
+
 /**
  * True when the text just before `start` reads as discussion of the pattern
  * rather than an instruction (see the cue tiers above; at most the current
@@ -181,24 +216,20 @@ function sameClause(between: string, allowDemonstrativeColon: boolean): boolean 
  * developer content at `warn`.
  */
 export function isDiscussionContext(text: string, start: number): boolean {
-  const windowStart = Math.max(0, start - 200);
-  let prefix = text.slice(windowStart, start);
-  // keep at most the current and previous sentence/line
-  const cuts = [...prefix.matchAll(/[.!?](?:\s|$)|\n/g)].map((m) => (m.index ?? 0) + m[0].length);
-  if (cuts.length >= 2) prefix = prefix.slice(cuts[cuts.length - 2] ?? 0);
-
-  for (const m of prefix.matchAll(STRONG_CUE_G)) {
-    if (!NEGATED_BEFORE_RE.test(prefix.slice(0, m.index ?? 0))) return true;
-  }
+  const { prefix, cuts } = cueWindow(text, start);
+  if (hasStrongCue(prefix)) return true;
   for (const m of prefix.matchAll(NEGATION_CUE_G)) {
     const end = (m.index ?? 0) + m[0].length;
     const between = prefix.slice(end);
     if (between.length > NEGATION_REACH || NOT_A_PROHIBITION_RE.test(between)) continue;
-    if (sameClause(between, true)) return true;
+    if (sameClause(between, true) || sameClause(between.replace(PARENTHETICAL_G, ' '), true)) return true;
   }
   for (const m of prefix.matchAll(WEAK_CUE_G)) {
     const between = prefix.slice((m.index ?? 0) + m[0].length);
     if (between.length <= WEAK_REACH && sameClause(between, false)) return true;
   }
+  // The previous sentence, when the window holds one (it ends at the last cut).
+  const prevEnd = cuts.length >= 2 ? (cuts[cuts.length - 1] ?? 0) - (cuts[cuts.length - 2] ?? 0) : (cuts[0] ?? 0);
+  if (prevEnd > 0 && FORWARD_WEAK_CUE_RE.test(prefix.slice(0, prevEnd))) return true;
   return false;
 }
