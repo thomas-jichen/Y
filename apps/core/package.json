@@ -1,0 +1,37 @@
+{
+  "name": "@paceline/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "hono": "^4.13.13",
+    "@hono/node-server": "^2.1.5",
+    "zod": "^4.6.7",
+    "@anthropic-ai/sdk": "^0.135.0",
+    "jose": "^6.2.12",
+    "ulid": "^3.0.2",
+    "@paceline/schema": "workspace:*",
+    "@paceline/db": "workspace:*",
+    "@paceline/redact": "workspace:*",
+    "@paceline/safety": "workspace:*",
+    "@paceline/pointers": "workspace:*",
+    "@paceline/retrieval": "workspace:*",
+    "@paceline/domain": "workspace:*",
+    "@paceline/capture": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.5",
+    "typescript": "^7.0.2",
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15"
+  }
+}

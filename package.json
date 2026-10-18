@@ -1,0 +1,21 @@
+{
+  "name": "paceline",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.24.0",
+  "engines": { "node": ">=22.22.2" },
+  "scripts": {
+    "typecheck": "pnpm -r --parallel --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "build": "pnpm -r --if-present build",
+    "dev:core": "pnpm --filter @paceline/core dev",
+    "dev:mcp": "pnpm --filter @paceline/mcp dev",
+    "db:migrate": "pnpm --filter @paceline/db migrate"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

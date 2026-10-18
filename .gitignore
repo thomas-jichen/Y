@@ -1,0 +1,12 @@
+node_modules/
+dist/
+!plugins/claude-code/scripts/dist/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+coverage/
+.pglite/
+eval/results/
+.turbo/
