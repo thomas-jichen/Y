@@ -54,9 +54,22 @@ async function publishAll(deps: CoreDeps, events: PushEvent[]): Promise<void> {
 /**
  * Append a step (service tx; the session row is locked so `seq` stays
  * dense) and bump `last_step_at` and the used amounts. Returns the bare step id.
+ * Under that lock a `read_post` of a post this session already read is not
+ * written again (concurrent scroll_feed calls pick the same unread posts),
+ * and `used_posts` never passes `budget_posts`.
  */
 export async function appendStep(tx: Tx, scrollId: string, step: StepInput, at?: Date): Promise<string> {
+  return (await appendStepOnce(tx, scrollId, step, at)).id;
+}
+
+/** {@link appendStep}, also saying whether a new step row was written. */
+export async function appendStepOnce(tx: Tx, scrollId: string, step: StepInput, at?: Date): Promise<{ id: string; inserted: boolean }> {
   await tx.query(`select id from public.scroll_sessions where id = $1 for update`, [scrollId]);
+  if (step.kind === 'read_post' && step.postId) {
+    const dup = await tx.query<{ id: string }>(
+      `select id from public.scroll_steps where scroll_id = $1 and kind = 'read_post' and post_id = $2 order by seq limit 1`, [scrollId, step.postId]);
+    if (dup.rows[0]) return { id: dup.rows[0].id, inserted: false };
+  }
   const r = await tx.query<{ id: string }>(
     `insert into public.scroll_steps (scroll_id, seq, kind, post_id, comment_id, learning_id, reaction, tokens, created_at)
      values ($1::text, (select coalesce(max(seq) + 1, 0) from public.scroll_steps where scroll_id = $1::text), $2, $3, $4, $5, $6, $7,
@@ -66,11 +79,13 @@ export async function appendStep(tx: Tx, scrollId: string, step: StepInput, at?:
      Math.max(0, Math.round(step.tokens ?? 0)), at ?? null]);
   if (step.kind !== 'end') {
     await tx.query(
-      `update public.scroll_sessions set last_step_at = greatest(last_step_at, now()), used_posts = used_posts + $2, used_tokens = used_tokens + $3
+      `update public.scroll_sessions set last_step_at = greatest(last_step_at, now()),
+              used_posts = case when $2 > 0 and used_posts < budget_posts then used_posts + $2 else used_posts end,
+              used_tokens = used_tokens + $3
         where id = $1`,
       [scrollId, step.countsPost ? 1 : 0, Math.max(0, Math.round(step.tokens ?? 0))]);
   }
-  return r.rows[0]!.id;
+  return { id: r.rows[0]!.id, inserted: true };
 }
 
 /**
@@ -148,9 +163,9 @@ export async function startScroll(deps: CoreDeps, caller: Caller, agentId: strin
 
 /** Record one step for a session and publish `scroll.step`. Returns the wire step id. */
 export async function recordStep(deps: CoreDeps, scroll: ScrollRow, step: StepInput): Promise<string> {
-  const stepId = await deps.db.asService((tx) => appendStep(tx, scroll.id, step));
-  await deps.bus.publish(scrollStepEvent(scroll, stepId, step.kind === 'read_post' ? step.postId ?? null : null));
-  return wire('scrollStep', stepId);
+  const r = await deps.db.asService((tx) => appendStepOnce(tx, scroll.id, step));
+  if (r.inserted) await deps.bus.publish(scrollStepEvent(scroll, r.id, step.kind === 'read_post' ? step.postId ?? null : null));
+  return wire('scrollStep', r.id);
 }
 
 /** Step counts of a session (the `end` summary). */

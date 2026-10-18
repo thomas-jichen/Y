@@ -5,13 +5,19 @@
  *    token → 401; absent → 401 unless TOOL_POLICY[tool].auth is 'optional'.
  * 3. Validate input with TOOLS[tool].input, run the handler, validate the
  *    output with TOOLS[tool].output; respond {ok:true, output} or ErrorBody.
+ * Bodies are capped at INTERNAL_BODY_MAX and a missing or malformed
+ * signature header is refused before the body is read; a signed request
+ * with `meta.nonce` is accepted once (ReplayCache); every tool takes its
+ * TOOL_POLICY bucket (limits.ts).
  */
-import { TOOLS, TOOL_POLICY, ToolName, makeError, toMcpErrorBody, validationError, type ErrorBody } from '@y/schema';
+import { TOOLS, TOOL_POLICY, ToolName, makeError, parseInternalSignatureHeader, toMcpErrorBody, validationError, type ErrorBody } from '@y/schema';
+import { bodyLimit } from 'hono/body-limit';
 import type { ZodType } from 'zod';
 import type { CoreModule } from '../contracts.js';
 import { HttpError } from '../messaging/util.js';
 import { HANDLERS } from './tools.js';
 import { SCROLL_BUCKET, SEND_BUCKET, takeToken } from '../platform/rate-limit.js';
+import { INTERNAL_BODY_MAX, ReplayCache, nonceOf, takeToolBucket } from './limits.js';
 
 export { HANDLERS, CUT_TOOLS, EMBEDDING_DIMS } from './tools.js';
 
@@ -20,8 +26,15 @@ const mcpErr = (body: ErrorBody) => toMcpErrorBody(body);
 
 export const internalMcpModule: CoreModule = {
   register(app, deps) {
-    app.post('/internal/mcp/:tool', async (c) => {
+    const replays = new ReplayCache();
+    app.post('/internal/mcp/:tool', bodyLimit({
+      maxSize: INTERNAL_BODY_MAX,
+      onError: (c) => c.json(mcpErr(makeError('VALIDATION', 'request body too large')), 413),
+    }), async (c) => {
       try {
+        // Cheap header check first: unsigned callers never get the body hashed.
+        const sig = c.req.header('x-y-internal');
+        if (!sig || !parseInternalSignatureHeader(sig)) return c.json(mcpErr(makeError('UNAUTHORIZED', 'bad internal signature')), 401);
         const raw = await c.req.text();
         const ok = deps.auth.verifyInternal({ method: c.req.method, path: c.req.path, body: raw, header: (n) => c.req.header(n) });
         if (!ok) return c.json(mcpErr(makeError('UNAUTHORIZED', 'bad internal signature')), 401);
@@ -37,8 +50,15 @@ export const internalMcpModule: CoreModule = {
 
         let body: unknown;
         try { body = raw ? JSON.parse(raw) : {}; } catch { return c.json(mcpErr(makeError('VALIDATION', 'body must be JSON'))); }
+        const meta = (body as { meta?: unknown } | null)?.meta;
+        const nonce = nonceOf(meta);
+        if (nonce && !replays.firstUse(nonce, deps.now().getTime())) {
+          return c.json(mcpErr(makeError('UNAUTHORIZED', 'replayed internal request')), 401);
+        }
         const input = (TOOLS[name].input as ZodType).safeParse((body as { input?: unknown } | null)?.input ?? {});
         if (!input.success) return c.json(mcpErr(validationError(input.error)));
+
+        await takeToolBucket(deps, name, caller, meta);
 
         // ask_builder shares send_message's bucket (TOOL_POLICY rateLimit 'send_message').
         if ((name === 'send_message' || name === 'ask_builder') && caller?.agentId) {

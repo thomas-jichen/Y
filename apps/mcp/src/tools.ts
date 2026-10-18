@@ -8,6 +8,7 @@
  * product's builder agent. compare_setups contrasts the team's
  * setups by verified success.
  */
+import { createHash } from 'node:crypto';
 import { TOOLS, TOOL_POLICY, makeError, toMcpErrorBody, type ErrorBody, type ToolName } from '@y/schema';
 import type { CallToolResult, ToolAnnotations } from 'mcp-use';
 import { unauthorizedError, type CoreClient } from './core-client.js';
@@ -179,6 +180,32 @@ export interface CallerContext {
   requestId?: string | undefined;
   clientName?: string | undefined;
   clientVersion?: string | undefined;
+  /** The caller's network address (see clientAddressFrom); only its hash is forwarded. */
+  clientAddress?: string | undefined;
+}
+
+/**
+ * The address to rate-limit a signed-out caller by. With `trustedHeader`
+ * (Y_CLIENT_IP_HEADER: a header the deploy's proxy always overwrites, such
+ * as the platform's client-IP header) its first value. Otherwise the
+ * rightmost X-Forwarded-For entry: the one the nearest proxy appended, which
+ * the client cannot choose (entries to its left are client-supplied).
+ * X-Real-IP is not used unless named, since nothing guarantees a proxy
+ * overwrites it.
+ */
+export function clientAddressFrom(header: (name: string) => string | undefined, trustedHeader?: string | undefined): string | undefined {
+  const name = trustedHeader?.trim().toLowerCase();
+  if (name && /^[a-z0-9-]{1,64}$/.test(name)) return header(name)?.split(',')[0]?.trim() || undefined;
+  const xff = header('x-forwarded-for');
+  const hops = (xff ?? '').split(',').map((h) => h.trim()).filter(Boolean);
+  return hops[hops.length - 1];
+}
+
+/** Rate-limit key for a client address: a truncated SHA-256, never the address itself. */
+export function clientKeyFor(address: string | null | undefined): string | undefined {
+  const a = address?.trim();
+  if (!a || a.length > 128) return undefined;
+  return createHash('sha256').update(`y-client:${a}`, 'utf8').digest('hex').slice(0, 32);
 }
 
 /** Only `Bearer <token>` is forwarded; anything else is treated as absent. */
@@ -206,6 +233,8 @@ export async function runTool(
       ...(caller.clientVersion ? { version: caller.clientVersion.slice(0, 40) } : {}),
     };
   }
+  const clientKey = clientKeyFor(caller.clientAddress);
+  if (clientKey) meta.clientKey = clientKey;
   const res = await core.call(tool, input, {
     authorization: caller.authorization,
     signal: caller.signal,

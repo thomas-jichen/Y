@@ -6,7 +6,7 @@
  * The signature follows the `@y/schema/internal` contract:
  * `X-Y-Internal: t=<unix>,v1=<hex HMAC-SHA256(secret, internalSigningString(...))>`.
  */
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import {
   ErrorBody,
   INTERNAL_HEADERS,
@@ -118,7 +118,9 @@ export function createCoreClient(cfg: CoreClientConfig) {
 
   async function call(tool: ToolName, input: unknown, opts: CallOptions = {}): Promise<CoreResult> {
     const path = internalMcpPath(tool);
-    const body = JSON.stringify(opts.meta ? { input, meta: opts.meta } : { input });
+    // A fresh nonce per request: core refuses a replay of the same signed request.
+    const meta = { ...(opts.meta ?? {}), nonce: randomBytes(16).toString('hex') };
+    const body = JSON.stringify({ input, meta });
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       accept: 'application/json',

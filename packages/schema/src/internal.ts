@@ -174,6 +174,10 @@ export const InternalMcpMeta = z.object({
     .optional(),
   /** The harness session, when the MCP client forwards it (used for exposures and leases). */
   harnessSessionId: HarnessSessionId.optional(),
+  /** Random per-request value; core accepts a signed request carrying one only once (replay guard). */
+  nonce: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/).optional(),
+  /** Hash of the MCP client's network address (never the address): the rate-limit key for signed-out calls. */
+  clientKey: z.string().regex(/^[a-f0-9]{16,64}$/).optional(),
 });
 export type InternalMcpMeta = z.infer<typeof InternalMcpMeta>;
 

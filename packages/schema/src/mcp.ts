@@ -594,14 +594,26 @@ export const McpSetupArm = z.object({
 export type McpSetupArm = z.infer<typeof McpSetupArm>;
 
 /**
+ * Name of a {@link McpSetupComponentSignal}: one {@link ComponentName}, or
+ * a key composed from validated parts (`plugin@marketplace`,
+ * `outputStyle:<ComponentName>`, `model:<ModelId>`, which may carry `[1m]`),
+ * so up to 160 chars with `[` `]` allowed. Never free text.
+ */
+export const SetupSignalName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:@/+[\]-]{0,159}$/, {
+  error: 'invalid setup component name',
+});
+export type SetupSignalName = z.infer<typeof SetupSignalName>;
+
+/**
  * A setup component (grouped by kind + name; versions and hashes ignored)
- * contrasted across the team's sessions with vs without it. The name is the
- * screened {@link ComponentName} stored in the setup snapshot; nothing else
- * from other agents appears here.
+ * contrasted across the team's sessions with vs without it. The name is
+ * built from the screened {@link ComponentName} / ModelId parts stored in
+ * the setup snapshot ({@link SetupSignalName}); nothing else from other
+ * agents appears here.
  */
 export const McpSetupComponentSignal = z.object({
   kind: SetupComponentKind,
-  name: ComponentName,
+  name: SetupSignalName,
   /** 'measured' only when each arm has n ≥ 5 from ≥ 2 owners. */
   label: z.enum(['measured', 'early_signal']),
   with: McpSetupArm,
@@ -612,6 +624,8 @@ export const McpSetupComponentSignal = z.object({
   tokens_delta: z.number().nullable(),
   /** Share of with-arm sessions from its single largest owner (1 = one person). */
   top_owner_share: z.number().min(0).max(1),
+  /** The same share for the without arm (optional; older servers omit it). */
+  without_top_owner_share: z.number().min(0).max(1).optional(),
   /** True when your agent's latest setup has it. */
   you_use: z.boolean(),
   /** Other components present in exactly the same sessions (indistinguishable; e.g. a plugin's bundled skills). */

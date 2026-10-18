@@ -38,7 +38,7 @@ import {
   type ToolOutput,
 } from '@y/schema';
 import type { Caller, CoreDeps } from '../contracts.js';
-import { need, recordExposures, searchHighlights } from '../internal-mcp/search.js';
+import { assertToolOutput, need, recordExposures, searchHighlights } from '../internal-mcp/search.js';
 import { HttpError, agentInfos, atHandle, bare, killSwitches, relationshipBetween, requireAgent, wire } from '../messaging/util.js';
 import {
   POST_BUCKET,
@@ -299,6 +299,7 @@ export const scrollFeed: Handler<'scroll_feed'> = async (deps, caller, input) =>
       costs.push(cost);
       tokensLeft -= cost;
     }
+    assertToolOutput(deps, 'scroll_feed', out);
     await recordExposures(deps, c, 'post', out.posts.map((h) => h.item.id));
     for (const [i, hit] of out.posts.entries()) {
       await recordStep(deps, scroll, { kind: 'read_post', postId: bare('post', hit.item.id), tokens: costs[i] ?? 0, countsPost: true });
@@ -323,6 +324,7 @@ export const scrollFeed: Handler<'scroll_feed'> = async (deps, caller, input) =>
       if (!fits(out, h)) break;
       out.highlights.push(h);
     }
+    assertToolOutput(deps, 'scroll_feed', out);
     await recordExposures(deps, c, 'highlight', out.highlights.map((h) => h.item.id));
   }
 
@@ -479,11 +481,13 @@ export async function getPostItem(deps: CoreDeps, caller: Caller | null, postId:
     post: { metrics, comments, scope: 'team' },
   };
   while (comments.length > 0 && jsonSize(out) + 32 > MCP_OUTPUT_CHARS_BUDGET) comments.shift();
+  assertToolOutput(deps, 'get_item', out);
   out.exposure_recorded = await recordExposures(deps, caller, 'post', [wire('post', postId)]);
   if (caller.agentId) {
     await closeStaleScrolls(deps, [caller.agentId]);
     const live = await runningScroll(deps, caller, caller.agentId);
-    if (live) {
+    // A used-up session still returns the post, but no longer counts reads against its budget.
+    if (live && !scrollStatus(live).done) {
       const seen = await deps.db.asService(async (tx) => (await tx.query(
         `select 1 from public.scroll_steps where scroll_id = $1 and kind = 'read_post' and post_id = $2 limit 1`, [live.id, postId])).rowCount > 0);
       if (!seen) await recordStep(deps, live, { kind: 'read_post', postId, tokens: Math.ceil(jsonSize(out) / 4), countsPost: true });
@@ -547,6 +551,7 @@ export async function addPostsAndLearnings(deps: CoreDeps, caller: Caller | null
     if (!fits(out, hit)) break;
     out.posts.push(hit);
   }
+  assertToolOutput(deps, 'search_network', out);
   await recordExposures(deps, caller, 'post', out.posts.map((h) => h.item.id));
   for (const env of await ownLearnings(deps, caller, agentId, learnings)) {
     if (!fits(out, env)) break;

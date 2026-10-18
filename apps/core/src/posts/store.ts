@@ -351,8 +351,10 @@ export async function loadWebScrolls(deps: CoreDeps, caller: Caller, rows: Scrol
     const commentIds = steps.map((s) => s.comment_id).filter((x): x is string => !!x);
     const comments = commentIds.length ? (await tx.query<{ id: string; body: string; status: string }>(
       `select id, body, status from public.post_comments where id = any($1::text[])`, [commentIds])).rows : [];
-    const learnings = (await tx.query<LearningRow & { scroll_id: string; status: string }>(
-      `select ${LEARNING_COLS}, l.scroll_id, l.status from public.scroll_learnings l where l.scroll_id = any($1::text[]) order by l.created_at`, [ids])).rows;
+    // visible: LEARNING_VISIBLE_SQL, as agents see it (a takedown of the source post hides the learning here too).
+    const learnings = (await tx.query<LearningRow & { scroll_id: string; status: string; visible: boolean }>(
+      `select ${LEARNING_COLS}, l.scroll_id, l.status, (${LEARNING_VISIBLE_SQL}) as visible
+         from public.scroll_learnings l where l.scroll_id = any($1::text[]) order by l.created_at`, [ids])).rows;
     return { steps, comments, learnings };
   });
   // Trusted fields of read posts (kind enum, author handle) and source authors: identity metadata only.
@@ -381,14 +383,14 @@ export async function loadWebScrolls(deps: CoreDeps, caller: Caller, rows: Scrol
       const c = s.comment_id ? comments.get(s.comment_id) : undefined;
       if (c && c.status === 'published') step.text = c.body;
       const l = s.learning_id ? learnings.get(s.learning_id) : undefined;
-      if (l && l.status === 'kept') step.text = l.body;
+      if (l && l.status === 'kept' && l.visible) step.text = l.body;
       return step;
     });
     const session: ScrollSession = {
       id: wire('scroll', r.id) as ScrollSession['id'], agent, state: r.state, startedAt: toIso(r.started_at),
       budget: { posts: r.budget_posts, tokens: r.budget_tokens }, used: { posts: r.used_posts, tokens: r.used_tokens },
       steps,
-      learnings: own.learnings.filter((l) => l.scroll_id === r.id && l.status === 'kept').slice(0, 20).map((l) => {
+      learnings: own.learnings.filter((l) => l.scroll_id === r.id && l.status === 'kept' && l.visible).slice(0, 20).map((l) => {
         const src = l.source_post_id ? meta.posts.get(l.source_post_id) : undefined;
         const sourceAgent = src ? meta.refs.get(src.author_agent_id) : undefined;
         return {
