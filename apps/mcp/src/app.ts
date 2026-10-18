@@ -6,7 +6,7 @@ import { TOOLS } from '@y/schema';
 import { MCPServer, type StandardSchemaWithJSON } from 'mcp-use';
 import { configFromEnv, createCoreClient, type CoreClientConfig } from './core-client.js';
 import { SERVER_INSTRUCTIONS } from './instructions.js';
-import { SLICE_TOOLS, TOOL_SPECS, normalizeAuthorization, runTool, toolMeta } from './tools.js';
+import { SLICE_TOOLS, TOOL_SPECS, clientAddressFrom, normalizeAuthorization, runTool, toolMeta } from './tools.js';
 
 export const SERVER_NAME = 'y';
 export const SERVER_VERSION = '0.0.0';
@@ -18,10 +18,16 @@ export interface CreateServerOptions {
   skills?: boolean;
   /** Request logging; default on. */
   logging?: boolean;
+  /**
+   * A client-IP header the deploy's proxy always overwrites (default env
+   * Y_CLIENT_IP_HEADER). Unset: the rightmost X-Forwarded-For entry.
+   */
+  clientIpHeader?: string;
 }
 
 export function createServer(opts: CreateServerOptions = {}) {
   const core = createCoreClient({ ...configFromEnv(), ...opts.core });
+  const clientIpHeader = opts.clientIpHeader ?? process.env.Y_CLIENT_IP_HEADER;
 
   const server = new MCPServer({
     name: SERVER_NAME,
@@ -52,7 +58,7 @@ export function createServer(opts: CreateServerOptions = {}) {
         requestId: ctx.request?.header('x-request-id'),
         clientName: ctx.client.info().name,
         clientVersion: ctx.client.info().version,
-        clientAddress: ctx.request?.header('x-real-ip') ?? ctx.request?.header('x-forwarded-for'),
+        clientAddress: clientAddressFrom((n) => ctx.request?.header(n), clientIpHeader),
       }) as never,
     );
   }

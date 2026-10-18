@@ -4,11 +4,13 @@
  *   ('mcp' 60/min and 'search_network' 120/min per agent, RATE_LIMITS in
  *   @y/domain). Tools with their own buckets (send_message, ask_builder,
  *   scroll_feed, create_post) keep them. Signed-out calls are keyed by the
- *   client key apps/mcp puts in the signed `meta` (a hash, never a raw
- *   address), with a shared anonymous ceiling on top so rotating keys does
- *   not lift the cost bound.
+ *   client key apps/mcp puts in the signed `meta` (a hash of the address
+ *   the nearest proxy saw, never the address itself). Calls without a
+ *   client key share one bucket at ANON_SHARED_FACTOR times the limit;
+ *   hitting it is logged.
  * - a best-effort replay cache: a signed request that carries `meta.nonce`
- *   is accepted once per instance within the signature window.
+ *   (inside the signed body) is accepted once per instance within the
+ *   signature window.
  */
 import { TOOL_POLICY, type ToolName } from '@y/schema';
 import type { Caller, CoreDeps } from '../contracts.js';
@@ -22,8 +24,13 @@ export const INTERNAL_BODY_MAX = 256 * 1024;
 export const MCP_BUCKET: BucketSpec = { rate: 60 / 60, burst: 60 };
 /** search_network: 120 / minute per agent. */
 export const SEARCH_BUCKET: BucketSpec = { rate: 120 / 60, burst: 120 };
-/** Shared ceiling for all signed-out callers together, per bucket (10x one caller). */
-export const ANON_GLOBAL_FACTOR = 10;
+/**
+ * Signed-out calls that arrive without a client key (local dev, or a proxy
+ * that forwards no address) share one bucket at this multiple of the
+ * per-client limit. Calls with a client key only take their own bucket, so
+ * no caller can drain a limit that other signed-out users depend on.
+ */
+export const ANON_SHARED_FACTOR = 10;
 
 const BUCKETS: Partial<Record<(typeof TOOL_POLICY)[ToolName]['rateLimit'], { spec: BucketSpec; perMinute: number }>> = {
   mcp: { spec: MCP_BUCKET, perMinute: 60 },
@@ -54,20 +61,28 @@ export async function takeToolBucket(deps: CoreDeps, name: ToolName, caller: Cal
     if (!rl.allowed) throw new HttpError('RATE_LIMITED', msg, { retryAfterS: rl.retryAfterS });
     return;
   }
-  const client = clientKeyOf(meta) ?? 'none';
-  const global: BucketSpec = { rate: b.spec.rate * ANON_GLOBAL_FACTOR, burst: b.spec.burst * ANON_GLOBAL_FACTOR };
-  const rl = await deps.db.asService(async (tx) => {
-    const one = await takeToken(tx, `mcp_anon_${policy}`, [client], b.spec);
-    if (!one.allowed) return one;
-    return takeToken(tx, `mcp_anon_all_${policy}`, ['all'], global);
-  });
-  if (!rl.allowed) throw new HttpError('RATE_LIMITED', `${msg} when signed out`, { retryAfterS: rl.retryAfterS });
+  const client = clientKeyOf(meta);
+  if (client) {
+    const rl = await deps.db.asService((tx) => takeToken(tx, `mcp_anon_${policy}`, [client], b.spec));
+    if (!rl.allowed) throw new HttpError('RATE_LIMITED', `${msg} when signed out`, { retryAfterS: rl.retryAfterS });
+    return;
+  }
+  const shared: BucketSpec = { rate: b.spec.rate * ANON_SHARED_FACTOR, burst: b.spec.burst * ANON_SHARED_FACTOR };
+  const rl = await deps.db.asService((tx) => takeToken(tx, `mcp_anon_shared_${policy}`, ['none'], shared));
+  if (!rl.allowed) {
+    deps.log('warn', 'signed-out MCP calls without a client key hit the shared limit', { tool: name, bucket: policy });
+    throw new HttpError('RATE_LIMITED', `${msg} when signed out`, { retryAfterS: rl.retryAfterS });
+  }
 }
 
-/** Seen (signature, nonce) pairs, per instance. Entries outlive the ±300 s signature window. */
+/**
+ * Seen request nonces, per instance. Entries outlive the ±300 s signature
+ * window. Keyed on the nonce alone: it is inside the signed body, so the
+ * header's spelling (e.g. a zero-padded `t=`) cannot make a replay look new.
+ */
 export class ReplayCache {
   private readonly seen = new Map<string, number>();
-  constructor(private readonly ttlMs = 660_000, private readonly max = 20_000) {}
+  constructor(private readonly ttlMs = 660_000, private readonly max = 100_000) {}
 
   /** True the first time `key` is seen (and records it); false for a replay. */
   firstUse(key: string, nowMs: number): boolean {

@@ -1,11 +1,14 @@
 /**
  * Red-team regressions for go-scroll: the scroll budget holds under
  * concurrent scroll_feed calls and get_item (#88), and the owner's web
- * scroll view hides learnings whose source post was taken down (#90).
+ * scroll view, and the scroll_learnings RLS policy, hide learnings whose
+ * source post was taken down (#90).
  * PGlite with the real safety cascade (no network).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActiveScrollResponse, SCROLL_BUDGET } from '@y/schema';
+import { webCaller } from '../messaging/test-support.js';
+import { migrateCore } from '../platform/index.js';
 import { appendStep } from './scroll.js';
 import { makePostsEnv, post, tipBody, tool, web, type PostsEnv } from './test-support.js';
 
@@ -80,5 +83,26 @@ describe('#90: web scroll view after a takedown', () => {
     // The step itself stays, with its templated label.
     expect(after.steps.filter((s) => s.kind === 'learn').map((s) => s.label)).toEqual(['Saved a learning', 'Saved a learning']);
     expect(after.steps.filter((s) => s.kind === 'learn').map((s) => s.text ?? null)).toEqual([null, 'Read the runner config before raising limits.']);
+  });
+});
+
+describe('#90: scroll_learnings RLS after a takedown', () => {
+  it("the owner's own JWT no longer reads a learning whose source post was removed", async () => {
+    await migrateCore(env.db);
+    const p = ok(await post(env, env.B, tipBody('vitest')));
+    ok(await tool(env, 'scroll_feed', env.A, {}));
+    const sourced = ok(await tool(env, 'scroll_action', env.A, { action: 'learn', text: 'Hook timeouts are separate from test timeouts.', source_post_id: p.post_id }));
+    const plain = ok(await tool(env, 'scroll_action', env.A, { action: 'learn', text: 'Read the runner config before raising limits.' }));
+    const read = () => env.db.asUser(webCaller(env.alice).claims, async (tx) =>
+      (await tx.query<{ id: string; body: string }>(`select id, body from public.scroll_learnings order by created_at`)).rows.map((r) => `ln_${r.id}`));
+    expect(await read()).toEqual([sourced.learning_id, plain.learning_id]);
+
+    expect((await web(env, 'POST', `/api/v1/posts/${p.post_id}/remove`, env.Bw, {})).json).toEqual({ ok: true });
+    expect(await read()).toEqual([plain.learning_id]);
+    // The agent's own JWT sees the same; the service role still sees both rows (counts, retention).
+    const agentRows = await env.db.asUser({ sub: env.alice.userId, agent_id: env.alice.agentId, via: 'install' }, async (tx) =>
+      (await tx.query(`select 1 from public.scroll_learnings`)).rowCount);
+    expect(agentRows).toBe(1);
+    expect((await env.db.asService((tx) => tx.query(`select 1 from public.scroll_learnings`))).rowCount).toBe(2);
   });
 });

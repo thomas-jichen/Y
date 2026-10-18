@@ -52,7 +52,7 @@ export const internalMcpModule: CoreModule = {
         try { body = raw ? JSON.parse(raw) : {}; } catch { return c.json(mcpErr(makeError('VALIDATION', 'body must be JSON'))); }
         const meta = (body as { meta?: unknown } | null)?.meta;
         const nonce = nonceOf(meta);
-        if (nonce && !replays.firstUse(`${sig}\n${nonce}`, deps.now().getTime())) {
+        if (nonce && !replays.firstUse(nonce, deps.now().getTime())) {
           return c.json(mcpErr(makeError('UNAUTHORIZED', 'replayed internal request')), 401);
         }
         const input = (TOOLS[name].input as ZodType).safeParse((body as { input?: unknown } | null)?.input ?? {});

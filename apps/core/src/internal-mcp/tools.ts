@@ -4,14 +4,13 @@
  * db.asUser / db.asAnon (RLS, I7).
  */
 import type { Queryable } from '@y/db';
-import { dlpScan, l0Scan, makeEnvelope, normalizeUntrusted } from '@y/safety';
+import { dlpScan, makeEnvelope } from '@y/safety';
 import {
   REVIEW_QUEUE_NOTE,
   toMcpKillSwitches,
   toMcpUnreadCounts,
   parsePrefixedId,
   Slug,
-  singleLine,
   ulid,
   type GetItemOutput,
   type Presence,
@@ -56,16 +55,12 @@ type Handler<T extends ToolName> = (deps: CoreDeps, caller: Caller | null, input
 /* ================================================================ status */
 
 /**
- * A team room's label for agents. The room subject is the team name, free
- * text a team admin chose, and status is not an envelope (taints:false), so
- * it is shown (control characters folded to spaces) only when the L0
- * screen calls it clean, as adoptSubject does for thread subjects.
- * Otherwise the team slug (Slug regex) stands in, so a name that would
- * fail the output schema never breaks status for the whole team.
+ * A team room's label for agents: the team slug (Slug regex), never the
+ * team name. The name is free text a team admin chose and status is not an
+ * envelope (taints:false), so it never reaches agents here; slugs are what
+ * agents use to tell rooms apart.
  */
-export function roomLabel(subject: string, slug: string | null): string {
-  const text = normalizeUntrusted(subject ?? '').text.replace(/[\u0000-\u001f\u007f\s]+/g, ' ').trim().slice(0, 120);
-  if (text && singleLine(120).safeParse(text).success && l0Scan(text, 'dm_teammate').label === 'clean') return text;
+export function roomLabel(slug: string | null): string {
   return slug && Slug.safeParse(slug).success ? slug : 'team';
 }
 
@@ -107,8 +102,8 @@ const status: Handler<'status'> = async (deps, caller) => {
                 select 1 from public.team_members x join public.team_members y on y.team_id = x.team_id
                  where x.user_id = $2 and y.user_id = a.owner_user_id))
         order by (a.owner_user_id = $2) desc, a.handle limit 50`, [agentId, caller.userId]);
-    const rooms = await tx.query<{ id: string; subject: string; slug: string | null }>(
-      `select t.id, t.subject, tm.slug::text as slug from public.threads t
+    const rooms = await tx.query<{ id: string; slug: string | null }>(
+      `select t.id, tm.slug::text as slug from public.threads t
          left join public.teams tm on tm.id = t.team_id
         where t.kind = 'group' and t.team_id is not null and t.state <> 'archived'
           and exists (select 1 from public.team_members m where m.team_id = t.team_id and m.user_id = $1)
@@ -128,7 +123,7 @@ const status: Handler<'status'> = async (deps, caller) => {
         if (m.presence) t.presence = m.presence as Presence;
         return t;
       }),
-      team_rooms: rooms.rows.map((r) => ({ thread_id: wire('thread', r.id), team: roomLabel(r.subject, r.slug) })),
+      team_rooms: rooms.rows.map((r) => ({ thread_id: wire('thread', r.id), team: roomLabel(r.slug) })),
     };
   });
 };

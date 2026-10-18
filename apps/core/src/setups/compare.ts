@@ -11,14 +11,16 @@
  * exactly the same sessions are collapsed into one row (`collinear`).
  * Names are composed from the stored snapshot's parts, each validated on
  * its own (ComponentName; ModelId for the model, so `[1m]` variants count)
- * and dropped when the L0 screen flags it: teammates choose these strings
- * and agents relay the headline. At most MAX_COMPONENT_ROWS component rows
- * are read per call (the caller's own setup first, then by recency), so a
- * flood of bloated snapshots cannot make each call unbounded.
+ * and dropped when the L0 screen flags it or it reads as an instruction to
+ * an agent (agentDirected): teammates choose these strings and agents relay
+ * the headline. At most MAX_COMPONENT_ROWS component rows are read per call
+ * (whole setups: the caller's own first, then by recency); only those
+ * setups are expanded, so a flood of bloated snapshots cannot make each
+ * call unbounded.
  */
 import type { Tx } from '@y/db';
 import { l0Scan } from '@y/safety';
-import { ComponentName, ModelId, type CompareSetupsOutput, type McpSetupArm, type McpSetupComponentSignal, type SetupComponentKind } from '@y/schema';
+import { ComponentName, ModelId, ToolName, type CompareSetupsOutput, type McpSetupArm, type McpSetupComponentSignal, type SetupComponentKind } from '@y/schema';
 import type { Caller, CoreDeps } from '../contracts.js';
 import { networkContentBlocked } from '../posts/agent-tools.js';
 
@@ -177,8 +179,7 @@ type CompRow = { id: string; kind: string; a: string | null; b: string | null };
 /**
  * Component parts of each setup version: plugin (a = name, b = marketplace),
  * skill / mcp_server (a = name), subagent (a = the string), CLAUDE.md, and
- * settings (a = 'outputStyle' | 'model', b = the value). Rows come in `$1`
- * order (priority), at most `$2`.
+ * settings (a = 'outputStyle' | 'model', b = the value), in `$1` order.
  */
 const COMPONENTS_SQL = `
   with sv as (
@@ -199,20 +200,81 @@ const COMPONENTS_SQL = `
     union all select id, ord, 'setting', 0, 'outputStyle', s->>'outputStyle' from sv where s ? 'outputStyle'
     union all select id, ord, 'setting', 1, 'model', s->>'model' from sv where s ? 'model'
   )
-  select id, kind, a, b from parts order by ord, kind, i limit $2`;
+  select id, kind, a, b from parts order by ord, kind, i`;
 
-/** Read component rows for these setup versions (priority order), at most `limit`. */
+/**
+ * How many rows COMPONENTS_SQL yields per setup version, from array
+ * lengths only (no expansion), in `$1` order.
+ */
+const COMPONENT_COUNTS_SQL = `
+  select v.id, (
+      case when jsonb_typeof(v.snapshot->'plugins') = 'array' then jsonb_array_length(v.snapshot->'plugins') else 0 end
+    + case when jsonb_typeof(v.snapshot->'skills') = 'array' then jsonb_array_length(v.snapshot->'skills') else 0 end
+    + case when jsonb_typeof(v.snapshot->'mcpServers') = 'array' then jsonb_array_length(v.snapshot->'mcpServers') else 0 end
+    + case when jsonb_typeof(v.snapshot->'subagents') = 'array' then jsonb_array_length(v.snapshot->'subagents') else 0 end
+    + (v.snapshot ? 'claudeMd')::int + (v.snapshot ? 'outputStyle')::int + (v.snapshot ? 'model')::int)::int as n
+    from public.setup_versions v
+    join unnest($1::text[]) with ordinality u(id, ord) on u.id = v.id
+   order by u.ord`;
+
+/**
+ * Component rows for these setup versions (priority order), at most
+ * `limit`. Setups are taken whole, in order, until the next one would pass
+ * the limit; the rest are left out entirely (their sessions are not
+ * counted), so no setup looks as if it lacked components it has. Only the
+ * kept setups are expanded, so the database work is bounded too.
+ */
 export async function loadComponentRows(tx: Tx, svIds: string[], limit = MAX_COMPONENT_ROWS): Promise<CompRow[]> {
   if (svIds.length === 0) return [];
-  return (await tx.query<CompRow>(COMPONENTS_SQL, [svIds, limit])).rows;
+  const counts = (await tx.query<{ id: string; n: number }>(COMPONENT_COUNTS_SQL, [svIds])).rows;
+  const keep: string[] = [];
+  let total = 0;
+  for (const c of counts) {
+    if (total + Number(c.n) > limit) break;
+    total += Number(c.n);
+    keep.push(c.id);
+  }
+  if (keep.length === 0) return [];
+  return (await tx.query<CompRow>(COMPONENTS_SQL, [keep])).rows;
 }
 
-/** True when the L0 screen does not flag a name part (separators read as spaces, so 'ignore-previous-instructions' is seen). */
+/** Y's own tool names that contain a separator (send_message, ask_builder, ...): a component has no reason to name them. */
+const Y_TOOL_NAMES = ToolName.options.filter((t) => t.includes('_'));
+const ROLE_PREFIX = /^(?:system|assistant|developer|human)\s*[:>]/i;
+const LEET: Record<string, string> = { '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '7': 't', $: 's' };
+const SECOND_PERSON = new Set(['you', 'your']);
+const MODAL = new Set(['must', 'should', 'shall', 'need', 'always', 'never', 'now', 'immediately', 'first']);
+const OVERRIDE = new Set(['ignore', 'disregard', 'forget', 'override']);
+const PRIOR = new Set(['previous', 'prior', 'above', 'earlier', 'instruction', 'instructions', 'rules', 'system']);
+const DISCLOSE = new Set(['send', 'reply', 'share', 'leak', 'exfiltrate', 'reveal', 'email', 'paste', 'forward']);
+const SECRET = new Set(['env', 'secret', 'secrets', 'credential', 'credentials', 'password', 'passwords', 'contents', 'apikey', 'privatekey']);
+
+/**
+ * True when a name part reads as an instruction to an agent rather than a
+ * component name: a role prefix ('SYSTEM:'), one of Y's tool names, '.env',
+ * second person plus a modal ('you-must-...'), an override of prior
+ * instructions ('ign0re-previous-...', digits read as letters), or a
+ * disclosure verb plus a secret ('reply-with-env-contents'). Teammates
+ * choose these strings, and these shapes pass the L0 screen.
+ */
+export function agentDirected(part: string): boolean {
+  const lower = part.toLowerCase();
+  if (ROLE_PREFIX.test(part) || lower.includes('.env') || Y_TOOL_NAMES.some((t) => lower.includes(t))) return true;
+  const words = new Set(lower.replace(/[01357$]/g, (c) => LEET[c] ?? c).split(/[^a-z]+/).filter(Boolean));
+  const any = (set: Set<string>) => [...words].some((w) => set.has(w));
+  return (any(SECOND_PERSON) && any(MODAL)) || (any(OVERRIDE) && any(PRIOR)) || (any(DISCLOSE) && any(SECRET));
+}
+
+/**
+ * True when a name part may be shown: the L0 screen does not flag it
+ * (separators read as spaces, so 'ignore-previous-instructions' is seen)
+ * and it does not read as an instruction to an agent (agentDirected).
+ */
 function screenedPart(part: string, memo: Map<string, boolean>): boolean {
   let ok = memo.get(part);
   if (ok === undefined) {
     const label = l0Scan(part.replace(/[._:@/+[\]-]+/g, ' '), 'comment').label;
-    ok = label === 'clean' || label === 'warn';
+    ok = (label === 'clean' || label === 'warn') && !agentDirected(part);
     memo.set(part, ok);
   }
   return ok;
