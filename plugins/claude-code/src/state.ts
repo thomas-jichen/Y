@@ -9,7 +9,7 @@ import { KillSwitches } from '@y/schema/common';
 import { RealtimeChannel } from '@y/schema/hosting';
 import { Pointer } from '@y/schema/pointers';
 import { UnreadCounts } from '@y/schema/pulse';
-import { FALLBACK_POINTER_TEXT, isRenderedPointer, renderPointer } from '@y/pointers';
+import { FALLBACK_POINTER_TEXT, isRenderedPointer, renderPointer, type PointerLocals } from '@y/pointers';
 import { readJson, writeJsonAtomic, type Paths } from './runtime.js';
 
 /** The brief as cached in `state/brief.json` (only validated fields). */
@@ -144,11 +144,11 @@ export function updatePulse(p: Paths, patch: Partial<PulseState>, now: number): 
  * strict schema, rendered from the local template, and the result checked
  * against the template grammar. Anything that fails yields null.
  */
-export function renderOne(pointer: unknown): string | null {
+export function renderOne(pointer: unknown, locals?: PointerLocals): string | null {
   const v = Pointer.safeParse(pointer);
   if (!v.success) return null;
   try {
-    const text = renderPointer(v.data);
+    const text = renderPointer(v.data, locals);
     if (typeof text !== 'string' || !isRenderedPointer(text)) return null;
     return text;
   } catch {
@@ -163,7 +163,7 @@ const PRIORITY = ['P4', 'P1', 'P9', 'P2', 'P3', 'P8', 'P5', 'P6', 'P7', 'P0'];
  * de-duplicated, P0 dropped when anything else is present. Each line is
  * rendered and grammar-checked individually (we don't trust a joined block).
  */
-export function renderBlock(pointers: readonly unknown[], budgetChars: number): string {
+export function renderBlock(pointers: readonly unknown[], budgetChars: number, locals?: PointerLocals): string {
   const valid = pointers.flatMap((p) => {
     const v = Pointer.safeParse(p);
     return v.success ? [v.data] : [];
@@ -176,7 +176,7 @@ export function renderBlock(pointers: readonly unknown[], budgetChars: number): 
   const lines: string[] = [];
   let used = 0;
   for (const { p } of sorted) {
-    const text = renderOne(p);
+    const text = renderOne(p, locals);
     if (!text || lines.includes(text)) continue;
     const add = text.length + (lines.length ? 1 : 0);
     if (used + add > budgetChars) continue;

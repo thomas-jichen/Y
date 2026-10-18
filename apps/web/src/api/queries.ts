@@ -3,13 +3,16 @@ import { api } from './client'
 import type {
   Activity,
   AgentProfile,
+  ClaimKind,
   Comment,
   ConnectToken,
   Harness,
   Me,
   Message,
   Post,
+  Product,
   ReactionKind,
+  ReplyPolicy,
   ReviewDetail,
   ReviewItem,
   ScrollSession,
@@ -21,6 +24,7 @@ import type {
   Trending,
   UsageRange,
   UsageSeries,
+  VerifyClaimResult,
 } from './types'
 
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: () => api.get<Me>('/me') })
@@ -67,6 +71,8 @@ export const useConnectStatus = (enabled: boolean, poll = enabled) =>
     enabled,
     refetchInterval: poll ? 4000 : false,
   })
+
+export const useProducts = () => useQuery({ queryKey: ['products'], queryFn: () => api.get<Product[]>('/products') })
 
 export const useSlackStatus = () => useQuery({ queryKey: ['slack', 'status'], queryFn: () => api.get<SlackStatus>('/slack/status') })
 
@@ -205,8 +211,8 @@ export function useRemoteInstructions() {
 export function useDecision(id: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (v: { decision: 'approve' | 'reject' | 'release' | 'hold' | 'publish'; patchHash?: string; idempotencyKey: string }) =>
-      api.post<ReviewItem>(`/review/${id}/decision`, { decision: v.decision, patchHash: v.patchHash }, v.idempotencyKey),
+    mutationFn: (v: { decision: 'approve' | 'reject' | 'release' | 'hold' | 'publish'; patchHash?: string; edits?: { body?: string }; idempotencyKey: string }) =>
+      api.post<ReviewItem>(`/review/${id}/decision`, { decision: v.decision, patchHash: v.patchHash, ...(v.edits ? { edits: v.edits } : {}) }, v.idempotencyKey),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['review'] })
       qc.invalidateQueries({ queryKey: ['me'] })
@@ -243,5 +249,33 @@ export function useSlackUnlink() {
   return useMutation({
     mutationFn: () => api.post<SlackStatus>('/slack/unlink', {}),
     onSuccess: (s) => qc.setQueryData(['slack', 'status'], s),
+  })
+}
+
+// ---------- builders (team admins; members get 403) ----------
+/** Every products write answers with the product; the list is patched in place. */
+function useProductWrite<V>(fn: (v: V) => Promise<Product>) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: (p) => qc.setQueryData<Product[]>(['products'], (list) => (list?.some((x) => x.id === p.id) ? list.map((x) => (x.id === p.id ? p : x)) : [...(list ?? []), p])),
+  })
+}
+
+export const useCreateProduct = () =>
+  useProductWrite((v: { slug: string; name: string; builderAgent: string; slaMinutes?: number; replyPolicy?: ReplyPolicy }) => api.post<Product>('/products', v))
+
+export const useUpdateProduct = (id: string) =>
+  useProductWrite((v: { name?: string; builderAgent?: string | null; slaMinutes?: number; replyPolicy?: ReplyPolicy; status?: 'active' | 'suspended' }) =>
+    api.patch<Product>(`/products/${id}`, v),
+  )
+
+export const useAddClaim = (id: string) => useProductWrite((v: { kind: ClaimKind; value: string }) => api.post<Product>(`/products/${id}/claims`, v))
+
+export function useVerifyClaim(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { kind: ClaimKind; value: string }) => api.post<VerifyClaimResult>(`/products/${id}/claims/verify`, v),
+    onSuccess: (r) => qc.setQueryData<Product[]>(['products'], (list) => list?.map((x) => (x.id === r.product.id ? r.product : x))),
   })
 }

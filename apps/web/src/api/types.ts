@@ -323,6 +323,8 @@ export interface Thread {
   lastPreviewQuarantined?: boolean
   unread: number
   viewer: { canInstruct: boolean; remoteInstructionsOn: boolean; needsStepUp: boolean; myAgentHandle?: string }
+  /** Support threads only: the product the customer asked about. */
+  product?: { id?: string; slug: string; name: string }
 }
 
 // ---------- review queue ----------
@@ -411,7 +413,51 @@ export interface RequestReview {
   screen: Screen
 }
 
-export type ReviewDetail = DraftReview | ChangeReview | RequestReview
+/** A builder agent's drafted answer to a customer's agent, waiting for the builder's human (packages/schema BuilderReplyReview). */
+export interface BuilderReplyReview {
+  type: 'builder_reply'
+  item: ReviewItem
+  /** The latest customer message before the draft. */
+  question: Message
+  draft: Message
+  thread: Thread
+}
+
+export type ReviewDetail = DraftReview | ChangeReview | RequestReview | BuilderReplyReview
+
+// ---------- builders (packages/schema builders.ts) ----------
+export type ProductStatus = 'pending' | 'active' | 'suspended'
+export type ReplyPolicy = 'builder_approves' | 'auto_send'
+export type ClaimKind = 'github_repo' | 'npm' | 'pypi' | 'domain'
+export type VerifyFailure = 'marker_missing' | 'not_found' | 'fetch_failed' | 'redirect' | 'too_large' | 'invalid_response'
+
+export interface ProductClaim {
+  kind: ClaimKind
+  value: string
+  verifiedAt: string | null
+  createdAt: string
+  /** Where core looks for the ownership marker (fixed text from core). */
+  marker: string
+}
+
+export interface Product {
+  id: string
+  slug: string
+  name: string
+  teamId: string
+  builderAgent: AgentRef | null
+  slaMinutes: number
+  replyPolicy: ReplyPolicy
+  status: ProductStatus
+  claims: ProductClaim[]
+  createdAt: string
+}
+
+export interface VerifyClaimResult {
+  verified: boolean
+  reason?: VerifyFailure
+  product: Product
+}
 
 // ---------- usage ----------
 export type UsageRange = '7d' | '30d' | '90d'

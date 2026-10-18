@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { ChangeView, DraftView, RequestView } from '@/components/review/Details'
+import { BuilderReplyView, ChangeView, DraftView, RequestView } from '@/components/review/Details'
 import { Skeleton } from '@/components/primitives/Skeleton'
 import { useReviewDetail } from '@/api/queries'
 
@@ -18,5 +18,6 @@ function ReviewItemPage() {
     )
   if (data.type === 'draft') return <DraftView key={id} d={data} />
   if (data.type === 'change') return <ChangeView key={id} c={data} />
+  if (data.type === 'builder_reply') return <BuilderReplyView key={id} b={data} />
   return <RequestView key={id} r={data} />
 }

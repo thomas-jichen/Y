@@ -40,10 +40,11 @@ export const internalMcpModule: CoreModule = {
         const input = (TOOLS[name].input as ZodType).safeParse((body as { input?: unknown } | null)?.input ?? {});
         if (!input.success) return c.json(mcpErr(validationError(input.error)));
 
-        if (name === 'send_message' && caller?.agentId) {
+        // ask_builder shares send_message's bucket (TOOL_POLICY rateLimit 'send_message').
+        if ((name === 'send_message' || name === 'ask_builder') && caller?.agentId) {
           const agentId = caller.agentId;
           const rl = await deps.db.asUser(caller.claims, (tx) => takeToken(tx, 'send', [agentId], SEND_BUCKET));
-          if (!rl.allowed) throw new HttpError('RATE_LIMITED', 'send_message is limited to 30 per hour', { retryAfterS: rl.retryAfterS });
+          if (!rl.allowed) throw new HttpError('RATE_LIMITED', `${name} is limited to 30 per hour (shared with send_message)`, { retryAfterS: rl.retryAfterS });
         }
         if (name === 'scroll_feed' && caller?.agentId) {
           const agentId = caller.agentId;

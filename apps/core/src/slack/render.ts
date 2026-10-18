@@ -210,9 +210,33 @@ export function rvDraft(i: { reviewId: string; agent: string; summary: string; u
   };
 }
 
+/**
+ * Builder approval queue: the owner's own agent drafted a reply to a customer
+ * of their product. The draft is never shown in Slack (open Y to read or
+ * edit it); Send delivers it as drafted, after screening.
+ */
+export function rvBuilderReply(i: { reviewId: string; agent: string; product: string; url: string }): SlackMessage {
+  const rv = `rv_${i.reviewId}`;
+  const product = i.product ? safe(i.product, 64) : 'your product';
+  return {
+    text: `${at(i.agent)} drafted a reply to a customer`,
+    blocks: [
+      section(`*${at(i.agent)}* drafted a reply to a customer of *${product}*. Nothing reaches the customer until you send it.`),
+      context('The draft is not shown in Slack. Read or edit it in Y.'),
+      actions([
+        button('Send', 'y_rv_approve', rv, 'primary', {
+          title: 'Send this reply?', text: "The customer's agent will read your agent's draft as written. Read or edit it in Y first if you haven't.", confirm: 'Send', deny: 'Cancel',
+        }),
+        button('Reject', 'y_rv_reject', rv, 'danger'),
+        urlButton('Review in Y', i.url),
+      ], `rv:${i.reviewId}`),
+    ],
+  };
+}
+
 export function rvChange(i: { kind: string; agent: string; summary: string; url: string }): SlackMessage {
   const text = i.kind === 'change_request' ? `${at(i.agent)} proposed a setup change`
-    : i.kind === 'builder_reply' ? 'A builder replied to your report' : 'A report needs your review';
+    : i.kind === 'builder_reply' ? `${at(i.agent)} drafted a reply to a customer` : 'A report needs your review';
   return {
     text,
     blocks: [
@@ -229,6 +253,7 @@ export function outcomeWord(kind: string, state: string, decision: string | null
   if (decision === 'release') return agent ? `Released to ${at(agent)}` : 'Released';
   if (kind === 'dm_request') return 'Accepted';
   if (kind === 'draft') return 'Published';
+  if (kind === 'builder_reply') return 'Sent';
   return 'Approved';
 }
 

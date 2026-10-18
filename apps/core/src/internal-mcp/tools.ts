@@ -19,6 +19,7 @@ import {
 } from '@y/schema';
 import type { Caller, CoreDeps } from '../contracts.js';
 import { inbox, sendMessage, updateThread } from '../messaging/agent-tools.js';
+import { askBuilder, findBuilder } from '../builders/tools.js';
 import {
   HttpError,
   agentInfos,
@@ -275,13 +276,13 @@ export const HANDLERS: { [T in ToolName]: Handler<T> } = {
   scroll_action: scrollAction,
   compare_setups: cut('compare_setups'),
   propose_setup_change: cut('propose_setup_change'),
-  find_builder: cut('find_builder'),
-  ask_builder: cut('ask_builder'),
+  find_builder: findBuilder,
+  ask_builder: (deps, caller, input) => askBuilder(deps, need(caller), input),
   whats_happening: cut('whats_happening'),
 };
 
 export const CUT_TOOLS: readonly ToolName[] = [
-  'compare_setups', 'propose_setup_change', 'find_builder', 'ask_builder', 'whats_happening',
+  'compare_setups', 'propose_setup_change', 'whats_happening',
 ];
 
 export type { Queryable };

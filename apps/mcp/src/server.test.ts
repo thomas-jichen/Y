@@ -190,7 +190,7 @@ describe('tool listing', () => {
   it('lists exactly the slice tools in the canonical order', async () => {
     const { tools } = await mcp().rpc('tools/list', {});
     expect(tools.map((t: { name: string }) => t.name)).toEqual([...SLICE_TOOLS]);
-    for (const cut of ['compare_setups', 'propose_setup_change', 'find_builder', 'ask_builder', 'whats_happening']) {
+    for (const cut of ['compare_setups', 'propose_setup_change', 'whats_happening']) {
       expect(tools.find((t: { name: string }) => t.name === cut)).toBeUndefined();
     }
   });
@@ -199,6 +199,22 @@ describe('tool listing', () => {
     const { tools } = await mcp().rpc('tools/list', {});
     const always = tools.filter((t: any) => t._meta?.['anthropic/alwaysLoad'] === true).map((t: any) => t.name);
     expect(always).toEqual(['status', 'search_network', 'inbox']);
+  });
+
+  it('sets anthropic/requiresUserInteraction only on ask_builder', async () => {
+    const { tools } = await mcp().rpc('tools/list', {});
+    const rui = tools.filter((t: any) => t._meta?.['anthropic/requiresUserInteraction'] === true).map((t: any) => t.name);
+    expect(rui).toEqual(['ask_builder']);
+  });
+
+  it('find_builder and ask_builder descriptions front-load when to call', async () => {
+    const { tools } = await mcp().rpc('tools/list', {});
+    const by = Object.fromEntries(tools.map((t: any) => [t.name, t]));
+    expect(by.find_builder.description).toMatch(/^Call when stuck on a third-party dependency, SDK, API or error/);
+    expect(by.find_builder.annotations.readOnlyHint).toBe(true);
+    expect(by.ask_builder.description).toMatch(/^Call after find_builder returns a builder/);
+    for (const w of ['code', 'secrets', 'keys', 'file paths', 'customer data', 'inbox']) expect(by.ask_builder.description).toContain(w);
+    expect(by.ask_builder.annotations.readOnlyHint).toBe(false);
   });
 
   it('sets annotations and input/output schemas', async () => {
@@ -280,6 +296,7 @@ describe('forwarding to core', () => {
       ['review_queue', {}],
       ['scroll_feed', {}],
       ['scroll_action', { action: 'end' }],
+      ['ask_builder', { product: 'acme-pay', question: 'Why does the webhook signature fail?', idempotency_key: 'k-12345678' }],
     ] as const) {
       const res = await mcp().call(name, args);
       expect(res.isError).toBe(true);
@@ -352,6 +369,70 @@ describe('posts and scrolling', () => {
     expect('rpcError' in res || res.isError === true).toBe(true);
     expect(JSON.stringify(res)).toContain('body is required for comment');
     expect(recorded).toHaveLength(0);
+  });
+});
+
+describe('builders', () => {
+  const builder = {
+    product_id: fx.IDS.product,
+    slug: 'acme-pay',
+    name: 'Acme Pay',
+    builder_agent: '@acme-builder',
+    presence: 'away',
+    sla_minutes: 240,
+    claims: [{ kind: 'npm', value: 'acme-pay-sdk', verified_at: '2026-10-17T12:00:00.000Z' }],
+    matched_on: 'package',
+  };
+
+  it('find_builder works signed out and forwards the parsed input', async () => {
+    replies.find_builder = () => ({ ok: true, output: { builders: [builder] } });
+    const res = await mcp().call('find_builder', { package: 'acme-pay-sdk', ecosystem: 'npm' });
+    expect(res.isError).toBeFalsy();
+    expect(res.structuredContent).toEqual({ builders: [builder] });
+    expect(recorded[0]!.path).toBe('/internal/mcp/find_builder');
+    expect(recorded[0]!.authorization).toBeUndefined();
+    expect(recorded[0]!.body.input).toEqual({ package: 'acme-pay-sdk', ecosystem: 'npm' });
+  });
+
+  it('find_builder without any selector is rejected before core', async () => {
+    const res = await mcp().call('find_builder', {}).catch((e: Error) => ({ rpcError: e.message }));
+    expect('rpcError' in res || res.isError === true).toBe(true);
+    expect(recorded).toHaveLength(0);
+  });
+
+  it('ask_builder forwards with the token and returns the pending thread', async () => {
+    const out = {
+      thread_id: fx.IDS.thread,
+      message_id: fx.IDS.message,
+      state: 'delivered',
+      builder_presence: 'away',
+      expected_reply_by: '2026-10-17T16:00:00.000Z',
+      reply_policy: 'builder_approves',
+    };
+    replies.ask_builder = () => ({ ok: true, output: out });
+    const input = {
+      product: 'acme-pay',
+      question: 'Why does the webhook signature check fail after a key rotation?',
+      context: { package_version: '2.3.1' },
+      idempotency_key: 'ask-key-0001',
+    };
+    const res = await mcp().call('ask_builder', input, { authorization: TOKEN });
+    expect(res.isError).toBeFalsy();
+    expect(res.structuredContent).toEqual(out);
+    expect(recorded[0]!.authorization).toBe(TOKEN);
+    expect(recorded[0]!.body.input).toEqual(input);
+  });
+
+  it('ask_builder surfaces HELD_FOR_SENDER from core', async () => {
+    replies.ask_builder = () =>
+      toMcpErrorBody(makeError('HELD_FOR_SENDER', 'Not sent: rewrite in your own words.', { retryable: false }));
+    const res = await mcp().call(
+      'ask_builder',
+      { product: fx.IDS.product, question: 'How do I configure retries?', idempotency_key: 'ask-key-0002' },
+      { authorization: TOKEN },
+    );
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent.error).toMatchObject({ code: 'HELD_FOR_SENDER', retryable: false });
   });
 });
 

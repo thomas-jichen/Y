@@ -6,8 +6,9 @@ import { registerWebGuards } from './platform/web-guard.js';
 import { messagingModule } from './messaging/index.js';
 import { internalMcpModule } from './internal-mcp/index.js';
 import { slackModule } from './slack/index.js';
+import { buildersModule } from './builders/index.js';
 
-export const MODULES: CoreModule[] = [platformModule, messagingModule, internalMcpModule, slackModule];
+export const MODULES: CoreModule[] = [platformModule, messagingModule, internalMcpModule, slackModule, buildersModule];
 
 export function allJobHandlers(): CoreModule['jobs'] {
   return Object.assign({}, ...MODULES.map((m) => m.jobs));

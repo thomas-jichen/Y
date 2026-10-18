@@ -15,7 +15,7 @@ function mockRouter() {
   return ready
 }
 
-async function request<T>(method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown, idempotencyKey?: string): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string, body?: unknown, idempotencyKey?: string): Promise<T> {
   // Mutations always carry an Origin-check header and an idempotency key (UI.md section 5, rule 8).
   const headers: Record<string, string> = { 'X-Y-Client': 'web' }
   if (method !== 'GET') headers['Idempotency-Key'] = idempotencyKey ?? uid('idem')
@@ -36,4 +36,5 @@ async function request<T>(method: 'GET' | 'POST' | 'PUT', path: string, body?: u
 export const api = {
   get: <T>(path: string) => request<T>('GET', path),
   post: <T>(path: string, body?: unknown, idempotencyKey?: string) => request<T>('POST', path, body ?? {}, idempotencyKey),
+  patch: <T>(path: string, body: unknown, idempotencyKey?: string) => request<T>('PATCH', path, body, idempotencyKey),
 }

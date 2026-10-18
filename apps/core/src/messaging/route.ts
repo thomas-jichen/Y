@@ -11,26 +11,27 @@ import { ulid, type DmPermission, type MessageState, type ScreenAction } from '@
 import type { CoreDeps, PushEvent } from '../contracts.js';
 import { HttpError, relationshipBetween, wire, type Relationship } from './util.js';
 import { enqueueMessageNotices } from '../slack/enqueue.js';
+import { routeSupportTx, supportDelivered, supportDeliveryFor } from './support.js';
 
 export interface RouteResult {
   state: MessageState;
   path: 'inbox' | 'wake' | 'owner_notification' | null;
   note: 'will_wake' | 'next_turn' | 'awaiting_human_accept' | 'held_for_your_owner' | 'quarantined' | 'blocked' | 'screening';
-  relationship: Relationship | null;
+  relationship: Relationship | 'customer' | null;
 }
 
-interface MsgRow {
+export interface MsgRow {
   id: string; thread_id: string; sender_kind: 'agent' | 'user' | 'system'; sender_id: string | null;
-  sender_owner_id: string | null; body: string; urgency: 'normal' | 'wake'; state: MessageState;
+  sender_owner_id: string | null; body: string; intent: string; urgency: 'normal' | 'wake'; state: MessageState;
   thread_state: string; thread_kind: string; thread_creator: string;
 }
 
-const MSG_SELECT = `select m.id, m.thread_id, m.sender_kind, m.sender_id, m.sender_owner_id, m.body, m.urgency, m.state,
+export const MSG_SELECT = `select m.id, m.thread_id, m.sender_kind, m.sender_id, m.sender_owner_id, m.body, m.intent, m.urgency, m.state,
             t.state as thread_state, t.kind as thread_kind, t.created_by_user_id as thread_creator
        from public.messages m join public.threads t on t.id = m.thread_id where m.id = $1 for update of m`;
 
 /** request -> open once permission is decided (service role; the DB guard skips it). Also reopens on delivery. */
-async function openThread(tx: Tx, threadId: string, from: readonly string[] = ['request']) {
+export async function openThread(tx: Tx, threadId: string, from: readonly string[] = ['request']) {
   await tx.query(`update public.threads set state = 'open', updated_at = now() where id = $1 and state = any($2::text[])`, [threadId, [...from]]);
 }
 
@@ -48,7 +49,7 @@ async function allTrusted(tx: Tx, senderOwner: string, ownerIds: readonly string
  * delivery, only when the L0 screen calls it clean (the body was screened
  * separately). Never overwrites a set subject.
  */
-async function adoptSubject(tx: Tx, threadId: string, contentClass: 'comment' | 'dm_teammate' | 'dm_stranger') {
+export async function adoptSubject(tx: Tx, threadId: string, contentClass: 'comment' | 'dm_teammate' | 'dm_stranger') {
   const r = await tx.query<{ requested_subject: string }>(
     `select requested_subject from public.threads where id = $1 and subject = '' and requested_subject <> ''`, [threadId]);
   const raw = r.rows[0]?.requested_subject;
@@ -58,13 +59,13 @@ async function adoptSubject(tx: Tx, threadId: string, contentClass: 'comment' | 
   await tx.query(`update public.threads set subject = $2 where id = $1 and subject = ''`, [threadId, text]);
 }
 
-function step(state: MessageState, event: MessageEvent): MessageState {
+export function step(state: MessageState, event: MessageEvent): MessageState {
   const r = transition(state, event);
   if (!r.ok) throw new HttpError('CONFLICT', `message cannot go ${state} -> ${event.type}`);
   return r.state;
 }
 
-async function loadDmPermissions(tx: Tx, recipientOwnerId: string, senderAgentId: string | null, senderOwnerId: string, rel: string): Promise<DmPermission[]> {
+export async function loadDmPermissions(tx: Tx, recipientOwnerId: string, senderAgentId: string | null, senderOwnerId: string, rel: string): Promise<DmPermission[]> {
   // READ ONLY. dm_permissions are written by humans in the web app (I4).
   const r = await tx.query<{ subject_kind: DmPermission['subjectKind']; subject_id: string; policy: DmPermission['policy']; delivery: DmPermission['delivery'] }>(
     `select subject_kind, subject_id, policy, delivery from public.dm_permissions
@@ -86,7 +87,7 @@ async function senderGithubAgeOk(tx: Tx, userId: string, now: Date): Promise<boo
   return now.getTime() - new Date(v).getTime() >= 30 * 24 * 3600 * 1000;
 }
 
-async function setState(tx: Tx, id: string, state: MessageState, extra: { trust?: string | null; delivered?: boolean } = {}) {
+export async function setState(tx: Tx, id: string, state: MessageState, extra: { trust?: string | null; delivered?: boolean } = {}) {
   await tx.query(
     `update public.messages set state = $2, trust = coalesce($3, trust),
             delivered_at = case when $4 then now() else delivered_at end, updated_at = now() where id = $1`,
@@ -94,7 +95,7 @@ async function setState(tx: Tx, id: string, state: MessageState, extra: { trust?
   );
 }
 
-async function storeVerdict(tx: Tx, messageId: string, outcome: Awaited<ReturnType<typeof screen>>): Promise<string> {
+export async function storeVerdict(tx: Tx, messageId: string, outcome: Awaited<ReturnType<typeof screen>>): Promise<string> {
   const id = ulid();
   const v = outcome.verdict;
   await tx.query(
@@ -111,7 +112,7 @@ async function storeVerdict(tx: Tx, messageId: string, outcome: Awaited<ReturnTy
   return id;
 }
 
-async function addReview(tx: Tx, ownerUserId: string, kind: 'dm_request' | 'quarantined_message', refId: string, agentId: string | null, summary: string) {
+export async function addReview(tx: Tx, ownerUserId: string, kind: 'dm_request' | 'quarantined_message' | 'builder_reply', refId: string, agentId: string | null, summary: string) {
   // The review_items insert trigger emits review.new (ids only).
   await tx.query(
     `insert into public.review_items (owner_user_id, kind, ref_id, agent_id, summary, expires_at)
@@ -160,7 +161,9 @@ export async function routeMessageTx(tx: Tx, deps: CoreDeps, messageId: string, 
 
   // Outbound DLP on every agent-authored body (I10).
   if (isAgent) {
-    const crossOwner = parts.rows.some((p) => p.owner_user_id !== senderOwner) || humans.rows.some((h) => h.owner_user_id !== senderOwner);
+    // Support threads are customer <-> builder egress: always strict, even between one owner's agents.
+    const crossOwner = m.thread_kind === 'support'
+      || parts.rows.some((p) => p.owner_user_id !== senderOwner) || humans.rows.some((h) => h.owner_user_id !== senderOwner);
     const dlp = dlpScan(m.body, { allowShortCode: !crossOwner });
     if (!dlp.ok) {
       state = step(state, { type: 'l0_hold' });
@@ -170,6 +173,9 @@ export async function routeMessageTx(tx: Tx, deps: CoreDeps, messageId: string, 
       return { state, path: null, note: 'held_for_your_owner', relationship: null };
     }
   }
+
+  // Support threads (customer <-> builder agent), human comments included: their own routing (support.ts).
+  if (m.thread_kind === 'support') return routeSupportTx(tx, deps, m, parts.rows, events);
 
   // Human comments from the web: screened as `comment`, delivered to every agent participant.
   // Never on an archived thread, and on a 'request' thread only for the human
@@ -304,7 +310,7 @@ export async function routeMessageTx(tx: Tx, deps: CoreDeps, messageId: string, 
   return { state, path: wake ? 'wake' : 'inbox', note: wake ? 'will_wake' : 'next_turn', relationship: rel };
 }
 
-async function deliver(
+export async function deliver(
   tx: Tx, _deps: CoreDeps,
   m: Pick<MsgRow, 'id' | 'thread_id' | 'sender_kind' | 'sender_id' | 'sender_owner_id' | 'thread_state' | 'thread_kind'>,
   rcpts: { agentId: string; ownerId: string; wake: boolean }[],
@@ -363,7 +369,7 @@ export async function pickTarget(tx: Tx, agentId: string, threadId: string, now:
   return pickLeaseSession(cands, { now, kind: 'dm', threadId });
 }
 
-function noteFor(state: MessageState, path: string | null): RouteResult['note'] {
+export function noteFor(state: MessageState, path: string | null): RouteResult['note'] {
   switch (state) {
     case 'delivered':
     case 'released': return path === 'wake' ? 'will_wake' : 'next_turn';
@@ -410,6 +416,18 @@ export async function applyMessageDecision(
       `select p_id, owner_user_id from public.thread_participants where thread_id = $1 and p_kind = 'agent' and p_id is distinct from $2::uuid`,
       [m.thread_id, m.sender_id]);
     let rcpts = parts.rows.map((p) => ({ agentId: p.p_id, ownerId: p.owner_user_id, wake: false }));
+    // Support threads: role-based recipients; nothing goes out once the product is suspended or the builder replaced.
+    const sd = m.thread_kind === 'support' ? await supportDeliveryFor(tx, m) : null;
+    if (m.thread_kind === 'support') {
+      if (!sd) {
+        if (s === 'request_pending') s = step(s, { type: 'request_declined' });
+        else if (s === 'quarantined') s = step(s, { type: 'reject' });
+        else throw new HttpError('CONFLICT', `message in state ${s} has no pending decision`);
+        await setState(tx, m.id, s);
+        return s;
+      }
+      rcpts = sd.rcpts.map((p) => ({ agentId: p.p_id, ownerId: p.owner_user_id, wake: false }));
+    }
 
     // The deciding owner (quarantined_message only; a dm_request has one recipient).
     let decider: string | null = null;
@@ -456,6 +474,7 @@ export async function applyMessageDecision(
       s = step(s, { type: 'verdict', action });
       await setState(tx, m.id, s, { delivered: s === 'delivered' });
       if (s === 'delivered') {
+        if (sd) await supportDelivered(tx, sd, m);
         await openThread(tx, m.thread_id);
         await deliver(tx, deps, m, rcpts, events);
         await adoptSubject(tx, m.thread_id, 'dm_stranger');
@@ -467,6 +486,7 @@ export async function applyMessageDecision(
       s = step(s, { type: 'deliver' });
       await setState(tx, m.id, s, { delivered: true });
       // A released first message opens its thread, or the recipient agent never sees it (threads_select).
+      if (sd) await supportDelivered(tx, sd, m);
       await openThread(tx, m.thread_id);
       await deliver(tx, deps, m, rcpts, events);
       return s;

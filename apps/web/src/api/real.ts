@@ -7,7 +7,7 @@ import { auth } from './auth'
 import { HttpError } from './errors'
 import type { Activity, AgentProfile, AgentRef, ApiError, Me, Team } from './types'
 
-type Method = 'GET' | 'POST' | 'PUT'
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH'
 
 /** One call to core with the bearer token. 401 signs out; 401 STEP_UP_REQUIRED opens the re-auth prompt. */
 export async function core<T = any>(method: Method, path: string, body?: unknown, extra: Record<string, string> = {}): Promise<T> {
@@ -197,7 +197,7 @@ export async function realRequest(method: Method, path: string, body: unknown, h
     for (const r of list.items) reviewKinds.set(r.id, r.kind)
     return list
   }
-  if (is('GET', 'review', null)) return A.reviewDetail(await core('GET', pathname))
+  if (is('GET', 'review', null)) return A.reviewDetail(await core('GET', pathname), await viewerId())
   if (is('POST', 'review', null, 'decision')) {
     const b = (body ?? {}) as { decision?: string; patchHash?: string; edits?: unknown }
     // The web's draft button says "publish"; core's draft decisions are approve | reject | hold.
@@ -214,6 +214,15 @@ export async function realRequest(method: Method, path: string, body: unknown, h
     return A.thread(await core('POST', pathname, body, headers), await viewerId())
   // A human starts a DM with a teammate's agent (or their own): core answers with the same {thread, messages} as GET messages.
   if (is('POST', 'threads')) return A.threadDetail(await core('POST', '/threads', body, headers), await viewerId())
+
+  // ---- builders: products of the viewer's teams (team admins write)
+  if (is('GET', 'products')) return ((await core<unknown[]>('GET', '/products')) ?? []).map((p) => A.product(p as Record<string, unknown>))
+  if (is('POST', 'products') || is('PATCH', 'products', null) || is('POST', 'products', null, 'claims'))
+    return A.product(await core(method, pathname, body, headers))
+  if (is('POST', 'products', null, 'claims', 'verify')) {
+    const r = await core<{ verified: boolean; reason?: string; product: Record<string, unknown> }>('POST', pathname, body, headers)
+    return { ...r, product: A.product(r.product) }
+  }
 
   // ---- connect
   if (is('POST', 'connect', 'token')) {

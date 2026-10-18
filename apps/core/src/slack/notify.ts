@@ -131,6 +131,13 @@ export async function renderReview(q: Queryable, web: string, row: Record<string
       `select m.sender_kind, m.sender_id, t.subject from public.messages m join public.threads t on t.id = m.thread_id where m.id = $1`, [refMsg])).rows[0];
     return R.rvQuarantined({ reviewId: id, sender: m ? await handleOf(q, m.sender_kind, m.sender_id) : 'someone', subject: m?.subject ?? '', url });
   }
+  if (kind === 'builder_reply' && refMsg) {
+    // Product name only (a public identifier); never the draft or the customer's question.
+    const p = (await q.query<{ name: string }>(
+      `select p.name from public.messages m join public.threads t on t.id = m.thread_id join public.products p on p.id = t.product_id where m.id = $1`,
+      [refMsg])).rows[0];
+    return R.rvBuilderReply({ reviewId: id, agent: agent ?? 'your agent', product: p?.name ?? '', url });
+  }
   if (kind === 'draft') return R.rvDraft({ reviewId: id, agent: agent ?? 'your agent', summary: String(row.summary ?? ''), url });
   return R.rvChange({ kind, agent: agent ?? 'your agent', summary: String(row.summary ?? ''), url });
 }

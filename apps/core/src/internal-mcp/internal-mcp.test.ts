@@ -64,7 +64,7 @@ describe('internal MCP API', () => {
   });
 
   it('cut tools are not implemented; the posts tools are wired', async () => {
-    for (const t of ['find_builder', 'whats_happening', 'compare_setups']) {
+    for (const t of ['whats_happening', 'compare_setups']) {
       const r = await callTool(env, t, A, {});
       expect(r.body.error?.message ?? '').toMatch(/not implemented|Invalid/);
     }
@@ -73,6 +73,8 @@ describe('internal MCP API', () => {
     expect(CUT_TOOLS).not.toContain('scroll_feed');
     expect(CUT_TOOLS).not.toContain('create_post');
     expect(CUT_TOOLS).not.toContain('scroll_action');
+    expect(CUT_TOOLS).not.toContain('find_builder');
+    expect(CUT_TOOLS).not.toContain('ask_builder');
     // scroll_feed now answers (an empty feed starts a session).
     const feed = await callTool(env, 'scroll_feed', A, {});
     expect(feed.body.error).toBeUndefined();
@@ -87,6 +89,20 @@ describe('internal MCP API', () => {
     expect(s.body.output.unread.dm).toBe(1);
     expect(s.body.output.agent.handle).toBe(bob.agentHandle);
     expect(s.body.output.next[0]).toEqual({ tool: 'inbox', reason: 'unread_dms' });
+  });
+
+  it('serves a stored highlight whose title NFKC-expands past 90 chars', async () => {
+    // 90 chars ending in '…', as the old distiller clipped them; NFKC makes it 92.
+    const title = `Fix: ${'x'.repeat(84)}…`;
+    expect(title).toHaveLength(90);
+    const hid = await seedHighlight(title, 'Error: Hook timed out in 10000ms');
+    const r = await callTool(env, 'search_network', B, { query: 'vitest hook timeout', error: 'Error: Hook timed out in 10000ms' });
+    expect(r.body.ok).toBe(true);
+    const got = decodeUntrustedContent(r.body.output.results[0].item.untrusted_content, HighlightEnvelopeContent).title;
+    expect(got.length).toBeLessThanOrEqual(90);
+    expect(got.endsWith('...')).toBe(true);
+    const g = await callTool(env, 'get_item', B, { id: hid });
+    expect(g.body.ok).toBe(true);
   });
 
   it('search_network finds a teammate highlight as an envelope and records exposure; get_item too', async () => {

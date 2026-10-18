@@ -1,13 +1,14 @@
 import { Link } from '@tanstack/react-router'
 import { AnimatePresence, motion } from 'motion/react'
 import { useState, type ReactNode } from 'react'
-import type { ChangeReview, DraftReview, RequestReview, ReviewItem } from '@/api/types'
+import type { BuilderReplyReview, ChangeReview, DraftReview, RequestReview, ReviewItem } from '@/api/types'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { AgentName } from '@/components/identity/AgentName'
 import { Button } from '@/components/primitives/Button'
 import { HoldButton } from '@/components/primitives/HoldButton'
 import { Spec } from '@/components/primitives/Spec'
 import { Switch } from '@/components/primitives/Switch'
+import { MessageItem } from '@/components/chats/MessageItem'
 import { Quarantined } from '@/components/trust/Quarantined'
 import { SCREEN } from '@/lib/trust'
 import { useDecision } from '@/api/queries'
@@ -47,10 +48,10 @@ function Shell({ item, title, subtitle, children, actions }: { item: ReviewItem;
   )
 }
 
-function Decided({ item }: { item: ReviewItem }) {
+function Decided({ item, approved = 'Approved' }: { item: ReviewItem; approved?: string }) {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex h-10 items-center justify-between gap-3 text-ui">
-      <span className="font-medium">{item.state === 'approved' ? 'Approved' : item.state === 'rejected' ? 'Declined' : 'Expired'}</span>
+      <span className="font-medium">{item.state === 'approved' ? approved : item.state === 'rejected' ? 'Declined' : 'Expired'}</span>
       <Link to="/review" className="underline decoration-1 underline-offset-4">
         Back to queue
       </Link>
@@ -269,6 +270,90 @@ export function RequestView({ r }: { r: RequestReview }) {
           <p>Unverified agents can only send a short intro, and it goes to you, never to your agent.</p>
           <p>Declining blocks future requests from this agent and flags it for review.</p>
         </div>
+      </div>
+    </Shell>
+  )
+}
+
+// ---------- builder reply ----------
+// Core's cross-owner limit (CROSS_OWNER_BODY_MAX): a longer reply could never reach the customer.
+const MAX_REPLY = 1000
+
+export function BuilderReplyView({ b }: { b: BuilderReplyReview }) {
+  const decide = useDecision(b.item.id)
+  const [body, setBody] = useState(b.draft.body)
+  const [refused, setRefused] = useState<string | null>(null)
+  const text = body.trim()
+  const edited = text !== b.draft.body.trim()
+  const send = async () => {
+    setRefused(null)
+    try {
+      await decide.mutateAsync({ decision: 'approve', ...(edited ? { edits: { body: text } } : {}), idempotencyKey: uid('idem') })
+    } catch (e) {
+      // Core refuses, before deciding, a reply it would not send (too long, code or a secret, product no longer live).
+      if (e instanceof HttpError && e.status === 400) setRefused(e.body.error.message + '.')
+      else throw e
+    }
+  }
+  const product = b.thread.product?.name ?? 'your product'
+  const builder = b.draft.sender.agent
+  const customer = b.question.sender.agent
+  return (
+    <Shell
+      item={b.item}
+      title={`Reply to a customer of ${product}`}
+      subtitle={`${builder?.displayName ?? 'Your agent'} drafted this answer. Nothing reaches the customer’s agent until you send it.`}
+      actions={
+        b.item.state !== 'pending' ? (
+          <Decided item={b.item} approved="Sent" />
+        ) : (
+          <div className="flex items-center justify-end gap-5">
+            <button className="text-ui underline-offset-4 hover:underline" onClick={() => decide.mutate({ decision: 'reject', idempotencyKey: uid('idem') })}>
+              Don’t send
+            </button>
+            <Button
+              variant="primary"
+              className="rounded-full"
+              disabled={!text || text.length > MAX_REPLY || decide.isPending}
+              onClick={() => void send()}
+            >
+              {edited ? 'Send edited reply' : 'Send reply'}
+            </Button>
+          </div>
+        )
+      }
+    >
+      <div className="max-w-[640px] space-y-12">
+        <Section title="The customer asked" note={`${customer ? `From ${customer.displayName}, ` : ''}an agent outside your team. Shown as data.`}>
+          <MessageItem m={b.question} />
+        </Section>
+        <Section title="Your agent’s draft" note="Edit it before sending. Edits are screened again: a reply that looks like it holds a secret or code is held, not sent.">
+          <div className="border-b border-rule focus-within:border-text">
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              readOnly={b.item.state !== 'pending'}
+              rows={6}
+              maxLength={MAX_REPLY}
+              aria-label="Reply to the customer"
+              className="max-h-[60vh] min-h-32 w-full resize-none bg-transparent py-2.5 text-body text-text outline-none [field-sizing:content]"
+            />
+          </div>
+          {b.item.state === 'pending' && (
+            <div className="mt-2 flex items-center justify-between gap-4 text-caption text-text-2">
+              {edited ? (
+                <button className="underline-offset-4 hover:underline" onClick={() => setBody(b.draft.body)}>
+                  Restore the draft
+                </button>
+              ) : (
+                <span />
+              )}
+              <span className="tabular-nums">{body.length} / {MAX_REPLY}</span>
+            </div>
+          )}
+          {refused && <p className="mt-2 text-caption text-text">{refused}</p>}
+        </Section>
+        <p className="text-caption text-text-2">The customer only sees replies you send. Declining sends nothing to the customer.</p>
       </div>
     </Shell>
   )

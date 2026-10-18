@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ChatsRouteImport } from './routes/chats'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as FeedRouteImport } from './routes/feed'
+import { Route as ProductsRouteImport } from './routes/products'
 import { Route as ReviewRouteImport } from './routes/review'
 import { Route as TeamRouteImport } from './routes/team'
 import { Route as UsageRouteImport } from './routes/usage'
@@ -44,6 +45,11 @@ const ConnectRoute = ConnectRouteImport.update({
 const FeedRoute = FeedRouteImport.update({
   id: '/feed',
   path: '/feed',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProductsRoute = ProductsRouteImport.update({
+  id: '/products',
+  path: '/products',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReviewRoute = ReviewRouteImport.update({
@@ -112,6 +118,7 @@ export interface FileRoutesByFullPath {
   '/chats': typeof ChatsRouteWithChildren
   '/connect': typeof ConnectRoute
   '/feed': typeof FeedRoute
+  '/products': typeof ProductsRoute
   '/review': typeof ReviewRouteWithChildren
   '/team': typeof TeamRoute
   '/usage': typeof UsageRoute
@@ -129,6 +136,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/connect': typeof ConnectRoute
   '/feed': typeof FeedRoute
+  '/products': typeof ProductsRoute
   '/team': typeof TeamRoute
   '/usage': typeof UsageRoute
   '/a/$handle': typeof AHandleRoute
@@ -147,6 +155,7 @@ export interface FileRoutesById {
   '/chats': typeof ChatsRouteWithChildren
   '/connect': typeof ConnectRoute
   '/feed': typeof FeedRoute
+  '/products': typeof ProductsRoute
   '/review': typeof ReviewRouteWithChildren
   '/team': typeof TeamRoute
   '/usage': typeof UsageRoute
@@ -167,6 +176,7 @@ export interface FileRouteTypes {
     | '/chats'
     | '/connect'
     | '/feed'
+    | '/products'
     | '/review'
     | '/team'
     | '/usage'
@@ -184,6 +194,7 @@ export interface FileRouteTypes {
     | '/'
     | '/connect'
     | '/feed'
+    | '/products'
     | '/team'
     | '/usage'
     | '/a/$handle'
@@ -201,6 +212,7 @@ export interface FileRouteTypes {
     | '/chats'
     | '/connect'
     | '/feed'
+    | '/products'
     | '/review'
     | '/team'
     | '/usage'
@@ -220,6 +232,7 @@ export interface RootRouteChildren {
   ChatsRoute: typeof ChatsRouteWithChildren
   ConnectRoute: typeof ConnectRoute
   FeedRoute: typeof FeedRoute
+  ProductsRoute: typeof ProductsRoute
   ReviewRoute: typeof ReviewRouteWithChildren
   TeamRoute: typeof TeamRoute
   UsageRoute: typeof UsageRoute
@@ -258,6 +271,13 @@ declare module '@tanstack/react-router' {
       path: '/feed'
       fullPath: '/feed'
       preLoaderRoute: typeof FeedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/products': {
+      id: '/products'
+      path: '/products'
+      fullPath: '/products'
+      preLoaderRoute: typeof ProductsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/review': {
@@ -377,6 +397,7 @@ const rootRouteChildren: RootRouteChildren = {
   ChatsRoute: ChatsRouteWithChildren,
   ConnectRoute: ConnectRoute,
   FeedRoute: FeedRoute,
+  ProductsRoute: ProductsRoute,
   ReviewRoute: ReviewRouteWithChildren,
   TeamRoute: TeamRoute,
   UsageRoute: UsageRoute,

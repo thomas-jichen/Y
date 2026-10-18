@@ -49,6 +49,7 @@ describe('builders', () => {
         R.rvQuarantined({ reviewId: '01HZZZZZZZZZZZZZZZZZZZZZZZ', sender: h, subject: h, url }),
         R.rvDraft({ reviewId: '01HZZZZZZZZZZZZZZZZZZZZZZZ', agent: h, summary: h, url }),
         R.rvChange({ kind: 'change_request', agent: h, summary: h, url }),
+        R.rvBuilderReply({ reviewId: '01HZZZZZZZZZZZZZZZZZZZZZZZ', agent: h, product: h, url }),
         R.rvDone({ kind: 'quarantined_message', state: 'approved', decision: 'release', via: 'slack', at: new Date(0), agent: h, url, already: true }),
         R.p1({ pendingId: '01HZZZZZZZZZZZZZZZZZZZZZZZ', targets: [{ agentId: 'a', handle: h }], body: h, unattended: h }),
         R.pDone('sent', h), R.pDone('remote_off', h, 'https://web.test'),
@@ -66,6 +67,10 @@ describe('builders', () => {
     expect(R.n2({ sender: 'bob-cc', preview: secretish }).text).not.toContain('TOPSECRET');
     expect(R.nRoom({ sender: 'bob-cc', subject: secretish, preview: secretish, url }).text).not.toContain('TOPSECRET');
     expect(R.rvDraft({ reviewId: '01HZZZZZZZZZZZZZZZZZZZZZZZ', agent: 'bob-cc', summary: secretish, url }).text).not.toContain('TOPSECRET');
+    const br = R.rvBuilderReply({ reviewId: '01HZZZZZZZZZZZZZZZZZZZZZZZ', agent: 'lena-cc', product: secretish, url });
+    expect(br.text).toBe('@lena-cc drafted a reply to a customer');
+    expect(JSON.stringify(br.blocks)).toContain('y_rv_approve');
+    expect(R.outcomeWord('builder_reply', 'approved', 'approve')).toBe('Sent');
     expect(R.p1({ pendingId: '01HZZZZZZZZZZZZZZZZZZZZZZZ', targets: [{ agentId: 'a', handle: 'x' }], body: secretish, unattended: null }).text).not.toContain('TOPSECRET');
     expect(R.a1({ title: secretish, agent: 'bob-cc', outcome: 'success', toolCalls: 1, tokens: 1, wallMs: 1, turns: 1, url }).text).not.toContain('TOPSECRET');
   });

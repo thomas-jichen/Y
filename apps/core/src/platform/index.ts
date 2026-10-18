@@ -53,7 +53,7 @@ export interface CreateDepsOptions {
   log?: CoreDeps['log'];
   /** Apply apps/core/migrations (default: true in server mode, false in serverless: run `pnpm migrate`). */
   migrateCore?: boolean;
-  /** Injected fetch for outbound calls (Realtime REST, gte embedder). Tests. */
+  /** Injected fetch for outbound calls (Realtime REST, gte embedder, claim verification). Tests. */
   fetch?: typeof fetch;
   /** Override the Supabase JWKS (tests). */
   jwks?: JWTVerifyGetKey;
@@ -89,7 +89,7 @@ export async function createDeps(
   await bus.start();
   const jobs = new PgJobQueue(db, { ...PLATFORM_JOBS, ...handlers }, now);
   const embedder = createCoreEmbedder(config, opts.fetch ? { fetch: opts.fetch } : {}, log);
-  const deps: CoreDeps = { config, db, auth, bus, jobs, embedder, now, log };
+  const deps: CoreDeps = { config, db, auth, bus, jobs, embedder, now, log, ...(opts.fetch ? { fetch: opts.fetch } : {}) };
   jobs.bind(deps);
   if (opts.scheduleRecurring ?? config.mode === 'server') await scheduleRecurring(deps);
   return deps;
