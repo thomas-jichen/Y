@@ -10,7 +10,8 @@
     "build": "pnpm -r --if-present build",
     "dev:core": "pnpm --filter @paceline/core dev",
     "dev:mcp": "pnpm --filter @paceline/mcp dev",
-    "db:migrate": "pnpm --filter @paceline/db migrate"
+    "db:migrate": "pnpm --filter @paceline/db migrate",
+    "demo:local": "pnpm --filter @paceline/demo local"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

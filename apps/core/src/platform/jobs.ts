@@ -40,8 +40,15 @@ export class PgJobQueue implements JobQueue {
   }
 
   async drain(n = 10): Promise<number> {
+    return (await this.drainDetailed(n)).claimed;
+  }
+
+  /** drain() with per-outcome counts (the jobs tick reports them). */
+  async drainDetailed(n = 10): Promise<{ claimed: number; completed: number; failed: number }> {
     const topics = Object.keys(this.handlers);
-    if (topics.length === 0 || this.draining || !this.deps) return 0;
+    if (topics.length === 0 || this.draining || !this.deps) return { claimed: 0, completed: 0, failed: 0 };
+    let completed = 0;
+    let failed = 0;
     this.draining = true;
     try {
       const claimed = await this.db.asService((tx) =>
@@ -57,14 +64,16 @@ export class PgJobQueue implements JobQueue {
           if (!handler) throw new Error(`no handler for ${job.topic}`);
           await handler(job.payload ?? {}, this.deps);
           await this.db.asService((tx) => tx.query('select api.complete_job($1, $2)', [job.id, job.attempts]));
+          completed++;
         } catch (e) {
           // Error class + message only; handlers never put user content in errors.
           const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
           this.deps.log('warn', 'job failed', { topic: job.topic, id: String(job.id), attempts: job.attempts, err: msg.slice(0, 300) });
           await this.db.asService((tx) => tx.query('select api.fail_job($1, $2, null, $3)', [job.id, msg.slice(0, 2000), job.attempts]));
+          failed++;
         }
       }
-      return claimed.rows.length;
+      return { claimed: claimed.rows.length, completed, failed };
     } finally {
       this.draining = false;
     }

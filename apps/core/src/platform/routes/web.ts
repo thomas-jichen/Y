@@ -7,9 +7,12 @@ import {
   DECISIONS_BY_KIND,
   DecisionRequest,
   FeedQuery,
+  INTRO_MAX,
+  RemoteInstructionsSetting,
   ReviewListQuery,
   STREAM_HEARTBEAT_S,
   toStreamEvent,
+  type DmRequestReview,
   type DraftReview,
   type FeedPage,
   type Me,
@@ -18,6 +21,10 @@ import {
 import type { CoreDeps, PushEvent } from '../../contracts.js';
 import { authenticate } from '../http.js';
 import { loadActivities, reviewItemsFromRows } from '../mappers.js';
+import { realtimeChannelFor } from '../realtime-channel.js';
+import { requireRecentLogin } from '../web-guard.js';
+import { l0Scan, normalizeUntrusted } from '@paceline/safety';
+import { agentInfos, agentRef } from '../../messaging/util.js';
 import { bareId, fail, iso, num, parseOr, readJson, sha256Hex } from '../util.js';
 
 const PAGE = 20;
@@ -54,6 +61,7 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
           where m.user_id = $1 order by m.joined_at limit 50`,
         [caller.userId],
       );
+      const realtime = await realtimeChannelFor(tx, deps.config, 'user', caller.userId);
       const login = typeof u.github_login === 'string' && u.github_login ? u.github_login : String(u.handle);
       const owner = { id: caller.userId, login, handle: `@${u.handle as string}`, avatarUrl: String(u.avatar_url ?? '') };
       return {
@@ -66,6 +74,7 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
           presence: a.presence as Me['agents'][number]['presence'],
         })),
         teams: teams.rows.map((t) => ({ id: t.id as string, slug: t.slug as string, name: t.name as string, role: t.role as Me['teams'][number]['role'] })),
+        ...(realtime ? { realtime } : {}),
       };
     });
     if (!me) return fail(c, 'NOT_FOUND', 'user not found');
@@ -163,6 +172,7 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
       const row = (await tx.query<Record<string, unknown>>('select * from public.review_items where id = $1', [id])).rows[0];
       if (!row) return { status: 404 as const };
       const [item] = await reviewItemsFromRows(tx, [row]);
+      if (row.kind === 'dm_request' && item) return { status: 'dm' as const, item, mid: bareId('m', String(row.ref_id)) };
       if (row.kind !== 'draft') return { status: 501 as const, kind: row.kind as string };
       const hid = bareId('h', String(row.ref_id));
       const h = hid
@@ -187,7 +197,7 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
         for (const [k, v] of Object.entries(red.hitsByRule ?? {})) hits[k] = (hits[k] ?? 0) + num(v);
       }
       const lastSha = [...chunks.rows].reverse().find((x) => x.digest_sha256)?.digest_sha256;
-      const out: DraftReview & { highlightId?: string } = {
+      const draft: DraftReview & { highlightId?: string } = {
         item,
         activity,
         // Digests are purged once distilled (I6); the receipt remains.
@@ -203,8 +213,36 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
         componentShareToggles: {},
         ...(hid ? { highlightId: `h_${hid}` } : {}),
       };
-      return { status: 200 as const, out };
+      return { status: 200 as const, out: draft };
     });
+    if (detail.status === 'dm') {
+      // A stranger's intro, shown only to the recipient's human (I4); the review row above was read under the owner's RLS.
+      // The body is the sender's text: the UI renders it as untrusted.
+      const mid = detail.mid;
+      const intro = mid
+        ? await deps.db.asService(async (s) => {
+            const m = (
+              await s.query<{ thread_id: string; sender_id: string | null; body: string }>(
+                `select thread_id, sender_id, body from public.messages where id = $1 and sender_kind = 'agent'`,
+                [mid],
+              )
+            ).rows[0];
+            const from = m?.sender_id ? (await agentInfos(s, [m.sender_id])).get(m.sender_id) : undefined;
+            return m && from ? { m, from } : null;
+          })
+        : null;
+      if (!intro) return fail(c, 'NOT_FOUND', 'review item not found');
+      const norm = normalizeUntrusted(intro.m.body).text;
+      const out: DmRequestReview = {
+        item: detail.item,
+        from: agentRef(intro.from),
+        trust: 'stranger',
+        intro: norm.length > INTRO_MAX ? `${norm.slice(0, INTRO_MAX - 1)}…` : norm,
+        screen: { label: l0Scan(norm, 'dm_stranger').label, layers: ['l0'] },
+        threadId: `t_${intro.m.thread_id}`,
+      };
+      return c.json(out);
+    }
     if (detail.status === 404) return fail(c, 'NOT_FOUND', 'review item not found');
     if (detail.status === 501) return fail(c, 'NOT_FOUND', `review detail for kind ${detail.kind} is not available yet`);
     return c.json(detail.out);
@@ -260,6 +298,47 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
     }
   });
 
+  /* ------------------------------------------------- remote instructions */
+  // Owner instructions over the web (P4) per agent. Turning it on needs step-up (I5); turning it off never does.
+  app.get('/api/v1/settings/remote-instructions', async (c) => {
+    const caller = await authenticate(c, deps, 'web');
+    if (caller instanceof Response) return caller;
+    const want = c.req.query('agentId');
+    const row = await deps.db.asUser(caller.claims, async (tx) =>
+      (
+        await tx.query<{ id: string; remote_on: boolean | null }>(
+          `select a.id, s.remote_instructions as remote_on from public.agents a left join public.agent_settings s on s.agent_id = a.id
+            where a.owner_user_id = $1 and ($2::text is null or a.id::text = $2) order by a.created_at limit 1`,
+          [caller.userId, want ?? null],
+        )
+      ).rows[0],
+    );
+    if (!row) return fail(c, 'NOT_FOUND', 'agent not found');
+    return c.json(RemoteInstructionsSetting.parse({ agentId: row.id, on: row.remote_on === true }));
+  });
+
+  app.put('/api/v1/settings/remote-instructions', async (c) => {
+    const caller = await authenticate(c, deps, 'web');
+    if (caller instanceof Response) return caller;
+    const body = parseOr(c, RemoteInstructionsSetting, await readJson(c));
+    if (!body.ok) return body.res;
+    if (body.data.on) {
+      const stepUp = await requireRecentLogin(c, deps);
+      if (stepUp) return stepUp;
+    }
+    const updated = await deps.db.asUser(caller.claims, async (tx) => {
+      const owns = await tx.query('select 1 from public.agents where id = $1 and owner_user_id = $2', [body.data.agentId, caller.userId]);
+      if (owns.rowCount === 0) return false;
+      const r = await tx.query('update public.agent_settings set remote_instructions = $2 where agent_id = $1', [
+        body.data.agentId,
+        body.data.on,
+      ]);
+      return (r.rowCount ?? 0) > 0;
+    });
+    if (!updated) return fail(c, 'NOT_FOUND', 'agent not found');
+    return c.json(RemoteInstructionsSetting.parse(body.data));
+  });
+
   /* ---------------------------------------------------------------- stream */
   app.get('/api/v1/stream', async (c) => {
     const caller = await authenticate(c, deps, 'web');
@@ -279,6 +358,8 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
         wake?.();
       });
       try {
+        // Flush headers now: proxies (the Vite dev/preview proxy, some CDNs) hold them until the first body chunk.
+        await stream.write(': open\n\n');
         if (lastId && /^\d{1,19}$/.test(lastId)) {
           const missed = await deps.db.asUser(caller.claims, (tx) =>
             tx.query<{ id: string | number; type: string; payload: Record<string, unknown> }>('select * from api.my_events($1, 100)', [Number(lastId)]),

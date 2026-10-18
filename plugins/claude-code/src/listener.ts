@@ -1,10 +1,28 @@
 /**
- * The asyncRewake listener (SessionStart + Stop, timeout 3300 s). One live
- * listener per session (pid/generation file). It long-polls
- * `GET /api/v1/pulse?cursor&wait&sessionId`, writes `state/pulse.json`, and on
- * a wake targeted at this session writes the **rendered** pointer to stderr
- * and exits 2 (that wakes Claude). Backoff 5 s → 60 s on errors; exits 0 near
- * its timeout.
+ * The asyncRewake listener and its Stop-time marker. Design and reasoning in
+ * plugins/claude-code/README.md ("Wake design"); the short version, from the
+ * S1 spike:
+ *
+ * - **Armed from SessionStart and UserPromptSubmit only** (asyncRewake,
+ *   timeout 3300 s). Never from Stop: Stop fires after every turn, including
+ *   the turns a wake produces, so a Stop-armed listener re-arms off its own
+ *   wakes and its timers accumulate (13 self-triggered turns in 5 minutes).
+ * - **Exactly one live listener per session** (`state/listener-<sid>.json`,
+ *   pid + generation). A second spawn exits 0 at once; an older live one
+ *   steps aside when it sees a newer generation.
+ * - **Exit 2 only on a targeted wake with real news** (the wake names this
+ *   session and the matching unread count is > 0), and only within the local
+ *   wake budget (wake-budget.ts). Over budget: exit 0 and park the pointer
+ *   for UserPromptSubmit.
+ * - Stop runs `listen.mjs mark` synchronously: no network, no spawn; it only
+ *   records `state/needs-listener-<sid>.json` when no listener is live, so
+ *   the gap is visible (doctor, logs) until the next UserPromptSubmit arms one.
+ *
+ * Transport: in server mode `GET /api/v1/pulse?cursor&wait` long-polls. When
+ * the cached brief carries a Supabase realtime channel (serverless core), the
+ * listener waits on the broadcast doorbell and calls `/pulse?wait=0` when it
+ * rings, plus a safety poll every 5 minutes; without a global WebSocket it
+ * polls every 60 s. Backoff 5 s → 60 s on errors; exits 0 near its timeout.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -12,14 +30,22 @@ import { KillSwitches } from '@paceline/schema/common';
 import { Pointer } from '@paceline/schema/pointers';
 import { PULSE_MAX_WAIT_S, UnreadCounts } from '@paceline/schema/pulse';
 import { failOpen, OK, type HookCtx, type HookResult } from './context.js';
-import { httpJson, pidAlive, readJson, safeSid, sleep, writeJsonAtomic } from './runtime.js';
+import { Doorbell, globalWebSocket, type SupabaseChannel, type WsCtor } from './realtime.js';
+import { httpJson, logLine, pidAlive, readJson, safeSid, sleep, writeJsonAtomic } from './runtime.js';
 import { fallbackText, readBrief, readPulse, renderOne, updatePulse } from './state.js';
+import { parkPendingWake, takeWake } from './wake-budget.js';
 
 /** Hook timeout is 3300 s; leave a margin so we exit 0 before the harness kills us. */
 export const LISTEN_TIMEOUT_MS = 3300_000;
 const EXIT_MARGIN_MS = 60_000;
 const BACKOFF_MIN_MS = 5_000;
 const BACKOFF_MAX_MS = 60_000;
+/** Serverless: poll even without a ring this often (missed broadcasts, reconnects). */
+export const SAFETY_POLL_MS = 300_000;
+/** Serverless without WebSocket support: plain polling interval. */
+export const SLOW_POLL_MS = 60_000;
+
+const SID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 
 export interface ListenOpts {
   /** Override the run length (tests). */
@@ -27,6 +53,10 @@ export interface ListenOpts {
   /** Override the error backoff floor (tests). */
   backoffMinMs?: number;
   sleep?: (ms: number) => Promise<void>;
+  /** WebSocket constructor for the serverless doorbell; `null` disables it. Default: the global one. */
+  webSocket?: WsCtor | null;
+  /** Override the serverless safety-poll interval (tests). */
+  safetyPollMs?: number;
 }
 
 interface ListenerFile {
@@ -39,13 +69,26 @@ function listenerFile(ctx: HookCtx, sid: string): string {
   return path.join(ctx.paths.state, `listener-${safeSid(sid)}.json`);
 }
 
-/** Claim the per-session listener slot. False when another live listener holds it. */
+function needsListenerFile(ctx: HookCtx, sid: string): string {
+  return path.join(ctx.paths.state, `needs-listener-${safeSid(sid)}.json`);
+}
+
+function sessionId(ctx: HookCtx): string | undefined {
+  const sid = typeof ctx.input.session_id === 'string' ? ctx.input.session_id : undefined;
+  return sid && SID_RE.test(sid) ? sid : undefined;
+}
+
+/** True when another process holds a live, unexpired listener slot for this session. */
+export function liveListener(ctx: HookCtx, sid: string): boolean {
+  const cur = readJson<ListenerFile>(listenerFile(ctx, sid));
+  return !!cur && cur.pid !== process.pid && pidAlive(cur.pid) && ctx.now() - cur.startedAt < LISTEN_TIMEOUT_MS;
+}
+
+/** Claim the per-session listener slot. Undefined when another live listener holds it. */
 export function claimListener(ctx: HookCtx, sid: string): ListenerFile | undefined {
+  if (liveListener(ctx, sid)) return undefined;
   const file = listenerFile(ctx, sid);
   const cur = readJson<ListenerFile>(file);
-  if (cur && cur.pid !== process.pid && pidAlive(cur.pid) && ctx.now() - cur.startedAt < LISTEN_TIMEOUT_MS) {
-    return undefined;
-  }
   const mine: ListenerFile = { pid: process.pid, generation: (cur?.generation ?? 0) + 1, startedAt: ctx.now() };
   writeJsonAtomic(file, mine);
   // Re-read: a concurrent claimer may have won the rename race.
@@ -59,6 +102,11 @@ function release(ctx: HookCtx, sid: string, mine: ListenerFile): void {
   if (cur && cur.pid === mine.pid && cur.generation === mine.generation) fs.rmSync(file, { force: true });
 }
 
+function superseded(ctx: HookCtx, sid: string, mine: ListenerFile): boolean {
+  const cur = readJson<ListenerFile>(listenerFile(ctx, sid));
+  return !!cur && (cur.pid !== mine.pid || cur.generation !== mine.generation);
+}
+
 function pulseBearer(ctx: HookCtx): string | undefined {
   const b = readBrief(ctx.paths);
   const pt = b?.pulseToken;
@@ -66,29 +114,78 @@ function pulseBearer(ctx: HookCtx): string | undefined {
   return ctx.config.token;
 }
 
+function listeningEnabled(ctx: HookCtx): boolean {
+  return !!ctx.config.token && ctx.config.wakeOnDm !== 'off' && !ctx.config.headless;
+}
+
+/**
+ * Stop (synchronous, local only, no output): record that this session has no
+ * live listener. Never spawns or re-arms anything (S1 §5).
+ */
+export function markNeedsListener(ctx: HookCtx): Promise<HookResult> {
+  return failOpen(ctx, 'listen-mark', async () => {
+    const sid = sessionId(ctx);
+    if (!sid || !listeningEnabled(ctx)) return OK;
+    const file = needsListenerFile(ctx, sid);
+    if (liveListener(ctx, sid)) {
+      fs.rmSync(file, { force: true });
+      return OK;
+    }
+    if (!readJson(file)) writeJsonAtomic(file, { since: ctx.now() });
+    return OK;
+  });
+}
+
+/** Real news: the matching unread count for the wake's template is above zero. */
+function isRealNews(pointer: Pointer | undefined, unread: UnreadCounts | undefined): boolean {
+  if (!unread) return false;
+  if (pointer?.template_id === 'P1') return unread.dm > 0;
+  if (pointer?.template_id === 'P4') return unread.ownerInstructions > 0;
+  return unread.dm + unread.ownerInstructions > 0;
+}
+
+type Mode = { kind: 'longpoll' } | { kind: 'doorbell'; ch: SupabaseChannel; Ws: WsCtor } | { kind: 'slowpoll' };
+
+function pickMode(ctx: HookCtx, o: ListenOpts): Mode {
+  const rt = readBrief(ctx.paths)?.realtime;
+  if (!rt || rt.provider !== 'supabase') return { kind: 'longpoll' };
+  const Ws = o.webSocket === null ? undefined : (o.webSocket ?? globalWebSocket());
+  return Ws ? { kind: 'doorbell', ch: rt, Ws } : { kind: 'slowpoll' };
+}
+
 export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
   return failOpen(ctx, 'listen', async () => {
-    const sid = typeof ctx.input.session_id === 'string' ? ctx.input.session_id : undefined;
-    if (!sid || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(sid)) return OK;
-    if (!ctx.config.token || ctx.config.wakeOnDm === 'off' || ctx.config.headless) return OK;
+    const sid = sessionId(ctx);
+    if (!sid || !listeningEnabled(ctx)) return OK;
     const mine = claimListener(ctx, sid);
     if (!mine) return OK;
+    fs.rmSync(needsListenerFile(ctx, sid), { force: true });
     const wait = o.sleep ?? sleep;
     const endAt = ctx.now() + (o.runMs ?? LISTEN_TIMEOUT_MS - EXIT_MARGIN_MS);
     const backoffMin = o.backoffMinMs ?? BACKOFF_MIN_MS;
+    const safetyMs = o.safetyPollMs ?? SAFETY_POLL_MS;
+    const mode = pickMode(ctx, o);
+    let bell: Doorbell | undefined;
+    const openBell = () => {
+      if (mode.kind !== 'doorbell') return;
+      bell?.close();
+      bell = new Doorbell(mode.ch, mode.Ws);
+      bell.start();
+    };
+    openBell();
     let backoff = backoffMin;
+    let bellBackoff = backoffMin;
     try {
       while (ctx.now() < endAt) {
-        // Superseded by a newer listener for this session → step aside.
-        const cur = readJson<ListenerFile>(listenerFile(ctx, sid));
-        if (cur && (cur.pid !== mine.pid || cur.generation !== mine.generation)) return OK;
+        if (superseded(ctx, sid, mine)) return OK; // a newer listener for this session → step aside
         const left = endAt - ctx.now();
-        const waitS = Math.min(PULSE_MAX_WAIT_S, Math.floor((left - 2_000) / 1000));
-        if (waitS < 1) break;
+        const waitS = mode.kind === 'longpoll' ? Math.min(PULSE_MAX_WAIT_S, Math.floor((left - 2_000) / 1000)) : 0;
+        if (mode.kind === 'longpoll' && waitS < 1) break;
         const q = new URLSearchParams({ wait: String(waitS), sessionId: sid });
         const cursor = readPulse(ctx.paths).cursor;
         if (cursor) q.set('cursor', cursor);
         let delay = 0;
+        let ok = false;
         try {
           const res = await httpJson(ctx.fetch, 'GET', `${ctx.config.apiUrl}/api/v1/pulse?${q}`, {
             token: pulseBearer(ctx),
@@ -96,6 +193,7 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
             headers: { 'x-paceline-session': sid },
           });
           if (res.status >= 200 && res.status < 300 && res.body && typeof res.body === 'object') {
+            ok = true;
             backoff = backoffMin;
             const r = res.body as Record<string, unknown>;
             const unread = UnreadCounts.safeParse(r.unread);
@@ -104,10 +202,21 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
             updatePulse(ctx.paths, { ...(newCursor ? { cursor: newCursor } : {}), ...(unread.success ? { unread: unread.data } : {}) }, ctx.now());
             const wake = r.wake as { targetSessionId?: unknown; pointer?: unknown } | undefined;
             const pushOk = ks.success && !ks.data.pushPaths;
+            // A newer listener took the slot while this poll was in flight: it owns the wake.
+            if (superseded(ctx, sid, mine)) return OK;
             if (wake && wake.targetSessionId === sid && pushOk) {
               const valid = Pointer.safeParse(wake.pointer);
-              const text = (valid.success ? renderOne(valid.data) : null) ?? fallbackText();
-              return { exitCode: 2, stderr: text };
+              const pointer = valid.success ? valid.data : undefined;
+              if (isRealNews(pointer, unread.success ? unread.data : undefined)) {
+                const budget = takeWake(ctx.paths, ctx.now());
+                if (!budget.allow) {
+                  if (pointer) parkPendingWake(ctx.paths, sid, pointer, ctx.now());
+                  logLine(ctx.config.dataDir, 'listen', `wake deferred to next prompt: over budget (${budget.reason})`);
+                  return OK;
+                }
+                const text = (pointer ? renderOne(pointer) : null) ?? fallbackText();
+                return { exitCode: 2, stderr: text };
+              }
             }
             const ra = typeof r.retryAfterS === 'number' && r.retryAfterS > 0 ? Math.min(3600, r.retryAfterS) : 0;
             delay = ra * 1000;
@@ -121,6 +230,24 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
           delay = backoff;
           backoff = Math.min(BACKOFF_MAX_MS, backoff * 2);
         }
+        if (ok && mode.kind === 'slowpoll') delay = Math.max(delay, SLOW_POLL_MS);
+        if (ok && mode.kind === 'doorbell') {
+          if (delay > 0) {
+            if (ctx.now() + delay >= endAt) break;
+            await wait(delay);
+          }
+          if (bell?.closed) {
+            // Reconnect with its own backoff (5 s → 60 s), so a dead socket can't turn into fast polling.
+            if (ctx.now() + bellBackoff >= endAt) break;
+            await wait(bellBackoff);
+            bellBackoff = Math.min(BACKOFF_MAX_MS, bellBackoff * 2);
+            openBell();
+          }
+          const r = await bell!.wait(Math.max(0, Math.min(safetyMs, endAt - ctx.now() - 2_000)));
+          if (r === 'ring') bellBackoff = backoffMin;
+          if (r === 'timeout' && endAt - ctx.now() <= 2_000) break;
+          continue;
+        }
         if (delay > 0) {
           if (ctx.now() + delay >= endAt) break;
           await wait(delay);
@@ -128,6 +255,7 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
       }
       return OK;
     } finally {
+      bell?.close();
       release(ctx, sid, mine);
     }
   });

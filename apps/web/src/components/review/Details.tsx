@@ -103,7 +103,13 @@ export function DraftView({ d }: { d: DraftReview }) {
         <section>
           <h2 className="mb-1 text-sm font-semibold">What left your machine</h2>
           <p className="mb-3 text-xs text-fg-3">Redacted on device before upload, then checked again on the server</p>
-          <Digest text={d.redactedDigest} />
+          {d.redactedDigest ? (
+            <Digest text={d.redactedDigest} />
+          ) : (
+            <div className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-3">
+              The digest was deleted after distilling (it is never kept past 24 hours). The receipt below shows what was uploaded.
+            </div>
+          )}
           <div className="mt-3">
             <Receipt r={d.receipt} />
           </div>

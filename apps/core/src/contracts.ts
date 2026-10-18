@@ -21,7 +21,31 @@ export interface CoreConfig {
   anthropicApiKey: string | null;
   /** Dev-only login (POST /api/v1/dev/login) when no Supabase auth is configured. */
   devAuth: boolean;
-  supabase: { url: string | null; jwksUrl: string | null; serviceKey: string | null };
+  supabase: {
+    url: string | null;
+    jwksUrl: string | null;
+    serviceKey: string | null;
+    /** HS256 fallback for projects on the legacy JWT secret (SUPABASE_JWT_SECRET). */
+    jwtSecret?: string | null;
+    /** Publishable (anon) key handed to browsers and listeners for Realtime (SUPABASE_PUBLISHABLE_KEY or SUPABASE_ANON_KEY). */
+    publishableKey?: string | null;
+  };
+  /** NODE_ENV=production. */
+  production?: boolean;
+  /** PACELINE_CRON_SECRET: Bearer for POST /internal/jobs/tick (pg_cron via pg_net). Null = tick disabled. */
+  cronSecret?: string | null;
+  /** PACELINE_DEMO_SECRET: when set, /api/v1/dev/* needs a matching X-Demo-Secret header (hosted demo). */
+  demoSecret?: string | null;
+  /** PACELINE_WEB_ORIGIN (comma list): CORS + Origin check for browser callers. */
+  webOrigins?: string[];
+  /** gte embedder (PACELINE_EMBEDDINGS=gte): PACELINE_EMBED_URL (or SUPABASE_URL) + PACELINE_EMBED_SECRET. */
+  embed?: { url: string | null; secret: string | null };
+  /** Fan events out through Supabase Realtime REST from core: 'auto' = only when the DB has no realtime.send(). */
+  realtimeRest?: 'auto' | 'on' | 'off';
+  /** PACELINE_MCP_URL: the public MCP endpoint written into install commands (dev default http://localhost:3000/mcp). */
+  mcpUrl?: string | null;
+  /** PACELINE_PLUGIN_MARKETPLACE: the Claude Code marketplace (GitHub owner/repo) the plugin installs from. */
+  pluginMarketplace?: string;
 }
 
 /** The authenticated caller of a request. */
@@ -33,6 +57,11 @@ export interface Caller {
   via: 'install' | 'oauth' | 'web' | 'dev';
   /** Claims to pass to db.asUser for RLS. */
   claims: AuthClaims;
+  /**
+   * Web sessions: when the human last authenticated (unix seconds), for step-up (I5).
+   * Dev sessions: web_sessions.created_at; Supabase: the latest `amr` timestamp. Null = unknown (fails step-up).
+   */
+  authTime?: number | null;
 }
 
 export interface AuthService {

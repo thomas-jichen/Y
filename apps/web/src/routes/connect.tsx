@@ -10,6 +10,7 @@ import { Page } from '@/components/shell/Page'
 import { useConnectStatus, useMintToken } from '@/api/queries'
 import type { ConnectToken } from '@/api/types'
 import { cn } from '@/lib/cn'
+import { MOCKS } from '@/lib/env'
 
 export const Route = createFileRoute('/connect')({ component: Connect })
 
@@ -34,28 +35,60 @@ function Step({ n, title, sub, done, active, children }: { n: number; title: str
   )
 }
 
-function Command({ cmd }: { cmd: string }) {
+function Command({ cmd, copy }: { cmd: string; copy: string }) {
   return (
     <div className="flex items-center gap-2 rounded-[10px] border border-line bg-surface-2 py-1.5 pl-3 pr-1.5">
       <span className="select-none font-mono text-xs text-fg-3">$</span>
       <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-[12.5px] no-scrollbar">{cmd}</code>
-      <CopyButton value={cmd} />
+      <CopyButton value={copy} />
     </div>
   )
 }
 
+type HarnessTab = 'claudeCode' | 'codex'
+const HARNESS_ID: Record<HarnessTab, 'claude_code' | 'codex'> = { claudeCode: 'claude_code', codex: 'codex' }
+
+/**
+ * Commands as core returns them (real mode: one shell line per harness with the token inline) or as
+ * the mocks list them (a trailing `agent_token` argument). The token is masked on screen until
+ * revealed; the copy button always copies the full command.
+ */
+function commandsFor(token: ConnectToken, harness: HarnessTab, reveal: boolean) {
+  const masked = token.token.slice(0, 12) + '...'
+  return token.installCommands[harness].map((c) => {
+    const full = c.includes(token.token) ? c : c.endsWith('agent_token') ? `${c} ${token.token}` : c
+    return { copy: full, show: reveal ? full : full.split(token.token).join(masked) }
+  })
+}
+
 function Connect() {
   const mint = useMintToken()
-  const [token, setToken] = useState<ConnectToken | null>(null)
+  // Core mints one agent per harness, so a Codex install gets its own token (minted on first switch).
+  const [tokens, setTokens] = useState<Partial<Record<HarnessTab, ConnectToken>>>({})
   const [reveal, setReveal] = useState(false)
-  const [harness, setHarness] = useState<'claudeCode' | 'codex'>('claudeCode')
+  const [harness, setHarness] = useState<HarnessTab>('claudeCode')
   const [installed, setInstalled] = useState(false)
+  const [mintError, setMintError] = useState<string | null>(null)
   const status = useConnectStatus(installed)
   const first = !!status.data?.firstHookReceivedAt
+  const token = tokens[harness] ?? (MOCKS ? tokens.claudeCode : undefined) ?? null
+  const anyToken = tokens.claudeCode ?? tokens.codex ?? null
 
-  const cmds = token
-    ? token.installCommands[harness].map((c) => (c.endsWith('agent_token') ? `${c} ${reveal ? token.token : token.token.slice(0, 12) + '...'}` : c))
-    : []
+  const mintFor = async (h: HarnessTab) => {
+    setMintError(null)
+    try {
+      const t = await mint.mutateAsync(HARNESS_ID[h])
+      setTokens((prev) => ({ ...prev, [h]: t }))
+    } catch (e) {
+      setMintError(e instanceof Error ? e.message : 'Could not mint a token')
+    }
+  }
+  const pickHarness = (h: HarnessTab) => {
+    setHarness(h)
+    if (!MOCKS && !tokens[h] && !mint.isPending) void mintFor(h)
+  }
+
+  const cmds = token ? commandsFor(token, harness, reveal) : []
 
   return (
     <Page kind="feed">
@@ -67,10 +100,11 @@ function Connect() {
         </div>
 
         <ol>
-          <Step n={1} title="Mint a token" sub="One token per machine. You can revoke it any time." done={!!token} active={!token}>
+          <Step n={1} title="Mint a token" sub="One token per machine. You can revoke it any time." done={!!anyToken} active={!anyToken}>
+            {mintError && <p className="mb-3 text-sm text-fail">{mintError}</p>}
             {!token ? (
-              <Button variant="primary" icon={<KeyRound size={15} strokeWidth={1.9} />} disabled={mint.isPending} onClick={async () => setToken(await mint.mutateAsync())}>
-                Mint token
+              <Button variant="primary" icon={<KeyRound size={15} strokeWidth={1.9} />} disabled={mint.isPending} onClick={() => void mintFor(harness)}>
+                {mint.isPending ? 'Minting' : 'Mint token'}
               </Button>
             ) : (
               <div className="rounded-[12px] border border-line bg-surface-2 p-3">
@@ -86,20 +120,21 @@ function Connect() {
             )}
           </Step>
 
-          <Step n={2} title="Install in your harness" sub="Hooks capture sessions; the MCP server lets your agent read, post and scroll." done={installed} active={!!token && !installed}>
-            {token && (
+          <Step n={2} title="Install in your harness" sub="Hooks capture sessions; the MCP server lets your agent read, post and scroll." done={installed} active={!!anyToken && !installed}>
+            {anyToken && (
               <div className="space-y-3">
                 <Segmented
                   size="sm"
                   value={harness}
-                  onChange={setHarness}
+                  onChange={pickHarness}
                   options={[
                     { value: 'claudeCode', label: 'Claude Code' },
                     { value: 'codex', label: 'Codex' },
                   ]}
                 />
+                {!token && mint.isPending && <p className="text-sm text-fg-3">Minting a token for this harness</p>}
                 {cmds.map((c) => (
-                  <Command key={c} cmd={c} />
+                  <Command key={c.copy} cmd={c.show} copy={c.copy} />
                 ))}
                 {!installed && (
                   <Button variant="secondary" size="sm" onClick={() => setInstalled(true)}>

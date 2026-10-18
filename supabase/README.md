@@ -33,7 +33,8 @@ pnpm --filter @paceline/db test:sql           # every tests/*.sql on fresh PGlit
 pnpm --filter @paceline/db test               # includes the same gate (supabase.test.ts)
 supabase db push                              # hosted project (after `supabase link`)
 supabase test db                              # the same pgTAP files against the local Supabase stack
-deno test supabase/functions/embed            # Edge Function handler tests
+deno test supabase/functions/embed            # Edge Function handler tests (handler.ts is runtime-agnostic)
+supabase functions serve embed --no-verify-jwt --env-file supabase/functions/.env   # local, see functions/.env.example
 ```
 
 ## Writing migrations
@@ -69,7 +70,7 @@ Writes start in their initial state (activities `open`, messages `queued`, chang
 
 ## Production checklist (Supabase Free)
 
-1. **Migrations**: `supabase link --project-ref <ref>`, then `supabase db push`. 0006 warns instead of failing if the API-role grants are not allowed; grant them manually if so.
+1. **Migrations**: use the repo's runner, which also applies `apps/core/migrations` and records what it applied: `DATABASE_URL=<session pooler URL> PACELINE_DB_FLAVOR=supabase pnpm --filter @paceline/core migrate`. Don't mix it with `supabase db push`, which keeps its own history table and would re-apply files. Enable `pg_cron` and `pg_net` first (Dashboard → Database → Extensions) or let 0007 create them. If neither extension is available when 0007 runs, no schedules are created. 0006 warns instead of failing if the API-role grants are not allowed; grant them manually if so. Step-by-step: [docs/DEPLOY.md](../docs/DEPLOY.md).
 2. **Data API**: only core speaks SQL. In Dashboard → Settings → API, remove `public` from the exposed schemas (or disable the Data API). RLS and grants are written to be safe either way. Never expose `api` or `paceline_private`: their functions assume core is the only caller.
 3. **Auth**: enable the GitHub provider. Enable the OAuth 2.1 server for ChatGPT, claude.ai and `codex mcp login`.
 4. **Realtime**: keep public channels allowed (topics carry the secret). One connection per listening plugin; payloads are ids only.
@@ -79,6 +80,25 @@ Writes start in their initial state (activities `open`, messages `queued`, chang
    select vault.create_secret('<random 32+ chars>', 'paceline_jobs_tick_secret');
    ```
    Core gets the same secret as `PACELINE_CRON_SECRET` and receives `POST /internal/jobs/tick` with `Authorization: Bearer <secret>` and body `{"source":"pg_cron","due":<n>}`. Without Vault, insert `core_url` and `jobs_tick_secret` into `paceline_private.app_config`. Check with `select * from cron.job;` and `select * from net._http_response order by id desc limit 5;`.
-6. **Embeddings**: `supabase functions deploy embed --no-verify-jwt` and `supabase secrets set PACELINE_EMBED_SECRET=<random 32+ chars>`. Core calls `POST <SUPABASE_URL>/functions/v1/embed` with header `x-paceline-embed-secret` and body `{"input": string | string[]}` (up to 32 inputs of 8,000 chars), and gets `{"model":"gte-small","dims":384,"embeddings":[[...]]}`.
+6. **Embeddings**: `supabase functions deploy embed --no-verify-jwt --project-ref <ref>` and `supabase secrets set PACELINE_EMBED_SECRET=<random 32+ chars> --project-ref <ref>`. Core runs with `PACELINE_EMBEDDINGS=supabase` and calls `POST <SUPABASE_URL>/functions/v1/embed` with header `x-paceline-embed-secret` and body `{"input": string | string[]}` (up to 32 inputs of 8,000 chars), and gets `{"model":"gte-small","dims":384,"embeddings":[[...]]}`.
 7. **Roles (optional)**: in the SQL editor, `alter role paceline_core with login password '...'` (and `paceline_worker`). Connect through Supavisor as `paceline_core.<project-ref>`: the session pooler (5432) supports LISTEN, the transaction pooler (6543) does not. In serverless mode core uses the `paceline_worker` URL only for draining jobs.
 8. **Free-tier budget (500 MB)**: `api.purge_expired()` runs hourly. It keeps events for 7 days, digests for 24 h (I6) and finished jobs for 7 days, and clears Slack dedupe, idle rate buckets, stale leases and expired review items.
+
+## The `embed` Edge Function
+
+`functions/embed/index.ts` wires `handler.ts` (Web APIs only, no Deno or Supabase globals) to Supabase's built-in `gte-small` session (`Supabase.ai.Session('gte-small')`, `mean_pool` + `normalize`). It is free on every plan and makes no external call. The handler:
+
+- accepts `POST` only and fails closed (500) when `PACELINE_EMBED_SECRET` is unset or shorter than 16 characters;
+- checks `x-paceline-embed-secret` in constant time (SHA-256 digests) **before** reading the body (401 otherwise);
+- takes `{"input": string | string[]}` (1–32 inputs, 1–8,000 chars each, body ≤ 512 KiB) and returns `{"model":"gte-small","dims":384,"embeddings":[...]}` in input order;
+- never logs or echoes input text; model failures are `503 INTERNAL retryable`, wrong-width vectors are `500`.
+
+Deploy and smoke-test (your Supabase login; see [docs/DEPLOY.md](../docs/DEPLOY.md) step 4):
+
+```sh
+supabase functions deploy embed --no-verify-jwt --project-ref <ref>
+supabase secrets set PACELINE_EMBED_SECRET="$PACELINE_EMBED_SECRET" --project-ref <ref>
+curl -s https://<ref>.supabase.co/functions/v1/embed \
+  -H "x-paceline-embed-secret: $PACELINE_EMBED_SECRET" -H 'content-type: application/json' \
+  -d '{"input":"hello"}' | jq '{model, dims, n: (.embeddings[0] | length)}'   # {"model":"gte-small","dims":384,"n":384}
+```

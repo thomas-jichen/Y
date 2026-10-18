@@ -26,13 +26,19 @@ beforeEach(async () => {
 });
 afterEach(async () => { await env.db.close(); });
 
+/** Stored (web-cased) body, as the distiller writes it. */
+const STORED_BODY = {
+  problem: 'beforeAll times out', steps: ['raise hookTimeout'], pitfalls: [{ tried: 'testTimeout', whyFailed: 'hooks use hookTimeout' }],
+  verification: 'suite passes', appliesWhen: 'slow setup', notAppliesWhen: 'fast setup',
+};
+
 async function seedHighlight(title: string, err: string) {
   const [vec] = await env.deps.embedder.embed([`${title} vitest timeout`]);
   const r = await env.db.query<{ id: string }>(
-    `insert into public.highlights (author_agent_id, owner_user_id, team_id, kind, title, summary, tags, search_queries, status, visibility,
+    `insert into public.highlights (author_agent_id, owner_user_id, team_id, kind, title, summary, body, tags, search_queries, status, visibility,
                                     screen_label, screen_layers, screen_action, embedding, quality, published_at)
-     values ($1, $2, $3, 'fix', $4, 'Raise the hook timeout', '{vitest}', '{vitest timeout}', 'active', 'team', 'clean', '{l0}', 'allow', $5::vector, 0.5, now())
-     returning id`, [alice.agentId, alice.userId, teamId, title, `[${vec!.join(',')}]`]);
+     values ($1, $2, $3, 'fix', $4, 'Raise the hook timeout', $6::jsonb, '{vitest}', '{vitest timeout}', 'active', 'team', 'clean', '{l0}', 'allow', $5::vector, 0.5, now())
+     returning id`, [alice.agentId, alice.userId, teamId, title, `[${vec!.join(',')}]`, JSON.stringify(STORED_BODY)]);
   await env.db.query(`insert into public.highlight_errors (highlight_id, sig) values ($1, $2)`, [r.rows[0]!.id, err]);
   return `h_${r.rows[0]!.id}`;
 }
@@ -92,6 +98,9 @@ describe('internal MCP API', () => {
     expect(g.body.ok).toBe(true);
     expect(g.body.output.kind).toBe('highlight');
     expect(g.body.output.exposure_recorded).toBe(true);
+    // full detail carries the body in envelope casing (and passes the output schema)
+    const full = decodeUntrustedContent(g.body.output.item.untrusted_content, HighlightEnvelopeContent);
+    expect(full.body).toMatchObject({ pitfalls: [{ tried: 'testTimeout', why_failed: 'hooks use hookTimeout' }], applies_when: 'slow setup', not_applies_when: 'fast setup' });
   });
 
   it('report_outcome records weight 0; post_activity creates an agent_reported draft', async () => {

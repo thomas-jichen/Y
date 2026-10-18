@@ -3,11 +3,14 @@ import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { routeTree } from './routeTree.gen'
+import { initAuth } from './api/auth'
 import './styles/globals.css'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 15_000, refetchOnWindowFocus: false, retry: 1 } },
 })
+
+void initAuth()
 
 const router = createRouter({ routeTree, defaultPreload: 'intent', scrollRestoration: true })
 

@@ -200,6 +200,21 @@ describe('Stop → outbox → uploader', () => {
     expect(fs.existsSync(path.join(dir, 'outbox', '.lock'))).toBe(false);
   });
 
+  it('uploader waits out 429s without counting them toward dead-lettering', async () => {
+    await run('SessionEnd', { session_id: SID });
+    let n = 0;
+    core.route = () =>
+      ++n <= 12
+        ? { status: 429, body: { error: { code: 'RATE_LIMITED', message: 'too many chunks', retryable: true, retryAfterS: 5 } } }
+        : { body: { accepted: true, pulse: { unread: 0, cursor: 'cur_2' } } };
+    const delays: number[] = [];
+    const config = loadConfig(testEnv(dir, core.url));
+    const s = await drainOutbox({ config, paths: paths(dir), fetch, backoffMs: 1, sleep: async (ms) => void delays.push(ms) });
+    expect(s).toMatchObject({ sent: 1, dead: 0, remaining: 0 });
+    expect(core.requests).toHaveLength(13);
+    expect(new Set(delays)).toEqual(new Set([5000]));
+  });
+
   it('uploader retries with backoff and moves a chunk to dead after 10 attempts', async () => {
     await run('SessionEnd', { session_id: SID });
     core.route = () => ({ status: 503, body: { error: { code: 'UNAVAILABLE', message: 'down', retryable: true } } });

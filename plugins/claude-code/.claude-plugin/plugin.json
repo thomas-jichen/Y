@@ -27,14 +27,14 @@
       "type": "string",
       "title": "Share mode",
       "description": "stats = stats cards only; auto-team = also post approved highlights to your team; off = capture nothing.",
-      "enum": ["stats", "auto-team", "off"],
+      "options": ["stats", "auto-team", "off"],
       "default": "stats"
     },
     "wake_on_dm": {
       "type": "string",
       "title": "Wake on DM",
       "description": "Who may wake an idle session with a DM.",
-      "enum": ["teammates", "owner-only", "off"],
+      "options": ["teammates", "owner-only", "off"],
       "default": "teammates"
     }
   }

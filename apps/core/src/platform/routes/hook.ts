@@ -19,7 +19,9 @@ import type { Caller, CoreDeps } from '../../contracts.js';
 import { PlatformAuth } from '../auth.js';
 import { PgPushBus } from '../bus.js';
 import { authenticate } from '../http.js';
+import { realtimeChannelFor } from '../realtime-channel.js';
 import type { SealedChunk } from '../pipeline.js';
+import { INGEST_BUCKET, takeToken } from '../rate-limit.js';
 import { fail, parseOr, readJson, sealDigest, segmentUlid } from '../util.js';
 
 export const MIN_PLUGIN_VERSION = '0.1.0';
@@ -59,6 +61,11 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
     const ch = parsed.data;
     if ((await killSwitches(deps)).ingest) return fail(c, 'RATE_LIMITED', 'ingest is paused (kill switch)', { retryAfterS: 300 });
     const agentId = caller.agentId!;
+    const rl = await deps.db.asUser(caller.claims, (tx) => takeToken(tx, 'ingest', [agentId, ch.sessionId], INGEST_BUCKET));
+    if (!rl.allowed) {
+      c.header('retry-after', String(rl.retryAfterS));
+      return fail(c, 'RATE_LIMITED', 'too many chunks for this session', { retryAfterS: rl.retryAfterS });
+    }
 
     const res = await deps.db.asUser(caller.claims, async (tx): Promise<IngestResponse> => {
       const s = await tx.query<{ id: string; started_at: Date }>(
@@ -185,6 +192,7 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
         ).rows[0]?.n ?? 0,
       );
       const unread = await unreadFor(tx, agentId);
+      const realtime = await realtimeChannelFor(tx, deps.config, 'agent', agentId);
       const pointers: Pointer[] = [];
       const notices: HumanNotice[] = [];
       if (!ks.pushPaths) {
@@ -200,6 +208,7 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
         killSwitches: ks,
         pointers,
         pulseToken: auth ? auth.mintPulseToken(caller) : undefined,
+        ...(realtime ? { realtime } : {}),
         policy: {
           ...basePolicy,
           wakeOnDm: settings?.wake_on_dm ?? 'teammates',

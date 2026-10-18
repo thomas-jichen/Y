@@ -91,7 +91,10 @@ const finalize: JobHandler = async (payload, deps) => {
       if (d.success) stats = mergeStats(stats, d.data);
     }
     const sealed = await readSealed(deps, tx, id);
-    const laps = sealed.flatMap((s) => s.laps ?? []).slice(0, 200);
+    // Chunks can re-send laps they already reported; keep the latest report of each index.
+    const byIndex = new Map<number, Lap>();
+    for (const l of sealed.flatMap((s) => s.laps ?? [])) byIndex.set(l.index, l);
+    const laps = [...byIndex.values()].sort((x, y) => x.index - y.index).slice(0, 200);
     const setupHash = [...sealed].reverse().find((s) => s.setupHash)?.setupHash ?? null;
     const sv = setupHash
       ? (await tx.query<{ id: string; model: string | null }>('select id, model from public.setup_versions where agent_id = $1 and hash = $2', [a.agent_id, setupHash])).rows[0]

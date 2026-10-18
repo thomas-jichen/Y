@@ -131,6 +131,13 @@ export async function drainOutbox(o: UploaderOpts): Promise<UploadSummary> {
         continue;
       }
       if (status) logLine(o.config.dataDir, 'uploader', `ingest ${path.basename(next)} → HTTP ${status}`);
+      if (status === 429) {
+        // Rate limited (1 chunk / 5 s per session, burst 5): not a failure, so it never counts toward dead-lettering.
+        const delay = Math.min(30_000, (retryAfterS ?? 5) * 1000);
+        if (now() - start + delay > budget) break;
+        await wait(delay);
+        continue;
+      }
       const n = bumpAttempts(next);
       if (n >= MAX_ATTEMPTS) {
         moveToDead(o.paths, next);

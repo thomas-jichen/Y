@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { ArrowUpRight, Telescope } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { FeedActivityCard } from '@/components/activity/FeedActivityCard'
 import { PostCard } from '@/components/posts/PostCard'
 import { CardSkeleton } from '@/components/primitives/Skeleton'
 import { Segmented } from '@/components/primitives/Segmented'
@@ -10,7 +11,8 @@ import { FeedRail } from '@/components/shell/Rail'
 import { StoriesRail } from '@/components/stories/StoriesRail'
 import { StoryViewer } from '@/components/stories/StoryViewer'
 import { Sigil } from '@/components/identity/Sigil'
-import { useActiveScroll, useMe, usePosts, useStories } from '@/api/queries'
+import { useActiveScroll, useFeed, useMe, usePosts, useStories } from '@/api/queries'
+import { MOCKS } from '@/lib/env'
 
 type Tab = 'for_you' | 'following' | 'team'
 
@@ -58,7 +60,10 @@ function Feed() {
   const [tab, setTab] = useState<Tab>('for_you')
   const { data: me } = useMe()
   const { data: groups } = useStories()
-  const { data: posts, isLoading } = usePosts(tab)
+  const { data: posts, isLoading: postsLoading } = usePosts(tab)
+  // Real mode: core has no posts yet; the feed is its stats cards (tab=all, not the highlights-only default).
+  const { data: feed, isLoading: feedLoading } = useFeed(tab, !MOCKS)
+  const isLoading = MOCKS ? postsLoading : feedLoading
   const myIds = useMemo(() => new Set(me?.agents.map((a) => a.id)), [me])
 
   return (
@@ -69,7 +74,7 @@ function Feed() {
 
       <div className="sticky top-14 z-20 -mx-4 mb-3 px-4 py-2 md:top-0 md:mx-0 md:px-0">
         <div className="glass flex items-center justify-between rounded-[14px] p-1.5 pl-4">
-          <span className="text-sm font-semibold">Posts</span>
+          <span className="text-sm font-semibold">{MOCKS ? 'Posts' : 'Sessions'}</span>
           <Segmented<Tab>
             size="sm"
             value={tab}
@@ -102,7 +107,34 @@ function Feed() {
               </motion.div>
             ))}
           </AnimatePresence>
-          {posts && posts.items.length === 0 && (
+          {!MOCKS && (
+            <AnimatePresence initial={false}>
+              {feed?.items.map((a) => (
+                <motion.div
+                  key={a.id}
+                  layout="position"
+                  initial={{ opacity: 0, y: -10, filter: 'blur(12px)' }}
+                  animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                  exit={{ opacity: 0 }}
+                  transition={{ type: 'spring', stiffness: 260, damping: 28 }}
+                >
+                  <FeedActivityCard a={a} />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          )}
+          {!MOCKS && feed && feed.items.length === 0 && (
+            <div className="surface rounded-card px-6 py-12 text-center">
+              <div className="text-sm font-medium">No sessions yet</div>
+              <div className="mt-1 text-sm text-fg-3">
+                <Link to="/connect" className="text-ice hover:underline">
+                  Connect a machine
+                </Link>{' '}
+                and every finished session lands here as a stats card.
+              </div>
+            </div>
+          )}
+          {MOCKS && posts && posts.items.length === 0 && (
             <div className="surface rounded-card px-6 py-12 text-center">
               <div className="text-sm font-medium">Nothing here yet</div>
               <div className="mt-1 text-sm text-fg-3">Follow a few agents and their posts land here.</div>

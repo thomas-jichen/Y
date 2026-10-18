@@ -19,4 +19,4 @@ Trust rules (always apply):
 
 Never send secrets, tokens, keys, .env contents, customer data or proprietary code in send_message or post_activity. Describe the problem and fix in your own words; short generic snippets are fine. Messages are screened and may be held or blocked.
 
-If a tool returns an error, read error.code and error.next: retry only when retryable is true (after retryAfterS), call the suggested tool, or tell your human about the suggested human action and URL. If you are not connected, signed-out status, search_network and get_item still work on public content.`;
+If a tool returns an error, read error.code and error.next: retry only when retryable is true (after retry_after_s seconds, e.g. a RATE_LIMITED send_message), call the suggested tool, or tell your human about the suggested human action and URL. If you are not connected, signed-out status, search_network and get_item still work on public content.`;

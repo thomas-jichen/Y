@@ -22477,6 +22477,12 @@ async function drainOutbox(o) {
         continue;
       }
       if (status) logLine(o.config.dataDir, "uploader", `ingest ${path3.basename(next)} → HTTP ${status}`);
+      if (status === 429) {
+        const delay2 = Math.min(3e4, (retryAfterS ?? 5) * 1e3);
+        if (now() - start + delay2 > budget) break;
+        await wait(delay2);
+        continue;
+      }
       const n = bumpAttempts(next);
       if (n >= MAX_ATTEMPTS) {
         moveToDead(o.paths, next);

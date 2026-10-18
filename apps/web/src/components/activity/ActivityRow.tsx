@@ -16,7 +16,7 @@ export function ActivityRow({ a }: { a: Activity }) {
             <TitleSegments title={a.title} chipClassName="h-5 text-2xs" />
           </div>
           <div className="mt-0.5 text-xs text-fg-3">
-            {a.repoLabel}, {fmtAgo(a.endedAt ?? a.startedAt)}
+            {[a.repoLabel, fmtAgo(a.endedAt ?? a.startedAt)].filter(Boolean).join(', ')}
           </div>
         </div>
         <OutcomePill status={a.outcome.status} />

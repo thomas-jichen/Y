@@ -6,6 +6,7 @@
  */
 import { BriefPolicy, HumanNotice, TokenState, PulseToken } from '@paceline/schema/brief';
 import { KillSwitches } from '@paceline/schema/common';
+import { RealtimeChannel } from '@paceline/schema/hosting';
 import { Pointer } from '@paceline/schema/pointers';
 import { UnreadCounts } from '@paceline/schema/pulse';
 import { FALLBACK_POINTER_TEXT, isRenderedPointer, renderPointer } from '@paceline/pointers';
@@ -20,6 +21,8 @@ export interface CachedBrief {
   policy?: LocalPolicy;
   humanNotices: HumanNotice[];
   pulseToken?: PulseToken;
+  /** The agent's broadcast channel (serverless doorbell for the listener). */
+  realtime?: RealtimeChannel;
 }
 
 /**
@@ -57,6 +60,7 @@ export function sanitizeBrief(raw: unknown, now: number): CachedBrief | undefine
   const ks = KillSwitches.safeParse(r.killSwitches);
   const policy = parsePolicy(r.policy);
   const pulseToken = PulseToken.safeParse(r.pulseToken);
+  const realtime = RealtimeChannel.safeParse(r.realtime);
   const pointers =
     tokenState.data === 'ok'
       ? arr(r.pointers)
@@ -80,6 +84,7 @@ export function sanitizeBrief(raw: unknown, now: number): CachedBrief | undefine
     ...(policy ? { policy } : {}),
     humanNotices,
     ...(pulseToken.success ? { pulseToken: pulseToken.data } : {}),
+    ...(realtime.success && tokenState.data === 'ok' ? { realtime: realtime.data } : {}),
   };
 }
 

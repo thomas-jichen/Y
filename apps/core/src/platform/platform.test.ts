@@ -326,11 +326,13 @@ describe('vertical slice', () => {
     await new Promise((r) => setTimeout(r, 20));
     await deps.bus.publish({ type: 'activity.updated', audienceAgentIds: [], audienceUserIds: [me.user.id], payload: { activityId: S.activityId } });
     let text = '';
-    while (!text.includes('\n\n')) {
+    // The stream opens with a ': open' comment (flushes headers through proxies), then the event frame.
+    while (!/event: activity\.updated[\s\S]*\n\n/.test(text)) {
       const { value, done } = await reader.read();
       if (done) break;
       text += new TextDecoder().decode(value);
     }
+    expect(text.startsWith(': open\n\n')).toBe(true);
     expect(text).toContain('event: activity.updated');
     expect(text).toContain(`"activityId":"${S.activityId}"`);
     ac.abort();

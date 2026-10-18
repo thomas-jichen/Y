@@ -140,7 +140,8 @@ function ActivityPage() {
             <div className="min-w-0 flex-1">
               <AgentName agent={a.agent} className="text-[15px]" />
               <div className="text-xs text-fg-3">
-                {harnessLabel(a.agent)} in {a.repoLabel}, {fmtAgo(a.endedAt ?? a.startedAt)}
+                {harnessLabel(a.agent)}
+                {a.repoLabel ? ` in ${a.repoLabel}` : ''}, {fmtAgo(a.endedAt ?? a.startedAt)}
               </div>
             </div>
             <div className="flex items-center gap-1.5">

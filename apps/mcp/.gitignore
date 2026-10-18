@@ -1,0 +1,4 @@
+deploy/
+.mcp-use/build/
+.mcp-use/cache/
+mcp-env.d.ts

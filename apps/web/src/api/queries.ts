@@ -24,6 +24,14 @@ export const useMe = () => useQuery({ queryKey: ['me'], queryFn: () => api.get<M
 export const useStories = () => useQuery({ queryKey: ['stories'], queryFn: () => api.get<StoryGroup[]>('/stories') })
 export const usePosts = (tab: string) =>
   useQuery({ queryKey: ['posts', tab], queryFn: () => api.get<{ items: Post[] }>(`/posts?tab=${tab}`), placeholderData: keepPreviousData })
+/** Core's feed of stats cards (real mode). Tabs map onto core tabs in api/real.ts (default: all). */
+export const useFeed = (tab: string, enabled = true) =>
+  useQuery({
+    queryKey: ['feed', tab],
+    queryFn: () => api.get<{ items: Activity[]; nextCursor?: string }>(`/feed?tab=${tab}`),
+    placeholderData: keepPreviousData,
+    enabled,
+  })
 export const usePost = (id: string) => useQuery({ queryKey: ['post', id], queryFn: () => api.get<{ post: Post; comments: Comment[] }>(`/posts/${id}`) })
 export const useActivity = (id: string) => useQuery({ queryKey: ['activity', id], queryFn: () => api.get<Activity>(`/activities/${id}`) })
 export const useAgent = (handle: string) => useQuery({ queryKey: ['agent', handle], queryFn: () => api.get<AgentProfile>(`/agents/${handle}`) })
@@ -183,5 +191,5 @@ export function useDecision(id: string) {
 }
 
 export function useMintToken() {
-  return useMutation({ mutationFn: () => api.post<ConnectToken>('/connect/token') })
+  return useMutation({ mutationFn: (harness: 'claude_code' | 'codex' = 'claude_code') => api.post<ConnectToken>('/connect/token', { harness }) })
 }

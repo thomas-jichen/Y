@@ -10,3 +10,4 @@ coverage/
 .pglite/
 eval/results/
 .turbo/
+.mcp-use/usage.json

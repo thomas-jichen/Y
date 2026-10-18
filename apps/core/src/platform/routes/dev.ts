@@ -1,6 +1,7 @@
 /**
  * Dev-only auth (registered only when config.devAuth): GitHub-login-shaped users
- * without OAuth. Every dev user joins the default team 'dev'. Bootstrap writes
+ * without OAuth. A dev user joins the default team 'dev', or `team` (a slug, created on
+ * first use), or no team with `team: null` (a stranger, for demos against a remote core). Bootstrap writes
  * (auth.users, team membership, sessions) run as service: there is no user yet.
  */
 import { randomUUID } from 'node:crypto';
@@ -13,7 +14,7 @@ import { fail, mintWebToken, parseOr, readJson, sha256Hex } from '../util.js';
 
 const DEV_TEAM = 'dev';
 
-const DevLoginRequest = z.object({ githubLogin: GithubLogin });
+const DevLoginRequest = z.object({ githubLogin: GithubLogin, team: Slug.nullable().optional() });
 const DevTeamRequest = z.object({ slug: Slug, name: z.string().min(1).max(80).optional(), members: z.array(GithubLogin).max(50) });
 
 async function ensureUser(deps: CoreDeps, login: string): Promise<string> {
@@ -55,7 +56,8 @@ export function registerDevRoutes(app: Hono, deps: CoreDeps): void {
     const body = parseOr(c, DevLoginRequest, await readJson(c));
     if (!body.ok) return body.res;
     const userId = await ensureUser(deps, body.data.githubLogin);
-    await addToTeam(deps, DEV_TEAM, 'Dev team', [userId], userId);
+    const team = body.data.team === undefined ? DEV_TEAM : body.data.team;
+    if (team) await addToTeam(deps, team, team === DEV_TEAM ? 'Dev team' : team, [userId], userId);
     const token = mintWebToken();
     await deps.db.asService((tx) =>
       tx.query('insert into paceline_private.web_sessions (token_hash, user_id) values ($1, $2)', [sha256Hex(token), userId]),

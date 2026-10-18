@@ -9,10 +9,12 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
-    "dev": "mcp-use dev",
-    "build": "mcp-use build",
+    "dev": "mcp-use dev --entry src/server.ts",
+    "build": "mcp-use build --entry src/server.ts",
     "start": "mcp-use start --host 0.0.0.0",
-    "serve": "tsx src/server.ts"
+    "serve": "tsx src/server.ts",
+    "deploy:prepare": "tsx scripts/prepare-deploy.ts",
+    "deploy:manufact": "bash scripts/deploy.sh"
   },
   "dependencies": {
     "mcp-use": "^2.10.1",

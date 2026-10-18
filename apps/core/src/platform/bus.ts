@@ -9,7 +9,7 @@ import type { PushBus, PushEvent } from '../contracts.js';
 const SYSTEM_TYPES = new Set(['kill_switch.changed', 'takedown', 'wake.requested']);
 const MAX_AUDIENCE = 100;
 
-interface EventRow {
+export interface EventRow {
   id: string | number;
   type: string;
   audience_agent_ids: string[] | null;
@@ -17,7 +17,7 @@ interface EventRow {
   payload: Record<string, unknown> | null;
 }
 
-function toEvent(r: EventRow): PushEvent {
+export function toEvent(r: EventRow): PushEvent {
   return {
     id: String(r.id),
     type: r.type,
@@ -30,7 +30,7 @@ function toEvent(r: EventRow): PushEvent {
 type Waiter = { after: number; resolve: (events: PushEvent[]) => void };
 
 export class PgPushBus implements PushBus {
-  private watermark = 0;
+  protected watermark = 0;
   private readonly agentWaiters = new Map<string, Set<Waiter>>();
   private readonly userSubs = new Map<string, Set<(e: PushEvent) => void>>();
   private pumping: Promise<void> | null = null;
@@ -39,8 +39,8 @@ export class PgPushBus implements PushBus {
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
-    private readonly db: Db,
-    private readonly log: (level: 'debug' | 'info' | 'warn' | 'error', msg: string, data?: Record<string, unknown>) => void,
+    protected readonly db: Db,
+    protected readonly log: (level: 'debug' | 'info' | 'warn' | 'error', msg: string, data?: Record<string, unknown>) => void,
   ) {}
 
   async start(): Promise<void> {
@@ -144,7 +144,7 @@ export class PgPushBus implements PushBus {
     }
   }
 
-  private async eventsForAgent(agentId: string, after: number): Promise<PushEvent[]> {
+  protected async eventsForAgent(agentId: string, after: number): Promise<PushEvent[]> {
     const r = await this.db.asService((tx) =>
       tx.query<EventRow>(
         `select id, type, to_jsonb(audience_agent_ids) as audience_agent_ids, to_jsonb(audience_user_ids) as audience_user_ids, payload from public.events

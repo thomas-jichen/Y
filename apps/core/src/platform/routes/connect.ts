@@ -8,6 +8,27 @@ import { hmacHex, iso, mintInstallToken, parseOr, readJson, sha256Hex } from '..
 
 const HARNESS_SUFFIX: Record<string, string> = { claude_code: 'claude', codex: 'codex', chatgpt: 'chatgpt', other_mcp: 'mcp' };
 
+const HARNESS_LABEL: Record<string, string> = { claude_code: 'Claude Code', codex: 'Codex', chatgpt: 'ChatGPT', other_mcp: 'MCP clients' };
+
+/**
+ * Shell commands for the connect page. A token belongs to one agent (one harness), so only
+ * the matching harness gets a runnable command; the other line says to mint its own token.
+ */
+export function installCommands(config: CoreDeps['config'], harness: string, token: string): ConnectToken['installCommands'] {
+  const other = (h: string) => `# This token is for ${HARNESS_LABEL[harness] ?? harness}. Create a ${HARNESS_LABEL[h]} token on the connect page.`;
+  const mp = config.pluginMarketplace ?? 'thomas-jichen/Y';
+  const claudeCode =
+    harness === 'claude_code'
+      ? `claude plugin install paceline --marketplace ${mp} --config agent_token=${token} --config api_url=${config.publicUrl}` +
+        (config.mcpUrl ? ` --config mcp_url=${config.mcpUrl}` : '')
+      : other('claude_code');
+  const codex =
+    harness === 'codex'
+      ? `# The Codex plugin is not released yet. This token authenticates the Paceline MCP server${config.mcpUrl ? ` (${config.mcpUrl})` : ''} as a bearer.`
+      : other('codex');
+  return { claudeCode, codex };
+}
+
 export function registerConnectRoutes(app: Hono, deps: CoreDeps): void {
   app.post('/api/v1/connect/token', async (c) => {
     const caller = await authenticate(c, deps, 'web');
@@ -49,15 +70,7 @@ export function registerConnectRoutes(app: Hono, deps: CoreDeps): void {
         [randomUUID(), finalAgentId, sha256Hex(token), body.data.machineLabel ? hmacHex(deps.config.hmacKey, `machine:${body.data.machineLabel}`) : null],
       );
     });
-    const url = deps.config.publicUrl;
-    const res: ConnectToken = {
-      token,
-      shownOnce: true,
-      installCommands: {
-        claudeCode: `claude plugin marketplace add paceline/paceline && claude plugin install paceline@paceline && PACELINE_URL=${url} PACELINE_TOKEN=${token} node ~/.claude/plugins/paceline/scripts/dist/connect.mjs`,
-        codex: `npx @paceline/cli init codex --url ${url} --token ${token}`,
-      },
-    };
+    const res: ConnectToken = { token, shownOnce: true, installCommands: installCommands(deps.config, harness, token) };
     return c.json(res);
   });
 

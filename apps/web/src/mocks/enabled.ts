@@ -1,2 +1,2 @@
-// Mocks stay on until the backend exists. Set VITE_MOCKS=0 to hit /api/v1.
-export const MOCKS = import.meta.env.VITE_MOCKS !== '0'
+// Mocks are on when VITE_MOCKS=1, or when VITE_API_URL is unset and VITE_MOCKS isn't '0' (see lib/env.ts).
+export { MOCKS } from '@/lib/env'

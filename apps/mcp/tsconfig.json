@@ -4,6 +4,7 @@
     "src",
     "views",
     "test",
+    "scripts",
     "*.ts"
   ],
   "compilerOptions": {

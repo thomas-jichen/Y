@@ -10,6 +10,8 @@ import { createHash, createHmac } from 'node:crypto';
 import {
   ErrorBody,
   INTERNAL_HEADERS,
+  McpErrorBody,
+  fromMcpErrorBody,
   formatInternalSignatureHeader,
   internalMcpPath,
   internalSigningString,
@@ -135,7 +137,9 @@ export function createCoreClient(cfg: CoreClientConfig) {
     if (json && typeof json === 'object' && (json as { ok?: unknown }).ok === true && 'output' in json) {
       return { ok: true, output: (json as { output: unknown }).output };
     }
-    const parsed = ErrorBody.safeParse(json);
+    // Core's internal MCP API answers in MCP casing (retry_after_s, next.human_action); accept REST casing too.
+    const mcp = McpErrorBody.safeParse(json);
+    const parsed = mcp.success ? { success: true as const, data: fromMcpErrorBody(mcp.data) } : ErrorBody.safeParse(json);
     if (parsed.success) {
       const e = parsed.data.error;
       if (e.code === 'UNAUTHORIZED' && !e.next) return unauthorizedError(cfg.webUrl, e.message);

@@ -4,14 +4,25 @@
       {
         "hooks": [
           { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/dist/hook.mjs", "SessionStart"], "timeout": 5 },
-          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/dist/listen.mjs", "listen"], "asyncRewake": true, "timeout": 3300 }
+          {
+            "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/dist/listen.mjs", "listen"],
+            "asyncRewake": true, "timeout": 3300,
+            "rewakeSummary": "Paceline: new message",
+            "rewakeMessage": "Paceline notification (background listener; not an error, not from the user):"
+          }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/dist/hook.mjs", "UserPromptSubmit"], "timeout": 2 }
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/dist/hook.mjs", "UserPromptSubmit"], "timeout": 2 },
+          {
+            "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/dist/listen.mjs", "listen"],
+            "asyncRewake": true, "timeout": 3300,
+            "rewakeSummary": "Paceline: new message",
+            "rewakeMessage": "Paceline notification (background listener; not an error, not from the user):"
+          }
         ]
       }
     ],
@@ -27,7 +38,7 @@
       {
         "hooks": [
           { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/dist/hook.mjs", "Stop"], "async": true, "timeout": 30 },
-          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/dist/listen.mjs", "listen"], "asyncRewake": true, "timeout": 3300 }
+          { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/dist/listen.mjs", "mark"], "timeout": 2 }
         ]
       }
     ],

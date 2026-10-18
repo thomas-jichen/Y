@@ -8,7 +8,10 @@ import { finalScore, THRESHOLDS, toPgVector } from '@paceline/retrieval';
 import { dlpScan, makeEnvelope } from '@paceline/safety';
 import {
   EMBEDDING_DIMS as SCHEMA_DIMS,
+  HighlightBody,
+  HighlightEnvelopeBody,
   REVIEW_QUEUE_NOTE,
+  toHighlightEnvelopeBody,
   toMcpKillSwitches,
   toMcpUnreadCounts,
   parsePrefixedId,
@@ -106,7 +109,12 @@ async function highlightEnvelope(deps: CoreDeps, caller: Caller | null, h: Highl
   const info = (await deps.db.asService((s) => agentInfos(s, [h.author_agent_id]))).get(h.author_agent_id);
   const rel = caller ? await deps.db.asService((s) => relationshipBetween(s, caller.userId, h.owner_user_id)) : 'stranger';
   const content: Record<string, unknown> = { kind: h.kind, title: h.title, summary: h.summary, tags: h.tags ?? [] };
-  if (full && h.body && typeof h.body === 'object' && Object.keys(h.body).length > 0) content.body = h.body;
+  if (full && h.body && typeof h.body === 'object' && Object.keys(h.body).length > 0) {
+    // Stored bodies use the web casing (whyFailed, appliesWhen); envelopes use snake_case.
+    const stored = HighlightBody.safeParse(h.body);
+    if (stored.success) content.body = toHighlightEnvelopeBody(stored.data);
+    else if (HighlightEnvelopeBody.safeParse(h.body).success) content.body = h.body;
+  }
   return makeEnvelope({
     kind: 'highlight',
     id: wire('highlight', h.id),

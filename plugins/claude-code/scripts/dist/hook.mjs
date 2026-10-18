@@ -240,11 +240,11 @@ var SEGMENT_CAP_MS = 4 * 60 * 60 * 1e3;
 import { open, stat } from "node:fs/promises";
 var DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
 var NL = 10;
-async function readTranscriptDelta(path7, cursor, opts) {
+async function readTranscriptDelta(path8, cursor, opts) {
   const maxBytes = Math.max(1, opts?.maxBytes ?? DEFAULT_MAX_BYTES);
   let st;
   try {
-    st = await stat(path7);
+    st = await stat(path8);
   } catch (e) {
     if (e.code === "ENOENT") {
       return { lines: [], cursor: cursor ?? { offset: 0 }, reset: false, more: false };
@@ -261,7 +261,7 @@ async function readTranscriptDelta(path7, cursor, opts) {
   if (offset >= size) {
     return { lines: [], cursor: { offset, ino: st.ino, size }, reset, more: false };
   }
-  const fh = await open(path7, "r");
+  const fh = await open(path8, "r");
   try {
     let want = Math.min(maxBytes, size - offset);
     let buf = Buffer.alloc(0);
@@ -424,33 +424,33 @@ function isPlainObject(value) {
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
 }
-function serialize(value, path7, seen) {
+function serialize(value, path8, seen) {
   if (value === null) return "null";
   switch (typeof value) {
     case "boolean":
       return value ? "true" : "false";
     case "number":
       if (!Number.isFinite(value)) {
-        throw new TypeError(`canonicalJson: non-finite number at ${path7}`);
+        throw new TypeError(`canonicalJson: non-finite number at ${path8}`);
       }
       return JSON.stringify(value);
     case "string":
       return JSON.stringify(value);
     case "object": {
-      if (seen.has(value)) throw new TypeError(`canonicalJson: cycle at ${path7}`);
+      if (seen.has(value)) throw new TypeError(`canonicalJson: cycle at ${path8}`);
       seen.add(value);
       try {
         if (Array.isArray(value)) {
           const parts2 = value.map((item, i) => {
             if (item === void 0) {
-              throw new TypeError(`canonicalJson: undefined array element at ${path7}[${i}]`);
+              throw new TypeError(`canonicalJson: undefined array element at ${path8}[${i}]`);
             }
-            return serialize(item, `${path7}[${i}]`, seen);
+            return serialize(item, `${path8}[${i}]`, seen);
           });
           return `[${parts2.join(",")}]`;
         }
         if (!isPlainObject(value)) {
-          throw new TypeError(`canonicalJson: non-plain object at ${path7}`);
+          throw new TypeError(`canonicalJson: non-plain object at ${path8}`);
         }
         const record2 = value;
         const keys = Object.keys(record2).sort();
@@ -458,7 +458,7 @@ function serialize(value, path7, seen) {
         for (const key of keys) {
           const v = record2[key];
           if (v === void 0) continue;
-          parts.push(`${JSON.stringify(key)}:${serialize(v, `${path7}.${key}`, seen)}`);
+          parts.push(`${JSON.stringify(key)}:${serialize(v, `${path8}.${key}`, seen)}`);
         }
         return `{${parts.join(",")}}`;
       } finally {
@@ -466,7 +466,7 @@ function serialize(value, path7, seen) {
       }
     }
     default:
-      throw new TypeError(`canonicalJson: unsupported ${typeof value} at ${path7}`);
+      throw new TypeError(`canonicalJson: unsupported ${typeof value} at ${path8}`);
   }
 }
 function canonicalJson(value) {
@@ -1290,10 +1290,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path7) {
-  if (!path7)
+function getElementAtPath(obj, path8) {
+  if (!path8)
     return obj;
-  return path7.reduce((acc, key) => acc?.[key], obj);
+  return path8.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -1633,11 +1633,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path7, issues) {
+function prefixIssues(path8, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path7);
+    iss.path.unshift(path8);
     return iss;
   });
 }
@@ -2099,16 +2099,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path7 = []) => {
+  const processError = (error63, path8 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path7, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path8, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else {
-        const fullpath = [...path7, ...issue2.path];
+        const fullpath = [...path8, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -2147,17 +2147,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path7 = []) => {
+  const processError = (error63, path8 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path7, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path8, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path7, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path8, ...issue2.path]);
       } else {
-        const fullpath = [...path7, ...issue2.path];
+        const fullpath = [...path8, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -2196,8 +2196,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path7 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path7) {
+  const path8 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path8) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -19335,13 +19335,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path7 = ref.slice(1).split("/").filter(Boolean);
-  if (path7.length === 0) {
+  const path8 = ref.slice(1).split("/").filter(Boolean);
+  if (path8.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path7[0] === defsKey) {
-    const key = path7[1] === void 0 ? void 0 : decodeJSONPointerSegment(path7[1]);
+  if (path8[0] === defsKey) {
+    const key = path8[1] === void 0 ? void 0 : decodeJSONPointerSegment(path8[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -21366,8 +21366,8 @@ var STRIPPED_KEYWORDS = /* @__PURE__ */ new Set([
   "minProperties",
   "maxProperties"
 ]);
-function reduce(node2, path7) {
-  if (Array.isArray(node2)) return node2.map((n, i) => reduce(n, `${path7}[${i}]`));
+function reduce(node2, path8) {
+  if (Array.isArray(node2)) return node2.map((n, i) => reduce(n, `${path8}[${i}]`));
   if (node2 === null || typeof node2 !== "object") return node2;
   const src2 = node2;
   const out = {};
@@ -21378,22 +21378,22 @@ function reduce(node2, path7) {
       continue;
     }
     if (key === "oneOf") {
-      out.anyOf = reduce(value, `${path7}.anyOf`);
+      out.anyOf = reduce(value, `${path8}.anyOf`);
       continue;
     }
     if (key === "properties" && value && typeof value === "object") {
       const props = {};
       for (const [prop, sub] of Object.entries(value)) {
-        props[prop] = reduce(sub, `${path7}.properties.${prop}`);
+        props[prop] = reduce(sub, `${path8}.properties.${prop}`);
       }
       out.properties = props;
       continue;
     }
-    out[key] = reduce(value, `${path7}.${key}`);
+    out[key] = reduce(value, `${path8}.${key}`);
   }
   if (out.type === "object") {
     if (src2.additionalProperties !== void 0 && src2.additionalProperties !== false) {
-      throw new TypeError(`toStructuredOutputSchema: open object (record) at ${path7}; use an array instead`);
+      throw new TypeError(`toStructuredOutputSchema: open object (record) at ${path8}; use an array instead`);
     }
     out.additionalProperties = false;
     const props = Object.keys(out.properties ?? {});
@@ -21401,7 +21401,7 @@ function reduce(node2, path7) {
     const missing = props.filter((p) => !required2.has(p));
     if (missing.length > 0) {
       throw new TypeError(
-        `toStructuredOutputSchema: optional properties at ${path7} (${missing.join(", ")}); make them required and nullable`
+        `toStructuredOutputSchema: optional properties at ${path8} (${missing.join(", ")}); make them required and nullable`
       );
     }
   }
@@ -22929,8 +22929,8 @@ function lineDelta(oldStr, newStr) {
   for (const c of counts.values()) removed += c;
   return { added, removed };
 }
-function extOf(path7) {
-  const base = path7.replace(/\\/g, "/").replace(/^.*\//, "");
+function extOf(path8) {
+  const base = path8.replace(/\\/g, "/").replace(/^.*\//, "");
   const i = base.lastIndexOf(".");
   if (i <= 0 || i === base.length - 1) return "none";
   const ext = base.slice(i + 1).toLowerCase();
@@ -23025,8 +23025,8 @@ function computeStats(main2, subagents, opts) {
       }
     } else if (EDIT_TOOLS.has(u.name)) {
       if (res?.isError) continue;
-      const path7 = String(u.input.file_path ?? u.input.notebook_path ?? u.input.path ?? "");
-      if (path7) files.set(path7, extOf(path7));
+      const path8 = String(u.input.file_path ?? u.input.notebook_path ?? u.input.path ?? "");
+      if (path8) files.set(path8, extOf(path8));
       if (res?.patch) {
         s2.filesChanged.linesAdded += res.patch.linesAdded;
         s2.filesChanged.linesRemoved += res.patch.linesRemoved;
@@ -23146,8 +23146,8 @@ function oneLine(text, max) {
   return s2.length > max ? `${s2.slice(0, max - 1)}…` : s2;
 }
 var CONFIG_PATH_RE = /(?:^|\/)(?:\.claude\/.+|CLAUDE[^/]*\.md|\.mcp\.json|AGENTS\.md)$/;
-function relPath(path7, projectDir) {
-  const p = path7.replace(/\\/g, "/");
+function relPath(path8, projectDir) {
+  const p = path8.replace(/\\/g, "/");
   if (projectDir) {
     const root = projectDir.replace(/\\/g, "/").replace(/\/+$/, "");
     if (p === root) return ".";
@@ -23169,7 +23169,7 @@ function toolArg(name, input2, projectDir) {
     case "MultiEdit":
     case "Write":
     case "NotebookEdit": {
-      const path7 = relPath(s(input2.file_path) || s(input2.notebook_path) || "?", projectDir);
+      const path8 = relPath(s(input2.file_path) || s(input2.notebook_path) || "?", projectDir);
       let added = 0;
       let removed = 0;
       if (name === "Write") added = lineCount(input2.content);
@@ -23184,7 +23184,7 @@ function toolArg(name, input2, projectDir) {
         added = d.added;
         removed = d.removed;
       }
-      return `${oneLine(path7, 200)} (+${added}/−${removed})`;
+      return `${oneLine(path8, 200)} (+${added}/−${removed})`;
     }
     case "Read":
       return oneLine(relPath(s(input2.file_path) || "?", projectDir), 200);
@@ -23249,10 +23249,10 @@ function buildDigest(records, opts) {
         const line = mcp ? `TOOL mcp:${mcp.server}/${mcp.tool}` : `TOOL ${b.name}: ${toolArg(b.name, input2, opts?.projectDir)}`.trimEnd();
         tools.set(b.id, { name: b.name, entry: entries.length });
         entries.push({ kind: "TOOL", text: line, window: false });
-        const path7 = s(input2.file_path) || s(input2.notebook_path);
-        if (!mcp && /^(?:Edit|MultiEdit|Write)$/.test(b.name) && CONFIG_PATH_RE.test(path7.replace(/\\/g, "/"))) {
+        const path8 = s(input2.file_path) || s(input2.notebook_path);
+        if (!mcp && /^(?:Edit|MultiEdit|Write)$/.test(b.name) && CONFIG_PATH_RE.test(path8.replace(/\\/g, "/"))) {
           const diff = configDiff(b.name, input2);
-          entries.push({ kind: "CONFIG", text: `CONFIG ${relPath(path7, opts?.projectDir)}:
+          entries.push({ kind: "CONFIG", text: `CONFIG ${relPath(path8, opts?.projectDir)}:
 ${diff.join("\n")}`, window: false });
         }
       } else if (b.type === "tool_result") {
@@ -23308,15 +23308,15 @@ import { readdir, readFile } from "node:fs/promises";
 import { join as join2 } from "node:path";
 var isObj2 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
 var sha256 = (s2) => createHash2("sha256").update(s2).digest("hex");
-async function readText(path7) {
+async function readText(path8) {
   try {
-    return await readFile(path7, "utf8");
+    return await readFile(path8, "utf8");
   } catch {
     return void 0;
   }
 }
-async function readJson2(path7) {
-  const t = await readText(path7);
+async function readJson2(path8) {
+  const t = await readText(path8);
   if (t === void 0) return void 0;
   try {
     const v = JSON.parse(t);
@@ -23325,9 +23325,9 @@ async function readJson2(path7) {
     return void 0;
   }
 }
-async function listDir(path7) {
+async function listDir(path8) {
   try {
-    const ents = await readdir(path7, { withFileTypes: true });
+    const ents = await readdir(path8, { withFileTypes: true });
     return ents.map((e) => ({ name: e.name, dir: e.isDirectory() || e.isSymbolicLink() }));
   } catch {
     return [];
@@ -23472,12 +23472,12 @@ async function snapshotSetup(opts) {
   const configDir = opts.configDir ?? process.env.CLAUDE_CONFIG_DIR ?? join2(opts.homeDir, ".claude");
   const projectDir = opts.projectDir;
   const settings = [];
-  for (const [scope, path7] of [
+  for (const [scope, path8] of [
     ["user", join2(configDir, "settings.json")],
     ["project", join2(projectDir, ".claude", "settings.json")],
     ["local", join2(projectDir, ".claude", "settings.local.json")]
   ]) {
-    const data = await readJson2(path7);
+    const data = await readJson2(path8);
     if (data) settings.push({ scope, data });
   }
   const pick2 = (get) => {
@@ -23587,15 +23587,15 @@ function normalizeGitRemote(remote) {
   const r = remote.trim();
   if (!r || /\s/.test(r)) return void 0;
   let host;
-  let path7;
+  let path8;
   const url2 = /^(?:[a-z][a-z0-9+.-]*):\/\/(?:[^@/]*@)?([^/:]+)(?::\d+)?\/(.+)$/i.exec(r);
   const scp = /^(?:[^@/]+@)?([^/:]+):(?!\/)(.+)$/.exec(r);
-  if (url2) [host, path7] = [url2[1], url2[2]];
-  else if (scp) [host, path7] = [scp[1], scp[2]];
-  if (!host || !path7) return void 0;
-  path7 = path7.replace(/\/+$/, "").replace(/\.git$/i, "").replace(/\/+$/, "").replace(/^\/+/, "");
-  if (!path7.includes("/") || !/^[a-z0-9.-]+$/i.test(host)) return void 0;
-  return `${host}/${path7}`.toLowerCase();
+  if (url2) [host, path8] = [url2[1], url2[2]];
+  else if (scp) [host, path8] = [scp[1], scp[2]];
+  if (!host || !path8) return void 0;
+  path8 = path8.replace(/\/+$/, "").replace(/\.git$/i, "").replace(/\/+$/, "").replace(/^\/+/, "");
+  if (!path8.includes("/") || !/^[a-z0-9.-]+$/i.test(host)) return void 0;
+  return `${host}/${path8}`.toLowerCase();
 }
 function computeRepoKey(remote, salt) {
   const norm = normalizeGitRemote(remote);
@@ -24251,6 +24251,7 @@ function sanitizeBrief(raw, now) {
   const ks = KillSwitches.safeParse(r.killSwitches);
   const policy = parsePolicy(r.policy);
   const pulseToken = PulseToken.safeParse(r.pulseToken);
+  const realtime = RealtimeChannel.safeParse(r.realtime);
   const pointers = tokenState.data === "ok" ? arr(r.pointers).slice(0, 10).flatMap((p) => {
     const v = Pointer.safeParse(p);
     return v.success ? [v.data] : [];
@@ -24266,7 +24267,8 @@ function sanitizeBrief(raw, now) {
     killSwitches: ks.success ? ks.data : ALL_ENGAGED,
     ...policy ? { policy } : {},
     humanNotices,
-    ...pulseToken.success ? { pulseToken: pulseToken.data } : {}
+    ...pulseToken.success ? { pulseToken: pulseToken.data } : {},
+    ...realtime.success && tokenState.data === "ok" ? { realtime: realtime.data } : {}
   };
 }
 function readBrief(p) {
@@ -24702,21 +24704,47 @@ function stop(ctx) {
 }
 
 // src/hooks/user-prompt-submit.ts
+import * as path7 from "node:path";
+
+// src/wake-budget.ts
 import * as path6 from "node:path";
+import * as fs6 from "node:fs";
+var HOUR_MS = 36e5;
+var DAY_MS = 24 * HOUR_MS;
+var PENDING_WAKE_TTL_MS = DAY_MS;
+function pendingFile(p, sid) {
+  return path6.join(p.state, `pending-wake-${safeSid(sid)}.json`);
+}
+function takePendingWake(p, sid, now) {
+  const file2 = pendingFile(p, sid);
+  const raw = readJson(file2);
+  if (raw === void 0) return void 0;
+  fs6.rmSync(file2, { force: true });
+  if (!raw || typeof raw.at !== "number" || now - raw.at > PENDING_WAKE_TTL_MS) return void 0;
+  const v = Pointer.safeParse(raw.pointer);
+  return v.success ? v.data : void 0;
+}
+
+// src/hooks/user-prompt-submit.ts
 var clamp = (n) => Math.min(999, Math.max(1, Math.floor(n)));
 function userPromptSubmit(ctx) {
   return failOpen(ctx, "UserPromptSubmit", async () => {
     const sid = typeof ctx.input.session_id === "string" ? ctx.input.session_id : void 0;
     if (!sid) return OK;
     if (!pushPathsAllowed(readBrief(ctx.paths))) return OK;
+    const parked = takePendingWake(ctx.paths, sid, ctx.now());
     const pulse = readPulse(ctx.paths);
-    if (!pulse.unread) return OK;
-    const file2 = path6.join(ctx.paths.state, `pointed-${safeSid(sid)}.json`);
+    if (!pulse.unread) return parked ? contextOutput("UserPromptSubmit", renderBlock([parked], 400)) : OK;
+    const file2 = path7.join(ctx.paths.state, `pointed-${safeSid(sid)}.json`);
     const prev = readJson(file2) ?? { dm: 0, ownerInstructions: 0 };
     const { dm, ownerInstructions } = pulse.unread;
     const pointers = [];
-    if (dm > (prev.dm || 0)) pointers.push({ template_id: "P1", params: { count: clamp(dm) } });
-    if (ownerInstructions > (prev.ownerInstructions || 0)) {
+    if (parked && (parked.template_id === "P1" && dm > 0 || parked.template_id === "P4" && ownerInstructions > 0)) {
+      pointers.push(parked);
+    }
+    const has = (t) => pointers.some((p) => p.template_id === t);
+    if (dm > (prev.dm || 0) && !has("P1")) pointers.push({ template_id: "P1", params: { count: clamp(dm) } });
+    if (ownerInstructions > (prev.ownerInstructions || 0) && !has("P4")) {
       pointers.push({ template_id: "P4", params: { count: clamp(ownerInstructions) } });
     }
     writeJsonAtomic(file2, { dm, ownerInstructions });

@@ -5,7 +5,7 @@
  * propose_setup_change, find_builder, ask_builder, whats_happening) are not
  * registered.
  */
-import { TOOLS, TOOL_POLICY, makeError, type ErrorBody, type ToolName } from '@paceline/schema';
+import { TOOLS, TOOL_POLICY, makeError, toMcpErrorBody, type ErrorBody, type ToolName } from '@paceline/schema';
 import type { CallToolResult, ToolAnnotations } from 'mcp-use';
 import { unauthorizedError, type CoreClient } from './core-client.js';
 
@@ -94,12 +94,13 @@ export const TOOL_SPECS: Record<SliceTool, ToolSpec> = {
   },
 };
 
-/** Build the MCP error result. */
+/** Build the MCP error result: `structuredContent` is an McpErrorBody (snake_case: retry_after_s, next.human_action). */
 export function errorResult(body: ErrorBody): CallToolResult {
+  const mcp = toMcpErrorBody(body);
   return {
     isError: true,
-    content: [{ type: 'text', text: JSON.stringify(body) }],
-    structuredContent: body as unknown as Record<string, unknown>,
+    content: [{ type: 'text', text: JSON.stringify(mcp) }],
+    structuredContent: mcp as unknown as Record<string, unknown>,
   };
 }
 

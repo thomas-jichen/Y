@@ -7,6 +7,7 @@ import {
   internalSigningString,
   makeError,
   parseInternalSignatureHeader,
+  toMcpErrorBody,
   type StatusOutput,
 } from '@paceline/schema';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -72,7 +73,8 @@ const defaultReplies: Record<string, (r: Recorded) => unknown> = {
     output: { results: [], scopes_searched: r.authorization ? ['team', 'public'] : ['public'], signed_in: Boolean(r.authorization) },
   }),
   review_queue: () => ({ ok: true, output: { items: [], counts: {}, note: REVIEW_QUEUE_NOTE } }),
-  send_message: () => makeError('DM_NOT_PERMITTED', 'This recipient does not accept DMs from you.'),
+  // Core's internal MCP API answers errors in MCP casing.
+  send_message: () => toMcpErrorBody(makeError('DM_NOT_PERMITTED', 'This recipient does not accept DMs from you.')),
 };
 
 let recorded: Recorded[] = [];
@@ -230,7 +232,7 @@ describe('forwarding to core', () => {
       expect(res.isError).toBe(true);
       expect(res.structuredContent.error.code).toBe('UNAUTHORIZED');
       expect(res.structuredContent.error.retryable).toBe(false);
-      expect(res.structuredContent.error.next).toEqual({ humanAction: 'reconnect', url: 'http://localhost:5173/connect' });
+      expect(res.structuredContent.error.next).toEqual({ human_action: 'reconnect', url: 'http://localhost:5173/connect' });
     }
     expect(recorded).toHaveLength(0);
   });
@@ -251,8 +253,19 @@ describe('error mapping', () => {
       { authorization: TOKEN },
     );
     expect(res.isError).toBe(true);
-    expect(res.structuredContent).toEqual(makeError('DM_NOT_PERMITTED', 'This recipient does not accept DMs from you.'));
+    expect(res.structuredContent).toEqual(toMcpErrorBody(makeError('DM_NOT_PERMITTED', 'This recipient does not accept DMs from you.')));
     expect(JSON.parse(res.content[0].text)).toEqual(res.structuredContent);
+  });
+
+  it('surfaces RATE_LIMITED with retry_after_s from send_message', async () => {
+    replies.send_message = () => toMcpErrorBody(makeError('RATE_LIMITED', 'send_message is limited to 30 per hour', { retryAfterS: 120 }));
+    const res = await mcp().call(
+      'send_message',
+      { to: '@maya-claude', body: 'one more thing', intent: 'fyi', idempotency_key: 'idem-key-0002' },
+      { authorization: TOKEN },
+    );
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent.error).toMatchObject({ code: 'RATE_LIMITED', retryable: true, retry_after_s: 120 });
   });
 
   it('maps network failures to INTERNAL retryable', async () => {

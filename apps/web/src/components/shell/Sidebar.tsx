@@ -1,11 +1,13 @@
 import { Link, useRouterState } from '@tanstack/react-router'
-import { Moon, Plug, Search, Sun } from 'lucide-react'
+import { LogOut, Moon, Plug, Search, Sun } from 'lucide-react'
 import { Mark } from '@/components/brand/Mark'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { PRESENCE } from '@/components/identity/PresenceDot'
 import { HumanAvatar } from '@/components/primitives/HumanAvatar'
 import { Kbd } from '@/components/primitives/Kbd'
+import { auth } from '@/api/auth'
 import { useMe } from '@/api/queries'
+import { MOCKS } from '@/lib/env'
 import { cn } from '@/lib/cn'
 import { useTheme } from '@/lib/theme'
 import { ui } from '@/lib/ui'
@@ -105,6 +107,15 @@ export function Sidebar() {
           >
             {theme === 'dark' ? <Sun size={15} strokeWidth={1.75} /> : <Moon size={15} strokeWidth={1.75} />}
           </button>
+          {!MOCKS && (
+            <button
+              onClick={() => void auth.signOut()}
+              className="hidden size-8 items-center justify-center rounded-full text-fg-3 transition-colors hover:bg-raised hover:text-fg xl:inline-flex"
+              aria-label="Sign out"
+            >
+              <LogOut size={15} strokeWidth={1.75} />
+            </button>
+          )}
         </div>
       </div>
     </aside>

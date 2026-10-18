@@ -7,6 +7,7 @@
 import type { App, CoreDeps, PushEvent } from '../contracts.js';
 import { LEASE_STALE_MS, pickLeaseSession, wakeBudget, type LeaseCandidate } from '@paceline/domain';
 import { HarnessSessionId, PulseQuery, WakeAck, makePointer, validationError, type PulseResponse } from '@paceline/schema';
+import { PlatformAuth } from '../platform/auth.js';
 import { HttpError, agentInfos, errorResponse, killSwitches, requireAgent, requireCaller, unreadCounts } from './util.js';
 
 const SESSION_HEADER = 'x-paceline-session';
@@ -109,6 +110,10 @@ export function registerPulse(app: App, deps: CoreDeps): void {
     try {
       const caller = await requireCaller(deps, c.req.header('authorization'));
       const agentId = requireAgent(caller);
+      // Pulse tokens are stateless (1 h): re-check the install so a revoke stops the listener.
+      if (caller.installId && deps.auth instanceof PlatformAuth && !(await deps.auth.installActive(caller.installId))) {
+        throw new HttpError('UNAUTHORIZED', 'this install was revoked', { next: { humanAction: 'reconnect', url: `${deps.config.publicUrl}/connect` } });
+      }
       const q = PulseQuery.safeParse(c.req.query());
       if (!q.success) return c.json(validationError(q.error), 400);
       const sid = HarnessSessionId.safeParse(c.req.header(SESSION_HEADER) ?? q.data.sessionId);

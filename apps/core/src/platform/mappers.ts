@@ -128,7 +128,9 @@ export async function loadActivities(tx: Tx, ids: readonly string[], viewerId: s
     if (!agent) continue;
     const statsP = ActivityStats.safeParse(a.stats);
     const stats = statsP.success ? statsP.data : emptyStats();
-    const laps = Array.isArray(a.laps) ? (a.laps as unknown[]).filter((l) => Lap.safeParse(l).success).slice(0, 200) : [];
+    const lapsRaw = Array.isArray(a.laps) ? (a.laps as unknown[]).filter((l) => Lap.safeParse(l).success) as Array<{ index: number }> : [];
+    // Rows written before lap de-duplication can repeat an index; keep the last report of each.
+    const laps = [...new Map(lapsRaw.map((l) => [l.index, l])).values()].sort((x, y) => x.index - y.index).slice(0, 200);
     const outcome = (a.outcome ?? {}) as { status?: string; verifiedBy?: string; evidence?: string };
     byId.set(a.id as string, {
       id: `a_${a.id as string}`,

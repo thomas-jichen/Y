@@ -31,6 +31,7 @@ export function randomBase62(n: number): string {
 export const INSTALL_TOKEN_PREFIX = 'pcl_agt_';
 export const WEB_TOKEN_PREFIX = 'pcl_web_';
 export const PULSE_TOKEN_PREFIX = 'pcl_pls_';
+export const STREAM_TOKEN_PREFIX = 'pcl_sst_';
 
 export function mintInstallToken(): string {
   return INSTALL_TOKEN_PREFIX + randomBase62(32);
