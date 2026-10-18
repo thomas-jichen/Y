@@ -10,6 +10,7 @@ import { actionFor, dlpScan, l0Scan, normalizeUntrusted, screen } from '@y/safet
 import { ulid, type DmPermission, type MessageState, type ScreenAction } from '@y/schema';
 import type { CoreDeps, PushEvent } from '../contracts.js';
 import { HttpError, relationshipBetween, wire, type Relationship } from './util.js';
+import { enqueueMessageNotices } from '../slack/enqueue.js';
 
 export interface RouteResult {
   state: MessageState;
@@ -226,6 +227,10 @@ export async function routeMessageTx(tx: Tx, deps: CoreDeps, messageId: string, 
     const payload: Record<string, unknown> = { messageId: wire('message', m.id), threadId: wire('thread', m.thread_id), wake: false };
     if (m.sender_id) payload.senderAgentId = m.sender_id;
     events.push({ type: 'message.new', audienceAgentIds: [], audienceUserIds: owners, payload });
+    await enqueueMessageNotices(tx, deps, {
+      messageId: m.id, threadId: m.thread_id, threadKind: m.thread_kind, senderKind: m.sender_kind,
+      senderId: m.sender_id, senderOwnerId: m.sender_owner_id, recipientOwnerIds: [],
+    });
     return { state, path: 'inbox', note: 'next_turn', relationship: rel };
   }
 
@@ -301,7 +306,7 @@ export async function routeMessageTx(tx: Tx, deps: CoreDeps, messageId: string, 
 
 async function deliver(
   tx: Tx, _deps: CoreDeps,
-  m: Pick<MsgRow, 'id' | 'thread_id' | 'sender_id' | 'sender_owner_id' | 'thread_state'>,
+  m: Pick<MsgRow, 'id' | 'thread_id' | 'sender_kind' | 'sender_id' | 'sender_owner_id' | 'thread_state' | 'thread_kind'>,
   rcpts: { agentId: string; ownerId: string; wake: boolean }[],
   events: PushEvent[],
 ) {
@@ -333,6 +338,11 @@ async function deliver(
     if (m.sender_id) payload.senderAgentId = m.sender_id;
     events.push({ type: 'message.new', audienceAgentIds: [], audienceUserIds: rest, payload });
   }
+  // Slack notices for linked owners (ids-only jobs in this transaction; no-op when Slack is off).
+  await enqueueMessageNotices(tx, _deps, {
+    messageId: m.id, threadId: m.thread_id, threadKind: m.thread_kind, senderKind: m.sender_kind,
+    senderId: m.sender_id, senderOwnerId: m.sender_owner_id, recipientOwnerIds: rcpts.map((x) => x.ownerId),
+  });
 }
 
 export async function pickTarget(tx: Tx, agentId: string, threadId: string, now: number): Promise<string | null> {

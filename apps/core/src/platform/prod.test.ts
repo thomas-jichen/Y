@@ -136,6 +136,46 @@ describe('serverless handler', () => {
   }, 60_000);
 });
 
+describe('serverless handler: Slack paths', () => {
+  const queuedWelcome = async (userId: string) =>
+    (await db.asService((tx) => tx.query<{ n: number }>(
+      `select count(*)::int as n from public.jobs where topic = 'slack.welcome' and payload->>'userId' = $1 and state = 'queued'`, [userId]))).rows[0]!.n;
+
+  it('never drains inline before a Slack ack (no waitUntil): the cron tick picks the jobs up', async () => {
+    const config = loadConfig(baseEnv({ Y_MODE: 'serverless' }));
+    const handler = createServerlessHandler({ db, config, waitUntil: null, log: quiet });
+    const { deps } = await handler.ready();
+    const userId = randomUUID();
+    await deps.jobs.enqueue('slack.welcome', { userId }, { dedupeKey: `t:${userId}` });
+    for (const path of ['/slack/events', '/slack/interactivity']) {
+      const r = await handler(new Request(`http://core.test${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'url_verification', challenge: 'c' }) }));
+      expect(r.status).toBe(200);
+    }
+    expect(await queuedWelcome(userId)).toBe(1);
+  }, 60_000);
+
+  it("drains Slack paths in the Vercel request context's waitUntil when @vercel/functions is absent", async () => {
+    const config = loadConfig(baseEnv({ Y_MODE: 'serverless' }));
+    const pending: Promise<unknown>[] = [];
+    const key = Symbol.for('@vercel/request-context');
+    const g = globalThis as unknown as Record<symbol, unknown>;
+    g[key] = { get: () => ({ waitUntil: (p: Promise<unknown>) => { pending.push(p); } }) };
+    try {
+      const handler = createServerlessHandler({ db, config, log: quiet });
+      const { deps } = await handler.ready();
+      const userId = randomUUID();
+      await deps.jobs.enqueue('slack.welcome', { userId }, { dedupeKey: `t:${userId}` });
+      const r = await handler(new Request('http://core.test/slack/interactivity', { method: 'POST', body: 'payload=%7B%7D', headers: { 'content-type': 'application/x-www-form-urlencoded' } }));
+      expect(r.status).toBe(200);
+      expect(pending).toHaveLength(1);
+      await Promise.all(pending);
+      expect(await queuedWelcome(userId)).toBe(0);
+    } finally {
+      delete g[key];
+    }
+  }, 60_000);
+});
+
 describe('POST /internal/jobs/tick', () => {
   it('needs the cron secret and reports what it drained', async () => {
     const { app } = await appFor(loadConfig(baseEnv({ Y_MODE: 'serverless', Y_CRON_SECRET: CRON })));

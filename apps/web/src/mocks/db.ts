@@ -35,6 +35,7 @@ export interface Db {
   connect: { minted: boolean; firstHookAt?: string }
   presence: Record<string, string>
   decisions: Set<string>
+  slack: { linked: boolean; workspaceName: string; linkedAt: string | null }
 }
 
 function build(): Db {
@@ -61,6 +62,7 @@ function build(): Db {
     connect: { minted: false },
     presence: Object.fromEntries(Object.values(agents).map((a) => [a.id, a.presence ?? 'away'])),
     decisions: new Set(),
+    slack: { linked: false, workspaceName: 'Acme (mock)', linkedAt: null },
   }
 }
 
@@ -73,6 +75,8 @@ function restore(): Db | null {
     if (!raw) return null
     const o = JSON.parse(raw)
     const d: Db = { ...o, follows: new Set(o.follows), decisions: new Set(o.decisions) }
+    // a world saved before Slack existed
+    d.slack ??= { linked: false, workspaceName: 'Acme (mock)', linkedAt: null }
     // a scroll cut off by the refresh cannot resume; close it cleanly
     d.scrolls.forEach((s) => {
       if (s.state === 'running') {

@@ -5,7 +5,6 @@
  * instructions are signed and stored by core. Nothing here writes
  * dm_permissions (I4).
  */
-import { pickLeaseSession, type LeaseCandidate } from '@y/domain';
 import {
   CommentRequest,
   InstructRequest,
@@ -21,8 +20,8 @@ import {
 } from '@y/schema';
 import type { Tx } from '@y/db';
 import type { App, Caller, CoreDeps } from '../contracts.js';
-import { routeMessage } from './route.js';
-import { signOwnerInstruction } from './signing.js';
+import { commentPrecheck, postHumanComment, routeOrDefer } from './comment.js';
+import { issueOwnerInstruction } from './instruct.js';
 import {
   HttpError,
   agentInfos,
@@ -171,37 +170,6 @@ async function threadDetail(deps: CoreDeps, caller: Caller, threadId: string, cu
   return res;
 }
 
-/** Route inline; on failure leave the message queued for the route_message job (as send_message does). */
-async function routeOrDefer(deps: CoreDeps, messageId: string): Promise<Message['state']> {
-  try {
-    return (await routeMessage(deps, messageId)).state;
-  } catch (err) {
-    deps.log('warn', 'inline routing failed; deferred', { err: String(err) });
-    await deps.jobs.enqueue('route_message', { messageId }, { dedupeKey: `route:${messageId}` });
-    return 'queued';
-  }
-}
-
-/**
- * Human comments go to 'open', 'paused_by_owner' and 'resolved' threads.
- * Never to 'archived' ones, and to a 'request' thread only when the caller
- * started it (POST /threads) with their own or teammates' agents: a stranger
- * intro stays closed until the recipient's human accepts it (I4). Routing
- * re-checks the same rule (route.ts).
- */
-async function commentPrecheck(tx: Tx, callerId: string, threadId: string, state: string, createdBy: string): Promise<void> {
-  if (state === 'archived') throw new HttpError('CONFLICT', 'this thread is archived');
-  if (state !== 'request') return;
-  const denied = new HttpError('DM_NOT_PERMITTED', 'this thread is an open request awaiting a human');
-  if (createdBy !== callerId) throw denied;
-  const owners = await tx.query<{ owner_user_id: string }>(
-    `select distinct owner_user_id from public.thread_participants where thread_id = $1 and p_kind = 'agent'`, [threadId]);
-  for (const o of owners.rows) {
-    const rel = await relationshipBetween(tx, callerId, o.owner_user_id);
-    if (rel !== 'self' && rel !== 'teammate') throw denied;
-  }
-}
-
 export function registerThreadRoutes(app: App, deps: CoreDeps): void {
   const human = async (authorization: string | undefined) => {
     const caller = await requireCaller(deps, authorization);
@@ -292,19 +260,7 @@ export function registerThreadRoutes(app: App, deps: CoreDeps): void {
       const threadId = bare('thread', c.req.param('id'));
       const body = CommentRequest.safeParse(await c.req.json().catch(() => null));
       if (!body.success) return c.json(validationError(body.error), 400);
-      const messageId = ulid();
-      await deps.db.asUser(caller.claims, async (tx) => {
-        const t = await tx.query<{ state: string; created_by_user_id: string }>(
-          `select state, created_by_user_id from public.threads where id = $1`, [threadId]);
-        const row = t.rows[0];
-        if (!row) throw new HttpError('NOT_FOUND', 'thread not found');
-        await commentPrecheck(tx, caller.userId, threadId, row.state, row.created_by_user_id);
-        await tx.query(
-          `insert into public.messages (id, thread_id, sender_kind, sender_id, trust, intent, urgency, body, state)
-           values ($1, $2, 'user', $3, 'human_comment', 'comment', 'normal', $4, 'queued')`,
-          [messageId, threadId, caller.userId, body.data.body]);
-      });
-      const routedState = await routeOrDefer(deps, messageId);
+      const { messageId, state: routedState } = await postHumanComment(deps, { userId: caller.userId, claims: caller.claims, threadId, body: body.data.body });
       const u = (await deps.db.asService((s) => userInfos(s, [caller.userId]))).get(caller.userId);
       if (!u) throw new HttpError('NOT_FOUND', 'user not found');
       const msg: Message = {
@@ -322,48 +278,8 @@ export function registerThreadRoutes(app: App, deps: CoreDeps): void {
       const threadId = bare('thread', c.req.param('id'));
       const body = InstructRequest.safeParse(await c.req.json().catch(() => null));
       if (!body.success) return c.json(validationError(body.error), 400);
-      // The caller must own an agent in this thread, with remote instructions on.
-      const target = await deps.db.asUser(caller.claims, async (tx) => {
-        const r = await tx.query<{ agent_id: string; remote_instructions: boolean }>(
-          `select a.id as agent_id, coalesce(s.remote_instructions, false) as remote_instructions
-             from public.thread_participants p join public.agents a on a.id = p.p_id
-             left join public.agent_settings s on s.agent_id = a.id
-            where p.thread_id = $1 and p.p_kind = 'agent' and a.owner_user_id = $2 limit 1`, [threadId, caller.userId]);
-        return r.rows[0];
-      });
-      if (!target) throw new HttpError('SCOPE_FORBIDDEN', 'you do not own an agent in this thread');
-      if (!target.remote_instructions) {
-        throw new HttpError('SCOPE_FORBIDDEN', 'remote instructions are off for this agent', {
-          next: { humanAction: 'grant_permission', url: `${deps.config.publicUrl}/settings/remote-instructions` },
-        });
-      }
-      const id = ulid();
-      const createdAt = deps.now().toISOString();
-      const wireId = wire('ownerInstruction', id);
-      const signed = signOwnerInstruction(deps.config, {
-        id: wireId, agent_id: target.agent_id, thread_id: wire('thread', threadId), body: body.data.body, verified_via: 'web', created_at: createdAt,
-      });
-      // Stored by core (it holds the signing key) after the ownership checks above.
-      const unattended = await deps.db.asService(async (tx) => {
-        await tx.query(
-          `insert into public.owner_instructions (id, agent_id, thread_id, created_by_user_id, body, verified_via, kid, sig, created_at)
-           values ($1, $2, $3, $4, $5, 'web', $6, $7, $8)`,
-          [id, target.agent_id, threadId, caller.userId, body.data.body, signed.kid, signed.sig, createdAt]);
-        const leases = await tx.query<{ session_id: string; listening: string; last_heartbeat_at: Date | string; permission_mode: string; headless: boolean; last_thread_ids: string[] }>(
-          `select session_id, listening, last_heartbeat_at, permission_mode, headless, last_thread_ids from public.session_leases where agent_id = $1`, [target.agent_id]);
-        const cands: LeaseCandidate[] = leases.rows.map((l) => ({
-          sessionId: l.session_id, listening: l.listening !== 'none', needsApproval: l.listening === 'listening_needs_approval',
-          lastHeartbeatAt: new Date(l.last_heartbeat_at).getTime(), lastThreadIds: l.last_thread_ids ?? [],
-          permissionMode: l.permission_mode as LeaseCandidate['permissionMode'], headless: l.headless,
-        }));
-        if (cands.length === 0) return false;
-        const attended = pickLeaseSession(cands, { now: deps.now().getTime(), kind: 'owner_instruction', threadId });
-        const any = pickLeaseSession(cands, { now: deps.now().getTime(), kind: 'owner_instruction', threadId, ownerConfirmed: true });
-        return attended === null && any !== null;
-      });
-      await deps.bus.publish({ type: 'owner_instruction.new', audienceAgentIds: [target.agent_id], audienceUserIds: [caller.userId],
-        payload: { ownerInstructionId: wireId, threadId: wire('thread', threadId) } });
-      const res: InstructResponse = { id: wireId as InstructResponse['id'], state: unattended ? 'awaiting_confirm' : 'queued' };
+      const out = await issueOwnerInstruction(deps, { userId: caller.userId, claims: caller.claims, threadId, body: body.data.body, via: 'web' });
+      const res: InstructResponse = { id: out.id, state: out.state };
       return c.json(res);
     } catch (err) { return errorResponse(c, err, deps); }
   });

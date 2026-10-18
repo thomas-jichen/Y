@@ -46,6 +46,8 @@ export interface CoreConfig {
   mcpUrl?: string | null;
   /** Y_PLUGIN_MARKETPLACE: the Claude Code marketplace (GitHub owner/repo) the plugin installs from. */
   pluginMarketplace?: string;
+  /** Slack app (PLAN §11). Null token/secret = inert. */
+  slack?: { botToken: string | null; signingSecret: string | null; teamId: string | null; webUrl: string };
 }
 
 /** The authenticated caller of a request. */

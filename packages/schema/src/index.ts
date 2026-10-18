@@ -29,5 +29,6 @@ export * from './hook.js';
 export * from './mcp.js';
 export * from './internal.js';
 export * from './web.js';
+export * from './slack.js';
 export * from './events.js';
 export * from './hosting.js';

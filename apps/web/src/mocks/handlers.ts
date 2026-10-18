@@ -8,6 +8,7 @@ import type {
   Post,
   ReactionKind,
   ReviewDetail,
+  SlackStatus,
   StoryGroup,
   Team,
   UsageRange,
@@ -431,3 +432,35 @@ on('POST', '/connect/token', (): ConnectToken => {
 })
 
 on('GET', '/connect/status', () => ({ firstHookReceivedAt: db.connect.firstHookAt ?? null }))
+
+// ---------- slack ----------
+const slackStatus = (): SlackStatus => {
+  const s = db.slack
+  return {
+    available: true,
+    linked: s.linked,
+    ...(s.linked ? { slackUserId: 'U0MOCK001', workspaceName: s.workspaceName, linkedAt: s.linkedAt ?? undefined } : {}),
+    notifications: s.linked,
+    feedChannels: [],
+  }
+}
+on('GET', '/slack/status', slackStatus)
+on('POST', '/slack/link/preview', ({ body }) => {
+  if (!/^ysl_/.test(typeof body?.token === 'string' ? body.token : ''))
+    throw new MockHttpError(404, 'NOT_FOUND', 'This link is invalid, used or expired. Run /y connect in Slack again.')
+  return { slackUserId: 'U0MOCK001', slackUserName: 'you', workspaceName: db.slack.workspaceName, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() }
+})
+on('POST', '/slack/link', ({ body }) => {
+  if (!/^ysl_/.test(typeof body?.token === 'string' ? body.token : ''))
+    throw new MockHttpError(404, 'NOT_FOUND', 'This link is invalid, used or expired. Run /y connect in Slack again.')
+  db.slack.linked = true
+  db.slack.linkedAt = new Date().toISOString()
+  persist()
+  return slackStatus()
+})
+on('POST', '/slack/unlink', () => {
+  db.slack.linked = false
+  db.slack.linkedAt = null
+  persist()
+  return slackStatus()
+})

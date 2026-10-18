@@ -5,7 +5,7 @@ import { Button } from '@/components/primitives/Button'
 import { CopyButton } from '@/components/primitives/CopyButton'
 import { Tabs } from '@/components/primitives/Tabs'
 import { Page } from '@/components/shell/Page'
-import { useConnectStatus, useMintToken } from '@/api/queries'
+import { useConnectStatus, useMintToken, useSlackStatus, useSlackUnlink } from '@/api/queries'
 import type { ConnectToken } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { MOCKS } from '@/lib/env'
@@ -13,9 +13,9 @@ import { MOCKS } from '@/lib/env'
 export const Route = createFileRoute('/connect')({ component: Connect })
 
 /** Three steps set in large type, each opened by a hairline. The current step's rule is solid. */
-function Step({ n, title, sub, done, active, children }: { n: number; title: string; sub: string; done?: boolean; active?: boolean; children?: ReactNode }) {
+function Step({ id, n, title, sub, done, active, children }: { id?: string; n: number; title: string; sub: string; done?: boolean; active?: boolean; children?: ReactNode }) {
   return (
-    <li className={cn('border-t pb-12 pt-4', active ? 'border-text' : 'border-rule')}>
+    <li id={id} className={cn('border-t pb-12 pt-4', active ? 'border-text' : 'border-rule')}>
       <div className={cn('grid grid-cols-[40px_1fr] gap-x-4', !active && !done && 'text-text-2')}>
         <span className="text-title tnum">{n}</span>
         <div className="min-w-0">
@@ -31,10 +31,10 @@ function Step({ n, title, sub, done, active, children }: { n: number; title: str
   )
 }
 
-function Command({ cmd, copy }: { cmd: string; copy: string }) {
+function Command({ cmd, copy, prompt = '$' }: { cmd: string; copy: string; prompt?: string }) {
   return (
     <div className="flex items-center gap-2 border border-rule py-1.5 pl-3 pr-1.5">
-      <span className="select-none font-mono text-caption text-text-2">$</span>
+      {prompt && <span className="select-none font-mono text-caption text-text-2">{prompt}</span>}
       <code className="no-scrollbar min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-caption">{cmd}</code>
       <CopyButton value={copy} />
     </div>
@@ -198,7 +198,54 @@ function Connect() {
             )}
           </AnimatePresence>
         </Step>
+
+        <SlackStep first={first} />
       </ol>
     </Page>
+  )
+}
+
+/** Optional step 4: link a Slack account so the Y bot DMs requests, approvals and replies. */
+function SlackStep({ first }: { first: boolean }) {
+  const status = useSlackStatus()
+  const unlink = useSlackUnlink()
+  const s = status.data
+  const linked = !!s?.linked
+  const disconnect = () => {
+    if (window.confirm('Disconnect Slack? The Y bot stops messaging you, and Slack buttons stop working for your account.')) unlink.mutate()
+  }
+  return (
+    <Step id="slack" n={4} title="Get notified in Slack" sub="Optional. DMs, requests and approvals from the Y bot." done={linked} active={first && !!s && !linked}>
+      {status.isPending ? (
+        <p className="text-ui text-text-2">Checking Slack…</p>
+      ) : status.isError || !s ? (
+        <p className="text-ui text-text-2">Slack status is unavailable right now.</p>
+      ) : !s.available ? (
+        <p className="text-ui text-text-2">Slack isn't set up on this server.</p>
+      ) : !linked ? (
+        <div className="space-y-3">
+          <p className="text-ui text-text-2">In Slack, type /y connect, open the link it sends you, check it names your Slack account, and press Link.</p>
+          <Command cmd="/y connect" copy="/y connect" prompt="" />
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-baseline justify-between gap-4 text-body">
+          <div>
+            <div className="font-medium">Linked{s.workspaceName ? ` to ${s.workspaceName}` : ''}</div>
+            <div className="text-ui text-text-2">
+              Notifications {s.notifications ? 'on' : 'off'}
+              {s.feedChannels.length > 0 && ` · ${s.feedChannels.length} team feed ${s.feedChannels.length === 1 ? 'channel' : 'channels'}`}
+            </div>
+            {unlink.isError && (
+              <p role="alert" className="mt-2 text-ui font-medium">
+                {unlink.error instanceof Error ? unlink.error.message : 'Could not disconnect'}
+              </p>
+            )}
+          </div>
+          <Button disabled={unlink.isPending} onClick={disconnect}>
+            {unlink.isPending ? 'Disconnecting' : 'Disconnect'}
+          </Button>
+        </div>
+      )}
+    </Step>
   )
 }

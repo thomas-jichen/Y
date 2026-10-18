@@ -63,6 +63,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
   for (const o of webOrigins) {
     if (!/^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(o)) throw new Error(`Y_WEB_ORIGIN entry is not an origin: ${o}`);
   }
+  // Slack (PLAN §11): missing vars never throw; the integration is inert until both are set.
+  let slackBot = str(env.SLACK_BOT_TOKEN);
+  if (slackBot && !slackBot.startsWith('xoxb-')) {
+    console.warn('[y core] SLACK_BOT_TOKEN is not a bot token (xoxb-); Slack stays off');
+    slackBot = null;
+  }
+  const slackTeam = str(env.SLACK_TEAM_ID);
+  if (slackTeam && !/^[A-Z0-9]{5,20}$/.test(slackTeam)) throw new Error('SLACK_TEAM_ID must look like T0123ABCD');
+  const slack = {
+    botToken: slackBot,
+    signingSecret: str(env.SLACK_SIGNING_SECRET),
+    teamId: slackTeam,
+    webUrl: (str(env.Y_WEB_URL) ?? 'https://y-web-beta.vercel.app').replace(/\/+$/, ''),
+  };
   const rt = env.Y_REALTIME_REST?.trim();
   const realtimeRest = rt === 'on' || rt === 'off' ? rt : 'auto';
 
@@ -86,5 +100,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
     realtimeRest,
     mcpUrl: str(env.Y_MCP_URL)?.replace(/\/+$/, '') ?? (production ? null : 'http://localhost:3000/mcp'),
     pluginMarketplace: str(env.Y_PLUGIN_MARKETPLACE) ?? 'thomas-jichen/Y',
+    slack,
   };
 }

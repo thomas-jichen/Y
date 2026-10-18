@@ -3,9 +3,11 @@
  *
  * - DB: `pg` on DATABASE_URL (Y_DB_FLAVOR=supabase). Migrations are NOT
  *   run here: `pnpm --filter @y/core migrate` before deploying.
- * - Jobs: after an ingest or send request, due jobs are drained. With
- *   `@vercel/functions` installed the drain runs in `waitUntil` after the
- *   response; otherwise it runs before responding with a small budget. The
+ * - Jobs: after an ingest, send, decision or Slack request, due jobs are
+ *   drained in `waitUntil` after the response: `@vercel/functions` when
+ *   installed, else the Vercel runtime's request context (the same hook that
+ *   package reads). Without either, non-Slack routes drain before responding
+ *   with a small budget; Slack routes never do (Slack's 3 s ack), and the
  *   pg_cron tick (POST /internal/jobs/tick) catches up on the rest.
  * - Push: ServerlessPushBus (events rows + Realtime broadcast; polling long-poll).
  */
@@ -26,7 +28,28 @@ const DRAIN_AFTER = [
   /^\/api\/v1\/review\/[^/]+\/decision$/,
   /^\/api\/v1\/threads$/,
   /^\/api\/v1\/threads\/[^/]+\/comment$/,
+  /^\/api\/v1\/slack\/link$/,
+  // Slack: queued replies (slack.event) and button decisions (review.<kind>, slack.review_decided).
+  // Only in waitUntil: see NO_INLINE_DRAIN.
+  /^\/slack\/events$/,
+  /^\/slack\/interactivity$/,
 ];
+
+/** Paths that must answer fast (Slack acks within 3 s): never drained before the response. */
+const NO_INLINE_DRAIN = /^\/slack\//;
+
+const VERCEL_REQUEST_CONTEXT = Symbol.for('@vercel/request-context');
+
+/** The Vercel runtime's per-request waitUntil (what @vercel/functions reads), or null off Vercel. */
+export function requestContextWaitUntil(): WaitUntil | null {
+  try {
+    const ctx = (globalThis as Record<symbol, { get?: () => { waitUntil?: WaitUntil } | undefined } | undefined>)[VERCEL_REQUEST_CONTEXT]?.get?.();
+    const w = ctx?.waitUntil;
+    return typeof w === 'function' ? (p) => w.call(ctx, p) : null;
+  } catch {
+    return null;
+  }
+}
 
 export type WaitUntil = (p: Promise<unknown>) => void;
 
@@ -35,7 +58,10 @@ export interface ServerlessOptions extends CreateDepsOptions {
   /** Use this database instead of createDb(env) (tests: PGlite). */
   db?: Db;
   config?: CoreConfig;
-  /** Schedule work after the response. Default: @vercel/functions waitUntil when installed, else none (inline drain). */
+  /**
+   * Schedule work after the response. Default: @vercel/functions waitUntil when installed, else the
+   * Vercel request context's, else none (inline drain, skipped for Slack paths). null = never use waitUntil.
+   */
   waitUntil?: WaitUntil | null;
   afterDrainBudgetMs?: number;
 }
@@ -79,8 +105,10 @@ export function createServerlessHandler(opts: ServerlessOptions = {}): Serverles
     if (req.method === 'POST' && res.status < 400 && DRAIN_AFTER.some((r) => r.test(path))) {
       const run = (budget: number) =>
         drainWithBudget(deps, budget).catch((e: unknown) => deps.log('warn', 'after-request drain failed', { err: String(e) }));
-      if (waitUntil) waitUntil(run(WAIT_UNTIL_DRAIN_BUDGET_MS));
-      else await run(opts.afterDrainBudgetMs ?? AFTER_DRAIN_BUDGET_MS);
+      const later = waitUntil ?? (opts.waitUntil === undefined ? requestContextWaitUntil() : null);
+      if (later) later(run(WAIT_UNTIL_DRAIN_BUDGET_MS));
+      else if (!NO_INLINE_DRAIN.test(path)) await run(opts.afterDrainBudgetMs ?? AFTER_DRAIN_BUDGET_MS);
+      // Slack paths without waitUntil: the pg_cron tick drains within a minute.
     }
     return res;
   }) as ServerlessHandler;

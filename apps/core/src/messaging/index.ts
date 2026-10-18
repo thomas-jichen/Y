@@ -27,6 +27,8 @@ const reviewDecision: JobHandler = async (payload, deps) => {
 export { sendMessage, inbox, updateThread } from './agent-tools.js';
 export { routeMessage, applyMessageDecision } from './route.js';
 export { signOwnerInstruction, ownerInstructionPublicKey } from './signing.js';
+export { postHumanComment, commentPrecheck, routeOrDefer } from './comment.js';
+export { issueOwnerInstruction, ownInstructTargets, type InstructTarget } from './instruct.js';
 
 export const messagingModule: CoreModule = {
   register(app, deps) {

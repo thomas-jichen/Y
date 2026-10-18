@@ -24,6 +24,7 @@ import { Route as PIdRouteImport } from './routes/p.$id'
 import { Route as ReviewIndexRouteImport } from './routes/review.index'
 import { Route as ReviewIdRouteImport } from './routes/review.$id'
 import { Route as ScrollsIdRouteImport } from './routes/scrolls.$id'
+import { Route as SlackLinkRouteImport } from './routes/slack.link'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -100,6 +101,11 @@ const ScrollsIdRoute = ScrollsIdRouteImport.update({
   path: '/scrolls/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SlackLinkRoute = SlackLinkRouteImport.update({
+  id: '/slack/link',
+  path: '/slack/link',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -115,6 +121,7 @@ export interface FileRoutesByFullPath {
   '/p/$id': typeof PIdRoute
   '/review/$id': typeof ReviewIdRoute
   '/scrolls/$id': typeof ScrollsIdRoute
+  '/slack/link': typeof SlackLinkRoute
   '/chats/': typeof ChatsIndexRoute
   '/review/': typeof ReviewIndexRoute
 }
@@ -130,6 +137,7 @@ export interface FileRoutesByTo {
   '/p/$id': typeof PIdRoute
   '/review/$id': typeof ReviewIdRoute
   '/scrolls/$id': typeof ScrollsIdRoute
+  '/slack/link': typeof SlackLinkRoute
   '/chats': typeof ChatsIndexRoute
   '/review': typeof ReviewIndexRoute
 }
@@ -148,6 +156,7 @@ export interface FileRoutesById {
   '/p/$id': typeof PIdRoute
   '/review/$id': typeof ReviewIdRoute
   '/scrolls/$id': typeof ScrollsIdRoute
+  '/slack/link': typeof SlackLinkRoute
   '/chats/': typeof ChatsIndexRoute
   '/review/': typeof ReviewIndexRoute
 }
@@ -167,6 +176,7 @@ export interface FileRouteTypes {
     | '/p/$id'
     | '/review/$id'
     | '/scrolls/$id'
+    | '/slack/link'
     | '/chats/'
     | '/review/'
   fileRoutesByTo: FileRoutesByTo
@@ -182,6 +192,7 @@ export interface FileRouteTypes {
     | '/p/$id'
     | '/review/$id'
     | '/scrolls/$id'
+    | '/slack/link'
     | '/chats'
     | '/review'
   id:
@@ -199,6 +210,7 @@ export interface FileRouteTypes {
     | '/p/$id'
     | '/review/$id'
     | '/scrolls/$id'
+    | '/slack/link'
     | '/chats/'
     | '/review/'
   fileRoutesById: FileRoutesById
@@ -215,6 +227,7 @@ export interface RootRouteChildren {
   ActivityIdRoute: typeof ActivityIdRoute
   PIdRoute: typeof PIdRoute
   ScrollsIdRoute: typeof ScrollsIdRoute
+  SlackLinkRoute: typeof SlackLinkRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -324,6 +337,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ScrollsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/slack/link': {
+      id: '/slack/link'
+      path: '/slack/link'
+      fullPath: '/slack/link'
+      preLoaderRoute: typeof SlackLinkRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -364,6 +384,7 @@ const rootRouteChildren: RootRouteChildren = {
   ActivityIdRoute: ActivityIdRoute,
   PIdRoute: PIdRoute,
   ScrollsIdRoute: ScrollsIdRoute,
+  SlackLinkRoute: SlackLinkRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

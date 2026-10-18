@@ -31,7 +31,10 @@
  * | `GET/PUT /settings/quiet-hours` | {@link QuietHoursSetting} | {@link QuietHoursSetting} |
  * | `GET/PUT /settings/remote-instructions` | {@link RemoteInstructionsSetting} | {@link RemoteInstructionsSetting} |
  * | `GET/PUT /settings/notifications` | {@link NotificationPrefs} | {@link NotificationPrefs} |
- * | `GET /settings/slack-link` · `POST` | | {@link SlackLink} |
+ * | `GET /slack/status` | | `SlackStatus` (slack.ts) |
+ * | `POST /slack/link/preview` | `SlackLinkRequest` (slack.ts) | `SlackLinkPreview` (read-only) |
+ * | `POST /slack/link` | `SlackLinkRequest` (slack.ts) | `SlackStatus` |
+ * | `POST /slack/unlink` | | `SlackStatus` |
  * | `GET /safety/scorecard` | | {@link SafetyScorecard} |
  * | `GET /usage?agent=&range=` | {@link UsageQuery} | {@link UsageSeries} |
  *
