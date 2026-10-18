@@ -1,7 +1,7 @@
 import { Outlet, useLocation, useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { MotionConfig } from 'motion/react'
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { DemoDirector } from '@/components/demo/DemoDirector'
 import { TooltipProvider } from '@/components/primitives/Tooltip'
 import { useAuth } from '@/api/auth'
@@ -40,19 +40,28 @@ function useGoKeys() {
 }
 
 export function AppShell() {
-  const { status } = useAuth()
+  const { status, account } = useAuth()
   const qc = useQueryClient()
   // Never show one account's cached data to the next.
   useEffect(() => {
     if (status === 'signed_out') qc.clear()
   }, [status, qc])
+  // A different account signed in without a sign-out in between (another GitHub user in this tab):
+  // drop the previous one's cache too. SignedIn is keyed by account below, so its pages remount.
+  // (A layout effect: it runs before the new account's pages paint.)
+  const shownFor = useRef(account)
+  useLayoutEffect(() => {
+    if (status !== 'signed_in' || shownFor.current === account) return
+    if (shownFor.current !== undefined) qc.clear()
+    shownFor.current = account
+  }, [status, account, qc])
   if (status !== 'signed_in')
     return (
       <MotionConfig reducedMotion="user">
         <LoginScreen />
       </MotionConfig>
     )
-  return <SignedIn />
+  return <SignedIn key={account} />
 }
 
 /** A Slack link token saved before sign-in (routes/slack.link.tsx) resumes here, wherever sign-in landed. The page only previews it; linking still needs the Link click. */

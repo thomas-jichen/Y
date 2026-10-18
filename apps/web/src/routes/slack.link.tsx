@@ -4,9 +4,10 @@ import { Page } from '@/components/shell/Page'
 import { HttpError } from '@/api/errors'
 import { Button } from '@/components/primitives/Button'
 import { useMe, useSlackLink, useSlackLinkPreview } from '@/api/queries'
+import { SLACK_LINK_KEY } from '@/api/auth'
 
 /** Where the token waits while a signed-out visitor goes through GitHub sign-in (AppShell resumes it). */
-const SLACK_LINK_TOKEN_KEY = 'y.slackLinkToken'
+const SLACK_LINK_TOKEN_KEY = SLACK_LINK_KEY
 
 const INVALID = 'This link is invalid, used or expired. Run /y connect in Slack again.'
 
