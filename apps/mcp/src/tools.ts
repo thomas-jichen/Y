@@ -182,6 +182,29 @@ export interface CallerContext {
   clientVersion?: string | undefined;
   /** The caller's network address (see clientAddressFrom); only its hash is forwarded. */
   clientAddress?: string | undefined;
+  /**
+   * Where clientAddress came from (see clientAddressSource): 'header' only
+   * for a configured trusted client-IP header. Unset counts as
+   * 'forwarded_for', so core never treats an unconfirmed address as one client.
+   */
+  clientAddressSource?: ClientAddressSource | undefined;
+}
+
+/** Where a signed-out caller's address was read from (InternalMcpMeta.clientKeySource). */
+export type ClientAddressSource = 'header' | 'forwarded_for';
+
+const TRUSTED_HEADER_NAME = /^[a-z0-9-]{1,64}$/;
+
+/**
+ * 'header' when `trustedHeader` (Y_CLIENT_IP_HEADER) names a usable header,
+ * so clientAddressFrom reads it; otherwise 'forwarded_for'. The rightmost
+ * X-Forwarded-For hop is the nearest proxy's view, which behind a CDN or
+ * platform ingress can be the same address for every caller, so core does
+ * not give such a key its own per-client bucket.
+ */
+export function clientAddressSource(trustedHeader?: string | undefined): ClientAddressSource {
+  const name = trustedHeader?.trim().toLowerCase();
+  return name && TRUSTED_HEADER_NAME.test(name) ? 'header' : 'forwarded_for';
 }
 
 /**
@@ -195,7 +218,7 @@ export interface CallerContext {
  */
 export function clientAddressFrom(header: (name: string) => string | undefined, trustedHeader?: string | undefined): string | undefined {
   const name = trustedHeader?.trim().toLowerCase();
-  if (name && /^[a-z0-9-]{1,64}$/.test(name)) return header(name)?.split(',')[0]?.trim() || undefined;
+  if (name && TRUSTED_HEADER_NAME.test(name)) return header(name)?.split(',')[0]?.trim() || undefined;
   const xff = header('x-forwarded-for');
   const hops = (xff ?? '').split(',').map((h) => h.trim()).filter(Boolean);
   return hops[hops.length - 1];
@@ -234,7 +257,10 @@ export async function runTool(
     };
   }
   const clientKey = clientKeyFor(caller.clientAddress);
-  if (clientKey) meta.clientKey = clientKey;
+  if (clientKey) {
+    meta.clientKey = clientKey;
+    meta.clientKeySource = caller.clientAddressSource ?? 'forwarded_for';
+  }
   const res = await core.call(tool, input, {
     authorization: caller.authorization,
     signal: caller.signal,

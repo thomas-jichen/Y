@@ -185,6 +185,15 @@ cd apps/mcp/deploy && npx mcp-use servers list --json | jq -r '(if type == "arra
 
 Free plan budget: 30k requests a month. Agents call MCP tools only on demand; wake delivery doesn't touch MCP.
 
+**Signed-out rate limits and `Y_CLIENT_IP_HEADER` (optional).** Signed-out `status`, `search_network`, `get_item`, `find_builder` and `compare_setups` are rate-limited in core. apps/mcp forwards only a hash of the caller's address. By default (`Y_CLIENT_IP_HEADER` unset) that address is the rightmost `X-Forwarded-For` hop. Manufact Cloud is Fly.io behind a Cloudflare Worker (S3 spike), so that hop can be the same proxy address for every caller. apps/mcp therefore marks such keys `forwarded_for`, and core puts all of them in one shared signed-out bucket at 10× the per-client limit, never a per-client one. A shared proxy can't starve one user that way, but signed-out users don't get per-client limits either. To turn on per-client signed-out limits, set `Y_CLIENT_IP_HEADER` to a header the platform always overwrites with the real caller address. Only do that after you check it. Deploy a build that logs that header, call it from two different networks, and confirm the values differ and that a client-sent copy of the header is replaced. On Manufact the candidate is `cf-connecting-ip`. `fly-client-ip` is likely the Worker's egress address there, so don't use it. Set it with the same helper `scripts/deploy.sh` uses (the value is read from the environment):
+
+```sh
+cd apps/mcp/deploy && Y_CLIENT_IP_HEADER=cf-connecting-ip \
+  ../node_modules/.bin/tsx ../scripts/mcp-use-env-set.ts <server-id> Y_CLIENT_IP_HEADER
+```
+
+**Deploy order for this release: apps/mcp before core.** apps/mcp now accepts the wider `compare_setups` component names (`SetupSignalName`: `model:…[1m]`, long `plugin@marketplace` keys) and says so on every call (`meta.wideSetupNames`). When a caller sends meta without that flag (an older apps/mcp), core leaves those names out, as it did before. Requests with no meta at all still get them. An older build that sends no meta would reject the whole result, so deploy apps/mcp first. The new apps/mcp works against the old core, which only emits names that pass both schemas.
+
 ## 8. Web on Vercel: project `y-web` **[login: Vercel]**
 
 1. Import the same repo again. Project name `y-web`. **Root Directory** `apps/web` (a standalone npm project: `apps/web/vercel.json` runs `npm ci` and `npm run build`, output `dist`, SPA rewrite).

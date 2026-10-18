@@ -178,6 +178,20 @@ export const InternalMcpMeta = z.object({
   nonce: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/).optional(),
   /** Hash of the MCP client's network address (never the address): the rate-limit key for signed-out calls. */
   clientKey: z.string().regex(/^[a-f0-9]{16,64}$/).optional(),
+  /**
+   * Where `clientKey` came from: `header` = a client-IP header the deploy
+   * named as trusted (Y_CLIENT_IP_HEADER); `forwarded_for` = the rightmost
+   * X-Forwarded-For hop, which may be a proxy shared by many clients. Core
+   * keys per-client signed-out limits on `header` keys (and on keys without
+   * a source) only; `forwarded_for` keys take the shared signed-out bucket.
+   */
+  clientKeySource: z.enum(['header', 'forwarded_for']).optional(),
+  /**
+   * The sender validates `compare_setups` component names as SetupSignalName
+   * (`[`/`]`, up to 160 chars). An apps/mcp that sends meta without it is
+   * an older build: core then leaves out names that are not ComponentName.
+   */
+  wideSetupNames: z.literal(true).optional(),
 });
 export type InternalMcpMeta = z.infer<typeof InternalMcpMeta>;
 

@@ -8,7 +8,8 @@
  * Bodies are capped at INTERNAL_BODY_MAX and a missing or malformed
  * signature header is refused before the body is read; a signed request
  * with `meta.nonce` is accepted once (ReplayCache); every tool takes its
- * TOOL_POLICY bucket (limits.ts).
+ * TOOL_POLICY bucket (limits.ts). compare_setups for a sender without
+ * `meta.wideSetupNames` (an older apps/mcp) keeps to ComponentName names.
  */
 import { TOOLS, TOOL_POLICY, ToolName, makeError, parseInternalSignatureHeader, toMcpErrorBody, validationError, type ErrorBody } from '@y/schema';
 import { bodyLimit } from 'hono/body-limit';
@@ -17,7 +18,8 @@ import type { CoreModule } from '../contracts.js';
 import { HttpError } from '../messaging/util.js';
 import { HANDLERS } from './tools.js';
 import { SCROLL_BUCKET, SEND_BUCKET, takeToken } from '../platform/rate-limit.js';
-import { INTERNAL_BODY_MAX, ReplayCache, nonceOf, takeToolBucket } from './limits.js';
+import { INTERNAL_BODY_MAX, ReplayCache, legacySetupNames, nonceOf, takeToolBucket } from './limits.js';
+import { compareSetups } from '../setups/compare.js';
 
 export { HANDLERS, CUT_TOOLS, EMBEDDING_DIMS } from './tools.js';
 
@@ -72,7 +74,11 @@ export const internalMcpModule: CoreModule = {
           if (!rl.allowed) throw new HttpError('RATE_LIMITED', 'scroll_feed is limited to 20 per hour', { retryAfterS: rl.retryAfterS });
         }
         const handler = HANDLERS[name] as (d: typeof deps, cl: typeof caller, i: unknown) => Promise<unknown>;
-        const output = await handler(deps, caller, input.data);
+        // An apps/mcp from before SetupSignalName rejects the whole compare_setups
+        // result on a wider name, so it gets only ComponentName names (as before).
+        const output = name === 'compare_setups' && legacySetupNames(meta)
+          ? await compareSetups(deps, caller, { legacyNames: true })
+          : await handler(deps, caller, input.data);
         const checked = (TOOLS[name].output as ZodType).safeParse(output);
         if (!checked.success) {
           deps.log('error', 'tool output failed its contract', { tool: name, issues: JSON.stringify(checked.error.issues).slice(0, 2000) });

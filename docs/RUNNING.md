@@ -74,7 +74,7 @@ Y_CORE_URL=http://127.0.0.1:8787 Y_INTERNAL_SECRET=$Y_INTERNAL_SECRET \
 | `Y_INTERNAL_SECRET` | required; must equal core's value, and the server refuses to start without it |
 | `Y_WEB_URL` | `http://localhost:5173` (reconnect links) |
 | `Y_CORE_TIMEOUT_MS` | `20000` |
-| `Y_CLIENT_IP_HEADER` | unset: signed-out callers are rate-limited by the rightmost `X-Forwarded-For` hop (the one the nearest proxy appended). Set it to a client-IP header your host always overwrites (e.g. `fly-client-ip`) to use that instead. Only a hash of the address reaches core. |
+| `Y_CLIENT_IP_HEADER` | unset: the key is a hash of the rightmost `X-Forwarded-For` hop, which may be a proxy every caller shares, so core puts those calls in one shared signed-out bucket (10× the per-client limit). Set it to a client-IP header your host always overwrites with the real caller address (check first; see DEPLOY.md step 7) to give each signed-out client its own bucket. Only a hash of the address reaches core. |
 | `PORT` | `3000` |
 
 Start it from `apps/mcp` (the `pnpm --filter` form does this) so `skills/y/SKILL.md` is found.
