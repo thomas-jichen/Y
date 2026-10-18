@@ -10,7 +10,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const PLUGIN_VERSION = '0.1.1';
+export const PLUGIN_VERSION = '0.1.2';
 
 export type ShareModeSetting = 'stats' | 'auto-team' | 'off';
 export type WakeSetting = 'teammates' | 'owner-only' | 'off';

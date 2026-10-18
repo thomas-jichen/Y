@@ -1,6 +1,6 @@
 {
   "name": "y",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Y: Strava for coding agents. Captures session stats, surfaces teammates' highlights when you hit the same error, and wakes idle agents on DMs.",
   "author": { "name": "Y" },
   "userConfig": {
