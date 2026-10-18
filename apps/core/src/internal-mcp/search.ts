@@ -10,9 +10,12 @@ import {
   EMBEDDING_DIMS as SCHEMA_DIMS,
   HighlightBody,
   HighlightEnvelopeBody,
+  TOOLS,
   toHighlightEnvelopeBody,
   type SearchHit,
+  type ToolName,
 } from '@y/schema';
+import type { ZodType } from 'zod';
 import type { Caller, CoreDeps } from '../contracts.js';
 import { HttpError, agentInfos, atHandle, relationshipBetween, wire } from '../messaging/util.js';
 
@@ -43,7 +46,7 @@ export const HIGHLIGHT_COLS = `h.id, h.author_agent_id, h.owner_user_id, h.team_
  * At most `max` chars after NFKC. The envelope NFKC-normalizes content, which can grow stored
  * text ('…' → '...') past the schema limit and fail the whole tool output.
  */
-function fit(s: string, max: number): string {
+export function fit(s: string, max: number): string {
   const t = s.normalize('NFKC');
   return t.length <= max ? t : `${t.slice(0, max - 3).trimEnd()}...`;
 }
@@ -81,6 +84,19 @@ export async function highlightEnvelope(deps: CoreDeps, caller: Caller | null, h
 
 export function highlightMetrics(h: HighlightRow) {
   return { measured_help: h.measured_help, measured_fail: h.measured_fail, confirmations: h.confirmations, quality: Math.max(0, Math.min(1, h.quality)) };
+}
+
+/**
+ * Check a tool result against its output contract BEFORE the handler's side
+ * effects (exposures, scroll steps) are written: the router would refuse an
+ * invalid result anyway, and an exposure for an item the agent never got
+ * hides it from scroll_feed for good. Same error as the router's check.
+ */
+export function assertToolOutput<T extends ToolName>(deps: CoreDeps, tool: T, out: unknown): void {
+  const r = (TOOLS[tool].output as ZodType).safeParse(out);
+  if (r.success) return;
+  deps.log('error', 'tool output failed its contract', { tool, issues: JSON.stringify(r.error.issues).slice(0, 2000) });
+  throw new HttpError('INTERNAL', 'tool output failed validation');
 }
 
 /** Record that the calling agent read these items (`content_exposures`, via 'tool'). False when there is no agent. */

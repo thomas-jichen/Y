@@ -8,6 +8,7 @@
  * product's builder agent. compare_setups contrasts the team's
  * setups by verified success.
  */
+import { createHash } from 'node:crypto';
 import { TOOLS, TOOL_POLICY, makeError, toMcpErrorBody, type ErrorBody, type ToolName } from '@y/schema';
 import type { CallToolResult, ToolAnnotations } from 'mcp-use';
 import { unauthorizedError, type CoreClient } from './core-client.js';
@@ -179,6 +180,15 @@ export interface CallerContext {
   requestId?: string | undefined;
   clientName?: string | undefined;
   clientVersion?: string | undefined;
+  /** The caller's network address (x-real-ip / first x-forwarded-for); only its hash is forwarded. */
+  clientAddress?: string | undefined;
+}
+
+/** Rate-limit key for a client address: a truncated SHA-256, never the address itself. */
+export function clientKeyFor(address: string | null | undefined): string | undefined {
+  const a = address?.split(',')[0]?.trim();
+  if (!a || a.length > 128) return undefined;
+  return createHash('sha256').update(`y-client:${a}`, 'utf8').digest('hex').slice(0, 32);
 }
 
 /** Only `Bearer <token>` is forwarded; anything else is treated as absent. */
@@ -206,6 +216,8 @@ export async function runTool(
       ...(caller.clientVersion ? { version: caller.clientVersion.slice(0, 40) } : {}),
     };
   }
+  const clientKey = clientKeyFor(caller.clientAddress);
+  if (clientKey) meta.clientKey = clientKey;
   const res = await core.call(tool, input, {
     authorization: caller.authorization,
     signal: caller.signal,

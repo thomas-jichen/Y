@@ -9,10 +9,16 @@
  * 'measured' only at with.n ≥ 5 and without.n ≥ 5, each arm from ≥ 2 owners. Components
  * every session has (no contrast) are dropped, and components present in
  * exactly the same sessions are collapsed into one row (`collinear`).
- * Names are the screened ComponentName values from the stored snapshot;
- * anything that does not parse as one is skipped.
+ * Names are composed from the stored snapshot's parts, each validated on
+ * its own (ComponentName; ModelId for the model, so `[1m]` variants count)
+ * and dropped when the L0 screen flags it: teammates choose these strings
+ * and agents relay the headline. At most MAX_COMPONENT_ROWS component rows
+ * are read per call (the caller's own setup first, then by recency), so a
+ * flood of bloated snapshots cannot make each call unbounded.
  */
-import { ComponentName, type CompareSetupsOutput, type McpSetupArm, type McpSetupComponentSignal, type SetupComponentKind } from '@y/schema';
+import type { Tx } from '@y/db';
+import { l0Scan } from '@y/safety';
+import { ComponentName, ModelId, type CompareSetupsOutput, type McpSetupArm, type McpSetupComponentSignal, type SetupComponentKind } from '@y/schema';
 import type { Caller, CoreDeps } from '../contracts.js';
 import { networkContentBlocked } from '../posts/agent-tools.js';
 
@@ -22,6 +28,8 @@ export const MAX_COMPONENTS = 8;
 /** An arm smaller than this is not shown at all (too noisy even as an early signal). */
 export const MIN_ARM = 2;
 export const MEASURED = { nWith: 5, ownersWith: 2, nWithout: 5, ownersWithout: 2 } as const;
+/** Upper bound on component rows read per call (normal teams stay far below it). */
+export const MAX_COMPONENT_ROWS = 50_000;
 
 const METHOD =
   `Your team's published captured work sessions, last ${WINDOW_DAYS} days (max ${MAX_SESSIONS}). Verified success = outcome shipped (PR) or green (tests green at end); unknown counts as not verified. Wilson 95% lower bound. Correlation, not causation.`;
@@ -127,7 +135,7 @@ export function computeSignals(
       ? round((w.median_tokens_on_success - wo.median_tokens_on_success) / wo.median_tokens_on_success)
       : null;
     const { topOwnerShare, ...withArm } = w;
-    const { topOwnerShare: _unused, ...withoutArm } = wo;
+    const { topOwnerShare: withoutTopOwnerShare, ...withoutArm } = wo;
     out.push({
       kind, name,
       label: measured ? 'measured' : 'early_signal',
@@ -135,6 +143,7 @@ export function computeSignals(
       lift: round(Math.max(-1, Math.min(1, w.success_rate - wo.success_rate))),
       tokens_delta: tokensDelta,
       top_owner_share: topOwnerShare,
+      without_top_owner_share: withoutTopOwnerShare,
       you_use: keys.some((k) => yours.has(k)),
       collinear: keys.length - 1,
     });
@@ -155,30 +164,83 @@ export function headlineFor(c: McpSetupComponentSignal | undefined, you: Compare
   // No token clause: tokens_total includes cache reads, so a delta says more about
   // context reuse than cost. tokens_delta stays in the row for callers that know that.
   if (c.top_owner_share > 0.6) line += `, ${pct(c.top_owner_share)} of with-sessions from one owner`;
+  // One member's sessions can dominate the comparison arm just as well.
+  if ((c.without_top_owner_share ?? 0) > 0.6) line += `, ${pct(c.without_top_owner_share!)} of without-sessions from one owner`;
   if (you && you.success_rate !== null) line += `; your agent: ${pct(you.success_rate)} (n=${you.n})`;
   line += c.you_use ? '; you already use it' : '; you do not use it';
   return line.slice(0, 300);
 }
 
 type ActRow = { id: string; agent_id: string; owner_user_id: string; setup_version_id: string | null; outcome_status: string; tokens_total: string | number; published_at: Date | string };
-type CompRow = { id: string; kind: string; name: string | null };
+type CompRow = { id: string; kind: string; a: string | null; b: string | null };
 
+/**
+ * Component parts of each setup version: plugin (a = name, b = marketplace),
+ * skill / mcp_server (a = name), subagent (a = the string), CLAUDE.md, and
+ * settings (a = 'outputStyle' | 'model', b = the value). Rows come in `$1`
+ * order (priority), at most `$2`.
+ */
 const COMPONENTS_SQL = `
-  with sv as (select id, snapshot s from public.setup_versions where id = any($1::text[])),
+  with sv as (
+    select v.id, v.snapshot s, u.ord from public.setup_versions v
+      join unnest($1::text[]) with ordinality u(id, ord) on u.id = v.id),
   arr as (
-    select id, 'plugin' as kind, case when jsonb_typeof(s->'plugins') = 'array' then s->'plugins' else '[]'::jsonb end as xs from sv
-    union all select id, 'skill', case when jsonb_typeof(s->'skills') = 'array' then s->'skills' else '[]'::jsonb end from sv
-    union all select id, 'mcp_server', case when jsonb_typeof(s->'mcpServers') = 'array' then s->'mcpServers' else '[]'::jsonb end from sv
-    union all select id, 'subagent', case when jsonb_typeof(s->'subagents') = 'array' then s->'subagents' else '[]'::jsonb end from sv
+    select id, ord, 'plugin' as kind, case when jsonb_typeof(s->'plugins') = 'array' then s->'plugins' else '[]'::jsonb end as xs from sv
+    union all select id, ord, 'skill', case when jsonb_typeof(s->'skills') = 'array' then s->'skills' else '[]'::jsonb end from sv
+    union all select id, ord, 'mcp_server', case when jsonb_typeof(s->'mcpServers') = 'array' then s->'mcpServers' else '[]'::jsonb end from sv
+    union all select id, ord, 'subagent', case when jsonb_typeof(s->'subagents') = 'array' then s->'subagents' else '[]'::jsonb end from sv
+  ),
+  parts as (
+    select arr.id, arr.ord, arr.kind, e.i,
+           case when arr.kind = 'subagent' then e.x #>> '{}' else e.x->>'name' end as a,
+           case when arr.kind = 'plugin' then e.x->>'marketplace' end as b
+      from arr, jsonb_array_elements(arr.xs) with ordinality e(x, i)
+    union all select id, ord, 'claude_md_block', 0, 'CLAUDE.md', null from sv where s ? 'claudeMd'
+    union all select id, ord, 'setting', 0, 'outputStyle', s->>'outputStyle' from sv where s ? 'outputStyle'
+    union all select id, ord, 'setting', 1, 'model', s->>'model' from sv where s ? 'model'
   )
-  select arr.id, arr.kind,
-         case when arr.kind = 'plugin' then (x->>'name') || coalesce('@' || (x->>'marketplace'), '')
-              when arr.kind = 'subagent' then x #>> '{}'
-              else x->>'name' end as name
-    from arr, jsonb_array_elements(arr.xs) x
-  union all select id, 'claude_md_block', 'CLAUDE.md' from sv where s ? 'claudeMd'
-  union all select id, 'setting', 'outputStyle:' || (s->>'outputStyle') from sv where s ? 'outputStyle'
-  union all select id, 'setting', 'model:' || (s->>'model') from sv where s ? 'model'`;
+  select id, kind, a, b from parts order by ord, kind, i limit $2`;
+
+/** Read component rows for these setup versions (priority order), at most `limit`. */
+export async function loadComponentRows(tx: Tx, svIds: string[], limit = MAX_COMPONENT_ROWS): Promise<CompRow[]> {
+  if (svIds.length === 0) return [];
+  return (await tx.query<CompRow>(COMPONENTS_SQL, [svIds, limit])).rows;
+}
+
+/** True when the L0 screen does not flag a name part (separators read as spaces, so 'ignore-previous-instructions' is seen). */
+function screenedPart(part: string, memo: Map<string, boolean>): boolean {
+  let ok = memo.get(part);
+  if (ok === undefined) {
+    const label = l0Scan(part.replace(/[._:@/+[\]-]+/g, ' '), 'comment').label;
+    ok = label === 'clean' || label === 'warn';
+    memo.set(part, ok);
+  }
+  return ok;
+}
+
+/**
+ * The signal name for one component row, or null when a part does not
+ * validate or is flagged. Parts are validated separately, so long
+ * `plugin@marketplace` keys and `model:...[1m]` are kept.
+ */
+export function componentName(r: Pick<CompRow, 'kind' | 'a' | 'b'>, memo: Map<string, boolean> = new Map()): string | null {
+  const comp = (x: string | null | undefined): x is string => typeof x === 'string' && ComponentName.safeParse(x).success && screenedPart(x, memo);
+  if (!r.a) return null;
+  switch (r.kind) {
+    case 'plugin':
+      if (!comp(r.a)) return null;
+      if (r.b === null || r.b === undefined) return r.a;
+      return comp(r.b) ? `${r.a}@${r.b}` : null;
+    case 'claude_md_block':
+      return 'CLAUDE.md';
+    case 'setting':
+      if (r.a === 'outputStyle') return comp(r.b) ? `outputStyle:${r.b}` : null;
+      if (r.a === 'model') return typeof r.b === 'string' && ModelId.safeParse(r.b).success && screenedPart(r.b, memo) ? `model:${r.b}` : null;
+      return null;
+    default:
+      return comp(r.a) ? r.a : null;
+  }
+}
 
 export async function compareSetups(deps: CoreDeps, caller: Caller | null): Promise<CompareSetupsOutput> {
   if (!caller) return EMPTY_SIGNED_OUT;
@@ -217,18 +279,21 @@ export async function compareSetups(deps: CoreDeps, caller: Caller | null): Prom
            (select id from public.setup_versions where agent_id = $1 order by created_at desc, id desc limit 1)) as id`,
         [caller.agentId])).rows[0]?.id ?? null
       : null;
-    const svIds = [...new Set([...acts.map((a) => a.setup_version_id).filter((x): x is string => !!x), ...(latest ? [latest] : [])])];
-    const comps = svIds.length ? (await tx.query<CompRow>(COMPONENTS_SQL, [svIds])).rows : [];
+    // Priority for the row cap: the caller's own setup, then setups by recency of use.
+    const svIds = [...new Set([...(latest ? [latest] : []), ...acts.map((a) => a.setup_version_id).filter((x): x is string => !!x)])];
+    const comps = await loadComponentRows(tx, svIds);
     return { acts, latest, comps };
   });
   if (!data) {
     return { segment: null, rows: [], you: null, insufficient_data: true, signed_in: true, components: [], headline: null };
   }
   const componentsBySetup = new Map<string, Set<string>>();
+  const memo = new Map<string, boolean>();
   for (const r of data.comps) {
-    if (!r.name || !ComponentName.safeParse(r.name).success) continue; // only screened names
+    const name = componentName(r, memo); // only validated, screened names
+    if (!name) continue;
     const set = componentsBySetup.get(r.id) ?? new Set<string>();
-    set.add(`${r.kind}\u0000${r.name}`);
+    set.add(`${r.kind}\u0000${name}`);
     componentsBySetup.set(r.id, set);
   }
   const sessions: Session[] = data.acts.map((a) => ({

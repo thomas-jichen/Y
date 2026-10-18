@@ -4,12 +4,14 @@
  * db.asUser / db.asAnon (RLS, I7).
  */
 import type { Queryable } from '@y/db';
-import { dlpScan, makeEnvelope } from '@y/safety';
+import { dlpScan, l0Scan, makeEnvelope, normalizeUntrusted } from '@y/safety';
 import {
   REVIEW_QUEUE_NOTE,
   toMcpKillSwitches,
   toMcpUnreadCounts,
   parsePrefixedId,
+  Slug,
+  singleLine,
   ulid,
   type GetItemOutput,
   type Presence,
@@ -36,6 +38,8 @@ import { compareSetups } from '../setups/compare.js';
 import { addPostsAndLearnings, createPost, getPostItem, reportPostOutcome, scrollAction, scrollFeed } from '../posts/index.js';
 import {
   HIGHLIGHT_COLS,
+  assertToolOutput,
+  fit,
   highlightEnvelope,
   highlightMetrics as metrics,
   need,
@@ -50,6 +54,20 @@ export { EMBEDDING_DIMS } from './search.js';
 type Handler<T extends ToolName> = (deps: CoreDeps, caller: Caller | null, input: ToolInput<T>) => Promise<ToolOutput<T>>;
 
 /* ================================================================ status */
+
+/**
+ * A team room's label for agents. The room subject is the team name, free
+ * text a team admin chose, and status is not an envelope (taints:false), so
+ * it is shown (control characters folded to spaces) only when the L0
+ * screen calls it clean, as adoptSubject does for thread subjects.
+ * Otherwise the team slug (Slug regex) stands in, so a name that would
+ * fail the output schema never breaks status for the whole team.
+ */
+export function roomLabel(subject: string, slug: string | null): string {
+  const text = normalizeUntrusted(subject ?? '').text.replace(/[\u0000-\u001f\u007f\s]+/g, ' ').trim().slice(0, 120);
+  if (text && singleLine(120).safeParse(text).success && l0Scan(text, 'dm_teammate').label === 'clean') return text;
+  return slug && Slug.safeParse(slug).success ? slug : 'team';
+}
 
 const status: Handler<'status'> = async (deps, caller) => {
   const now = deps.now().toISOString();
@@ -89,8 +107,9 @@ const status: Handler<'status'> = async (deps, caller) => {
                 select 1 from public.team_members x join public.team_members y on y.team_id = x.team_id
                  where x.user_id = $2 and y.user_id = a.owner_user_id))
         order by (a.owner_user_id = $2) desc, a.handle limit 50`, [agentId, caller.userId]);
-    const rooms = await tx.query<{ id: string; subject: string }>(
-      `select t.id, t.subject from public.threads t
+    const rooms = await tx.query<{ id: string; subject: string; slug: string | null }>(
+      `select t.id, t.subject, tm.slug::text as slug from public.threads t
+         left join public.teams tm on tm.id = t.team_id
         where t.kind = 'group' and t.team_id is not null and t.state <> 'archived'
           and exists (select 1 from public.team_members m where m.team_id = t.team_id and m.user_id = $1)
         order by t.created_at limit 20`, [caller.userId]);
@@ -109,7 +128,7 @@ const status: Handler<'status'> = async (deps, caller) => {
         if (m.presence) t.presence = m.presence as Presence;
         return t;
       }),
-      team_rooms: rooms.rows.map((r) => ({ thread_id: wire('thread', r.id), team: r.subject })),
+      team_rooms: rooms.rows.map((r) => ({ thread_id: wire('thread', r.id), team: roomLabel(r.subject, r.slug) })),
     };
   });
 };
@@ -119,7 +138,6 @@ const status: Handler<'status'> = async (deps, caller) => {
 const searchNetwork: Handler<'search_network'> = async (deps, caller, input) => {
   const scope = caller ? input.scope : 'public';
   const top = await searchHighlights(deps, caller, { query: input.query, error: input.error, scope, limit: input.limit });
-  await recordExposures(deps, caller, 'highlight', top.map((r) => r.item.id));
   const out: ToolOutput<'search_network'> = {
     results: top,
     scopes_searched: scope === 'all' ? ['team', 'public'] : [scope],
@@ -127,6 +145,8 @@ const searchNetwork: Handler<'search_network'> = async (deps, caller, input) => 
     posts: [],
     learnings: [],
   };
+  assertToolOutput(deps, 'search_network', out);
+  await recordExposures(deps, caller, 'highlight', top.map((r) => r.item.id));
   // Team posts and the caller's own learnings (signed in, team scope searched, kill switch off, within the output budget).
   if (scope !== 'public') await addPostsAndLearnings(deps, caller, { query: input.query, error: input.error }, out);
   return out;
@@ -145,8 +165,9 @@ const getItem: Handler<'get_item'> = async (deps, caller, input) => {
       `select ${HIGHLIGHT_COLS}, h.status from public.highlights h where h.id = $1 and h.status = 'active' and h.screen_action in ('allow','label')`, [p.ulid])).rows[0]);
     if (!h) throw new HttpError('NOT_FOUND', 'highlight not found');
     const item = await highlightEnvelope(deps, caller, h, full);
-    const exposureRecorded = await recordExposures(deps, caller, 'highlight', [input.id]);
-    const out: GetItemOutput = { kind: 'highlight', item, exposure_recorded: exposureRecorded, highlight: { metrics: metrics(h), scope: h.visibility === 'public' ? 'public' : 'team' }, activity: null, component: null, post: null };
+    const out: GetItemOutput = { kind: 'highlight', item, exposure_recorded: false, highlight: { metrics: metrics(h), scope: h.visibility === 'public' ? 'public' : 'team' }, activity: null, component: null, post: null };
+    assertToolOutput(deps, 'get_item', out);
+    out.exposure_recorded = await recordExposures(deps, caller, 'highlight', [input.id]);
     return out;
   }
   if (p.kind !== 'activity') throw new HttpError('VALIDATION', 'unsupported id kind');
@@ -165,8 +186,9 @@ const getItem: Handler<'get_item'> = async (deps, caller, input) => {
   if (!a) throw new HttpError('NOT_FOUND', 'activity not found');
   const info = (await deps.db.asService((s) => agentInfos(s, [a.row.agent_id]))).get(a.row.agent_id);
   const rel = caller ? await deps.db.asService((s) => relationshipBetween(s, caller.userId, a.row.owner_user_id)) : 'stranger';
-  const content: Record<string, unknown> = { title: a.row.title, task_intent: a.row.task_intent ?? 'other', stack_tags: a.row.stack_tags ?? [], outcome: a.row.outcome_status };
-  if (full && a.row.summary) content.summary = a.row.summary;
+  // fit(): the envelope NFKC-normalizes content, which can grow stored text past the envelope limits.
+  const content: Record<string, unknown> = { title: fit(a.row.title, 120), task_intent: a.row.task_intent ?? 'other', stack_tags: a.row.stack_tags ?? [], outcome: a.row.outcome_status };
+  if (full && a.row.summary) content.summary = fit(a.row.summary, 400);
   const item = makeEnvelope({
     kind: 'activity', id: input.id,
     from: { agent: info ? atHandle(info.handle) : null, owner: info ? atHandle(info.ownerHandle) : null, relationship: rel, owner_verified: true },
@@ -174,14 +196,16 @@ const getItem: Handler<'get_item'> = async (deps, caller, input) => {
     content,
   }) as GetItemOutput['item'];
   const tests = (a.row.stats as { tests?: { greenAtEnd?: boolean } }).tests;
-  const exposureRecorded = await recordExposures(deps, caller, 'activity', [input.id]);
-  return {
-    kind: 'activity', item, exposure_recorded: exposureRecorded, highlight: null, component: null, post: null,
+  const out: GetItemOutput = {
+    kind: 'activity', item, exposure_recorded: false, highlight: null, component: null, post: null,
     activity: {
       stats: { tokens_total: Number(a.row.tokens_total), turns: a.row.turns, tool_calls: a.row.tool_calls, wall_ms: Number(a.row.wall_ms), tests_green_at_end: tests?.greenAtEnd === true },
       setup_components: [], highlight_ids: a.highlightIds,
     },
   };
+  assertToolOutput(deps, 'get_item', out);
+  out.exposure_recorded = await recordExposures(deps, caller, 'activity', [input.id]);
+  return out;
 };
 
 /* ======================================================= report_outcome */

@@ -52,6 +52,7 @@ export function createServer(opts: CreateServerOptions = {}) {
         requestId: ctx.request?.header('x-request-id'),
         clientName: ctx.client.info().name,
         clientVersion: ctx.client.info().version,
+        clientAddress: ctx.request?.header('x-real-ip') ?? ctx.request?.header('x-forwarded-for'),
       }) as never,
     );
   }
