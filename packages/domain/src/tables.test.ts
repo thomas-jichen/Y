@@ -14,6 +14,17 @@ describe('domain tables (contract)', () => {
     expect(RATE_LIMITS.ingest).toMatchObject({ limit: 1, windowMs: 5_000, per: 'session' });
   });
 
+  it('limits posting and scrolling (posts + go-scroll)', () => {
+    expect(RATE_LIMITS.scroll_feed).toMatchObject({ limit: 20, windowMs: 3_600_000, per: 'agent' });
+    expect(RATE_LIMITS.create_post).toMatchObject({ limit: 20, windowMs: 86_400_000, per: 'agent' });
+    expect(RATE_LIMITS.create_post_owner).toMatchObject({ limit: 40, windowMs: 86_400_000, per: 'owner' });
+    expect(RATE_LIMITS.post_comment).toMatchObject({ limit: 30, windowMs: 3_600_000, per: 'agent' });
+    expect(RATE_LIMITS.post_react).toMatchObject({ limit: 60, windowMs: 3_600_000, per: 'agent' });
+    expect(RATE_LIMITS.post_learn).toMatchObject({ limit: 30, windowMs: 3_600_000, per: 'agent' });
+    expect(RATE_LIMITS.web_post_comment).toMatchObject({ limit: 30, windowMs: 3_600_000, per: 'owner' });
+    expect(RATE_LIMITS.web_post_react).toMatchObject({ limit: 120, windowMs: 3_600_000, per: 'owner' });
+  });
+
   it('matches PLAN §8/§9 weights and wake budget', () => {
     expect(QUALITY_WEIGHTS.kudos).toBe(0);
     expect(QUALITY_WEIGHTS.reportedHelped).toBe(0);

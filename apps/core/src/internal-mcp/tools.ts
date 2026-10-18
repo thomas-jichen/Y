@@ -3,21 +3,15 @@
  * leaves inside envelopes (makeEnvelope, I2). User-scoped reads run through
  * db.asUser / db.asAnon (RLS, I7).
  */
-import type { Queryable, Tx } from '@y/db';
-import { finalScore, THRESHOLDS, toPgVector } from '@y/retrieval';
+import type { Queryable } from '@y/db';
 import { dlpScan, makeEnvelope } from '@y/safety';
 import {
-  EMBEDDING_DIMS as SCHEMA_DIMS,
-  HighlightBody,
-  HighlightEnvelopeBody,
   REVIEW_QUEUE_NOTE,
-  toHighlightEnvelopeBody,
   toMcpKillSwitches,
   toMcpUnreadCounts,
   parsePrefixedId,
   ulid,
   type GetItemOutput,
-  type SearchHit,
   type ToolInput,
   type ToolName,
   type ToolOutput,
@@ -36,21 +30,21 @@ import {
   unreadCounts,
   wire,
 } from '../messaging/util.js';
+import { addPostsAndLearnings, createPost, getPostItem, reportPostOutcome, scrollAction, scrollFeed } from '../posts/index.js';
+import {
+  HIGHLIGHT_COLS,
+  highlightEnvelope,
+  highlightMetrics as metrics,
+  need,
+  recordExposures,
+  scoped,
+  searchHighlights,
+  type HighlightRow,
+} from './search.js';
 
-/** EMBEDDING_DIMS from @y/schema when exported; the DB columns are vector(384). */
-export const EMBEDDING_DIMS: number = SCHEMA_DIMS;
+export { EMBEDDING_DIMS } from './search.js';
 
 type Handler<T extends ToolName> = (deps: CoreDeps, caller: Caller | null, input: ToolInput<T>) => Promise<ToolOutput<T>>;
-
-function need(caller: Caller | null): Caller {
-  if (!caller) throw new HttpError('UNAUTHORIZED', 'sign in to use this tool');
-  return caller;
-}
-
-/** RLS scope: the caller's claims, or anon when signed out. */
-function scoped<T>(deps: CoreDeps, caller: Caller | null, fn: (tx: Tx) => Promise<T>): Promise<T> {
-  return caller ? deps.db.asUser(caller.claims, fn) : deps.db.asAnon(fn);
-}
 
 /* ================================================================ status */
 
@@ -60,7 +54,7 @@ const status: Handler<'status'> = async (deps, caller) => {
     const ks = await deps.db.asAnon((tx) => killSwitches(tx)).catch(() => ({ pushPaths: false, networkContent: false, apply: false, ingest: false }));
     return {
       signed_in: !!caller, token_state: caller ? 'ok' : null, agent: null,
-      unread: { dm: 0, owner_instructions: 0, reviews: 0, suggestions: 0 },
+      unread: { dm: 0, owner_instructions: 0, reviews: 0, suggestions: 0, posts: 0 },
       pending: { drafts: 0, change_requests: 0, approved_changes: 0 },
       next: caller ? [] : [{ tool: 'status', reason: 'sign_in' }],
       kill_switches: toMcpKillSwitches(ks), min_plugin_version: null,
@@ -118,82 +112,20 @@ const status: Handler<'status'> = async (deps, caller) => {
 
 /* ======================================================== search_network */
 
-interface HighlightRow {
-  id: string; author_agent_id: string; owner_user_id: string; team_id: string | null; kind: string; title: string; summary: string;
-  body: unknown; tags: string[]; visibility: string; screen_label: string | null; screen_layers: string[] | null;
-  measured_help: number; measured_fail: number; confirmations: number; quality: number; activity_id: string | null;
-}
-
-const HIGHLIGHT_COLS = `h.id, h.author_agent_id, h.owner_user_id, h.team_id, h.kind, h.title, h.summary, h.body, h.tags::text[] as tags,
-  h.visibility::text as visibility, h.screen_label::text as screen_label, h.screen_layers::text[] as screen_layers,
-  h.measured_help, h.measured_fail, h.confirmations, h.quality, h.activity_id`;
-
-async function highlightEnvelope(deps: CoreDeps, caller: Caller | null, h: HighlightRow, full: boolean) {
-  const info = (await deps.db.asService((s) => agentInfos(s, [h.author_agent_id]))).get(h.author_agent_id);
-  const rel = caller ? await deps.db.asService((s) => relationshipBetween(s, caller.userId, h.owner_user_id)) : 'stranger';
-  const content: Record<string, unknown> = { kind: h.kind, title: h.title, summary: h.summary, tags: h.tags ?? [] };
-  if (full && h.body && typeof h.body === 'object' && Object.keys(h.body).length > 0) {
-    // Stored bodies use the web casing (whyFailed, appliesWhen); envelopes use snake_case.
-    const stored = HighlightBody.safeParse(h.body);
-    if (stored.success) content.body = toHighlightEnvelopeBody(stored.data);
-    else if (HighlightEnvelopeBody.safeParse(h.body).success) content.body = h.body;
-  }
-  return makeEnvelope({
-    kind: 'highlight',
-    id: wire('highlight', h.id),
-    from: { agent: info ? atHandle(info.handle) : null, owner: info ? atHandle(info.ownerHandle) : null, relationship: rel, owner_verified: true },
-    screen: { label: (h.screen_label ?? 'clean') as 'clean', layers: (h.screen_layers ?? ['l0']) as ['l0'] },
-    content,
-  }) as SearchHit['item'];
-}
-
-function metrics(h: HighlightRow) {
-  return { measured_help: h.measured_help, measured_fail: h.measured_fail, confirmations: h.confirmations, quality: Math.max(0, Math.min(1, h.quality)) };
-}
-
-async function recordExposures(deps: CoreDeps, caller: Caller | null, kind: 'highlight' | 'activity', ids: string[]): Promise<boolean> {
-  if (!caller?.agentId || ids.length === 0) return false;
-  await deps.db.asUser(caller.claims, async (tx) => {
-    for (const id of ids) {
-      await tx.query(`insert into public.content_exposures (content_kind, content_id, agent_id, via) values ($1, $2, $3, 'tool')`, [kind, id, caller.agentId]);
-    }
-  });
-  return true;
-}
-
 const searchNetwork: Handler<'search_network'> = async (deps, caller, input) => {
   const scope = caller ? input.scope : 'public';
-  const [qv] = await deps.embedder.embed([input.query]);
-  if (!qv || qv.length !== EMBEDDING_DIMS) throw new HttpError('INTERNAL', `embedder returned ${qv?.length ?? 0} dims, expected ${EMBEDDING_DIMS}`);
-  const k = Math.min(20, input.limit * 3);
-  const { hits, rows } = await scoped(deps, caller, async (tx) => {
-    const hits = await tx.query<{ highlight_id: string; rrf_score: number; vector_rank: number | null; fts_rank: number | null; trigram_rank: number | null; vector_distance: number | null }>(
-      `select * from api.search_network($1, $2::vector, $3, $4, $5)`,
-      [input.query, toPgVector(qv), input.error ?? null, k, scope]);
-    const ids = hits.rows.map((h) => h.highlight_id);
-    const rows = ids.length ? (await tx.query<HighlightRow>(`select ${HIGHLIGHT_COLS} from public.highlights h where h.id = any($1::text[])`, [ids])).rows : [];
-    return { hits: hits.rows, rows };
-  });
-  const byId = new Map(rows.map((r) => [r.id, r]));
-  const listCount = 1 + 1 + (input.error ? 1 : 0);
-  const results: SearchHit[] = [];
-  for (const hit of hits) {
-    const h = byId.get(hit.highlight_id);
-    if (!h) continue;
-    const scoreIn: Parameters<typeof finalScore>[0] = { rrf: hit.rrf_score, listCount, quality: h.quality };
-    if (hit.vector_distance !== null) scoreIn.cosine = 1 - hit.vector_distance;
-    const score = Math.max(0, Math.min(1, finalScore(scoreIn)));
-    if (score < THRESHOLDS.search) continue;
-    results.push({ item: await highlightEnvelope(deps, caller, h, false), score, scope: h.visibility === 'public' ? 'public' : 'team', metrics: metrics(h) });
-  }
-  results.sort((a, b) => b.score - a.score);
-  const top = results.slice(0, input.limit);
+  const top = await searchHighlights(deps, caller, { query: input.query, error: input.error, scope, limit: input.limit });
   await recordExposures(deps, caller, 'highlight', top.map((r) => r.item.id));
-  return {
+  const out: ToolOutput<'search_network'> = {
     results: top,
     scopes_searched: scope === 'all' ? ['team', 'public'] : [scope],
     signed_in: !!caller,
+    posts: [],
+    learnings: [],
   };
+  // Team posts and the caller's own learnings (signed in, team scope searched, kill switch off, within the output budget).
+  if (scope !== 'public') await addPostsAndLearnings(deps, caller, { query: input.query, error: input.error }, out);
+  return out;
 };
 
 /* ============================================================== get_item */
@@ -202,6 +134,7 @@ const getItem: Handler<'get_item'> = async (deps, caller, input) => {
   const p = parsePrefixedId(input.id);
   if (!p) throw new HttpError('VALIDATION', 'bad id');
   if (p.kind === 'sharedComponent') throw notImplemented('shared components');
+  if (p.kind === 'post') return getPostItem(deps, caller, p.ulid, input.detail);
   const full = input.detail === 'full';
   if (p.kind === 'highlight') {
     const h = await scoped(deps, caller, async (tx) => (await tx.query<HighlightRow & { status: string }>(
@@ -209,7 +142,7 @@ const getItem: Handler<'get_item'> = async (deps, caller, input) => {
     if (!h) throw new HttpError('NOT_FOUND', 'highlight not found');
     const item = await highlightEnvelope(deps, caller, h, full);
     const exposureRecorded = await recordExposures(deps, caller, 'highlight', [input.id]);
-    const out: GetItemOutput = { kind: 'highlight', item, exposure_recorded: exposureRecorded, highlight: { metrics: metrics(h), scope: h.visibility === 'public' ? 'public' : 'team' }, activity: null, component: null };
+    const out: GetItemOutput = { kind: 'highlight', item, exposure_recorded: exposureRecorded, highlight: { metrics: metrics(h), scope: h.visibility === 'public' ? 'public' : 'team' }, activity: null, component: null, post: null };
     return out;
   }
   if (p.kind !== 'activity') throw new HttpError('VALIDATION', 'unsupported id kind');
@@ -239,7 +172,7 @@ const getItem: Handler<'get_item'> = async (deps, caller, input) => {
   const tests = (a.row.stats as { tests?: { greenAtEnd?: boolean } }).tests;
   const exposureRecorded = await recordExposures(deps, caller, 'activity', [input.id]);
   return {
-    kind: 'activity', item, exposure_recorded: exposureRecorded, highlight: null, component: null,
+    kind: 'activity', item, exposure_recorded: exposureRecorded, highlight: null, component: null, post: null,
     activity: {
       stats: { tokens_total: Number(a.row.tokens_total), turns: a.row.turns, tool_calls: a.row.tool_calls, wall_ms: Number(a.row.wall_ms), tests_green_at_end: tests?.greenAtEnd === true },
       setup_components: [], highlight_ids: a.highlightIds,
@@ -252,6 +185,7 @@ const getItem: Handler<'get_item'> = async (deps, caller, input) => {
 const reportOutcome: Handler<'report_outcome'> = async (deps, caller, input) => {
   const c = need(caller);
   const p = parsePrefixedId(input.item_id);
+  if (p?.kind === 'post') return reportPostOutcome(deps, c, p.ulid, input.outcome);
   const kind = p?.kind === 'highlight' ? 'highlight' : p?.kind === 'activity' ? 'activity' : p?.kind === 'sharedComponent' ? 'component' : null;
   if (!kind) throw notImplemented('outcomes for suggestions');
   if (input.review) throw notImplemented('typed setup reviews');
@@ -334,7 +268,9 @@ export const HANDLERS: { [T in ToolName]: Handler<T> } = {
   inbox: (deps, caller, input) => inbox(deps, need(caller), input),
   update_thread: (deps, caller, input) => updateThread(deps, need(caller), input),
   review_queue: reviewQueue,
-  scroll_feed: cut('scroll_feed'),
+  scroll_feed: scrollFeed,
+  create_post: createPost,
+  scroll_action: scrollAction,
   compare_setups: cut('compare_setups'),
   propose_setup_change: cut('propose_setup_change'),
   find_builder: cut('find_builder'),
@@ -342,6 +278,8 @@ export const HANDLERS: { [T in ToolName]: Handler<T> } = {
   whats_happening: cut('whats_happening'),
 };
 
-export const CUT_TOOLS: readonly ToolName[] = ['scroll_feed', 'compare_setups', 'propose_setup_change', 'find_builder', 'ask_builder', 'whats_happening'];
+export const CUT_TOOLS: readonly ToolName[] = [
+  'compare_setups', 'propose_setup_change', 'find_builder', 'ask_builder', 'whats_happening',
+];
 
 export type { Queryable };

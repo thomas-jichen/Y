@@ -1,7 +1,8 @@
 /**
  * PLATFORM module (owner: core-platform): config, auth, job queue, push bus,
- * hook REST (ingest/brief/match), dev auth, onboarding, web JSON API, SSE and
- * the capture → publish → distill → review pipeline jobs.
+ * hook REST (ingest/brief/match), dev auth, onboarding, web JSON API, SSE, the
+ * posts + scrolls web API (posts/) and the capture → publish → distill →
+ * review pipeline jobs.
  */
 import { fileURLToPath } from 'node:url';
 import { migrate, type Db } from '@y/db';
@@ -20,6 +21,7 @@ import { registerDevRoutes } from './routes/dev.js';
 import { registerHookRoutes } from './routes/hook.js';
 import { registerUsageRoutes } from './routes/usage.js';
 import { registerWebRoutes } from './routes/web.js';
+import { registerPostsRoutes } from '../posts/index.js';
 
 export { loadConfig } from './config.js';
 export {
@@ -106,6 +108,7 @@ export const platformModule: CoreModule = {
     registerHookRoutes(app, deps);
     registerWebRoutes(app, deps);
     registerUsageRoutes(app, deps);
+    registerPostsRoutes(app, deps);
   },
   jobs: PLATFORM_JOBS,
 };

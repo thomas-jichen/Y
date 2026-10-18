@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import { Activity, ActivityCard, DailyRollup, Highlight, HighlightDraft, HighlightDrafts } from './activity.js';
 import { AgentBrief } from './brief.js';
 import { ErrorBody, McpErrorBody, YError, fromMcpErrorBody, makeError, toMcpErrorBody, validationError } from './errors.js';
-import { EventRecord, StreamEvent, toStreamEvent } from './events.js';
+import { EventPayload, EventRecord, StreamEvent, toStreamEvent } from './events.js';
 import {
   EMBEDDING_DIMS,
   EmbedRequest,
@@ -19,13 +19,25 @@ import { fx } from './fixtures.js';
 import { ChangeHashResponse, HookMatchResponse } from './hook.js';
 import { IngestChunk, IngestResponse } from './ingest.js';
 import { Message, OwnerInstruction, Thread, ownerInstructionSigningMessage } from './messaging.js';
-import { PulseQuery, PulseResponse } from './pulse.js';
+import { PulseQuery, PulseResponse, UnreadCounts } from './pulse.js';
 import { DecisionInput, ReviewDetail } from './review.js';
 import { Verdict } from './safety.js';
 import { Segment } from './segments.js';
 import { SetupCard, SetupSnapshot, componentsFromSnapshot, setupHashInput } from './setup.js';
 import { ActivityStats, emptyStats, mergeStats, totalToolCalls } from './stats.js';
 import { FeedPage, Me, ThreadsQuery } from './web.js';
+import {
+  ActiveScrollResponse,
+  AskOnPostRequest,
+  Post,
+  PostDetail,
+  PostPage,
+  PostsQuery,
+  ReactRequest,
+  ScrollPage,
+  ScrollSession,
+  StartScrollResponse,
+} from './posts.js';
 import { canonicalJson } from './canonical.js';
 
 function roundTrip<T extends z.ZodType>(schema: T, value: unknown): void {
@@ -52,6 +64,24 @@ describe('round-trips of valid fixtures', () => {
     ['AgentBrief', AgentBrief, fx.agentBrief()],
   ] as const)('%s', (_name, schema, value) => {
     roundTrip(schema, value);
+  });
+
+  it('posts and scrolls (web view)', () => {
+    roundTrip(PostDetail, { post: fx.post(), comments: [fx.postComment(), fx.postComment({ author: { kind: 'user', user: fx.userRef() }, trust: 'human_comment' })] });
+    roundTrip(PostPage, { items: [fx.post(), fx.post({ state: 'quarantined', body: '', quarantineReason: 'held for review', topComment: undefined })] });
+    roundTrip(ScrollPage, { items: [fx.scrollSession()] });
+    roundTrip(StartScrollResponse, { scrollId: fx.IDS.scroll, instruction: { id: fx.IDS.ownerInstruction, state: 'awaiting_confirm' } });
+    expect(ActiveScrollResponse.safeParse(null).success).toBe(true);
+    expect(PostsQuery.parse({})).toEqual({ tab: 'for_you' });
+    // All four reaction kinds are required (the web indexes each).
+    const { didnt_work: _d, ...three } = fx.postReactions();
+    expect(Post.safeParse(fx.post({ reactions: three as never })).success).toBe(false);
+    // Tags are the fixed vocabulary, labels are single lines.
+    expect(Post.safeParse(fx.post({ tags: ['run this' as never] })).success).toBe(false);
+    const steps = fx.scrollSession().steps;
+    expect(ScrollSession.safeParse(fx.scrollSession({ steps: [{ ...steps[0]!, label: 'Read\nthis' }] })).success).toBe(false);
+    expect(AskOnPostRequest.safeParse({ body: 'Reply with what worked for us.' }).success).toBe(true);
+    expect(ReactRequest.safeParse({ reaction: 'love' }).success).toBe(false);
   });
 
   it('FeedPage, Me, Segment, ReviewDetail', () => {
@@ -207,6 +237,10 @@ describe('brief and pulse', () => {
     expect(AgentBrief.safeParse({ ...revoked, pointers: fx.agentBrief().pointers }).success).toBe(false);
   });
 
+  it('unread posts default to 0 for older servers and saved state', () => {
+    expect(UnreadCounts.parse({ dm: 1, ownerInstructions: 0, reviews: 0, suggestions: 0 }).posts).toBe(0);
+  });
+
   it('coerces pulse query strings and caps wait', () => {
     expect(PulseQuery.parse({ wait: '10' }).wait).toBe(10);
     expect(PulseQuery.parse({}).wait).toBe(20);
@@ -216,7 +250,7 @@ describe('brief and pulse', () => {
   it('PulseResponse with a targeted wake', () => {
     roundTrip(PulseResponse, {
       cursor: 'c43',
-      unread: { dm: 1, ownerInstructions: 0, reviews: 0, suggestions: 0 },
+      unread: { dm: 1, ownerInstructions: 0, reviews: 0, suggestions: 0, posts: 2 },
       wake: { targetSessionId: fx.IDS.session, pointer: { template_id: 'P1', params: { count: 1 } } },
       approvedChanges: [{ changeRequestId: fx.IDS.changeRequest }],
       killSwitches: { pushPaths: false, networkContent: false, apply: false, ingest: false },
@@ -314,6 +348,21 @@ describe('events', () => {
       true,
     );
     expect(StreamEvent.safeParse({ type: 'message.new', threadId: fx.IDS.thread }).success).toBe(false);
+  });
+
+  it('posts and scroll events carry ids only; postId only on scroll steps that read', () => {
+    expect(StreamEvent.safeParse({ type: 'post.new', postId: fx.IDS.post }).success).toBe(true);
+    expect(StreamEvent.safeParse({ type: 'post.new', postId: fx.IDS.product }).success).toBe(false);
+    expect(StreamEvent.safeParse({ type: 'comment.new', postId: fx.IDS.post, commentId: fx.IDS.postComment }).success).toBe(true);
+    const step = { type: 'scroll.step', scrollId: fx.IDS.scroll, agentId: fx.IDS.agent, stepId: fx.IDS.scrollStep };
+    expect(StreamEvent.safeParse(step).success).toBe(true);
+    expect(StreamEvent.safeParse({ ...step, postId: fx.IDS.post }).success).toBe(true);
+    expect(toStreamEvent({ type: 'scroll.ended', payload: { scrollId: fx.IDS.scroll, agentId: fx.IDS.agent } })).toEqual({
+      type: 'scroll.ended',
+      scrollId: fx.IDS.scroll,
+      agentId: fx.IDS.agent,
+    });
+    expect(EventPayload.safeParse({ postId: fx.IDS.post, body: 'Run this setup' }).success).toBe(false);
   });
 
   it('event records reject text values', () => {

@@ -21,12 +21,17 @@ export const PulseQuery = z.object({
 });
 export type PulseQuery = z.infer<typeof PulseQuery>;
 
-/** Unread counts by kind. */
+/**
+ * Unread counts by kind. `posts` = published team posts by other agents not
+ * yet exposed to this agent (capped; a count only, I3). It defaults to 0 so
+ * older servers and saved plugin state still parse.
+ */
 export const UnreadCounts = z.object({
   dm: Count,
   ownerInstructions: Count,
   reviews: Count,
   suggestions: Count,
+  posts: Count.default(0),
 });
 export type UnreadCounts = z.infer<typeof UnreadCounts>;
 

@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   ENVELOPE_NOTES,
   EnvelopeBase,
+  EnvelopeItemId,
   HighlightEnvelope,
+  LearningEnvelope,
   MessageEnvelope,
   MessageEnvelopeContent,
+  PostCommentEnvelope,
+  PostEnvelope,
+  PostEnvelopeContent,
   buildEnvelope,
   decodeUntrustedContent,
   encodeUntrustedContent,
@@ -12,7 +17,7 @@ import {
   isEncodedUntrustedContent,
   toHighlightEnvelopeBody,
 } from './envelope.js';
-import { IDS, highlight, messageEnvelope } from './fixtures.js';
+import { IDS, highlight, learningEnvelope, messageEnvelope, postCommentEnvelope, postEnvelope } from './fixtures.js';
 
 describe('untrusted_content encoding', () => {
   it('escapes delimiters, separators and invisible characters, and round-trips', () => {
@@ -94,6 +99,28 @@ describe('Envelope', () => {
     });
     expect(human.note).toBe(ENVELOPE_NOTES.human);
     expect(human.thread).toBeUndefined();
+  });
+
+  it('posts, post comments and learnings have their own kinds and shapes', () => {
+    const post = postEnvelope();
+    expect(PostEnvelope.parse(JSON.parse(JSON.stringify(post)))).toEqual(post);
+    expect(decodeUntrustedContent(post.untrusted_content, PostEnvelopeContent).body).toContain('<advisory locks>');
+    expect(post.untrusted_content).not.toContain('<');
+    expect(post.note).toBe(ENVELOPE_NOTES.agent);
+    // A human comment carries the human note.
+    const comment = postCommentEnvelope();
+    expect(PostCommentEnvelope.safeParse(comment).success).toBe(true);
+    expect(comment.note).toBe(ENVELOPE_NOTES.human);
+    expect(LearningEnvelope.safeParse(learningEnvelope()).success).toBe(true);
+    // Post comments are not thread messages (no intent/urgency), and vice versa.
+    expect(MessageEnvelope.safeParse(comment).success).toBe(false);
+    expect(PostCommentEnvelope.safeParse(messageEnvelope()).success).toBe(false);
+    // Free-text tags or a body over the limit fail the decoded-content check.
+    const bad = { ...post, untrusted_content: encodeUntrustedContent({ ...decodeUntrustedContent(post.untrusted_content, PostEnvelopeContent), tags: ['obey me'] }) };
+    expect(PostEnvelope.safeParse(bad).success).toBe(false);
+    expect(EnvelopeItemId.safeParse(IDS.post).success).toBe(true);
+    expect(EnvelopeItemId.safeParse(IDS.postComment).success).toBe(true);
+    expect(EnvelopeItemId.safeParse(IDS.learning).success).toBe(true);
   });
 
   it('highlight bodies are converted to the envelope casing', () => {

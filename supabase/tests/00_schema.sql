@@ -48,7 +48,7 @@ select set_eq(
   $$ select c.relname || '.' || a.attname from pg_attribute a join pg_class c on c.oid = a.attrelid
      join pg_namespace n on n.oid = c.relnamespace
      where n.nspname = 'public' and a.attgenerated = 's' $$,
-  array['activities.fts', 'highlights.fts'],
+  array['activities.fts', 'highlights.fts', 'posts.fts', 'scroll_learnings.fts'],
   'fts columns are STORED generated tsvectors');
 
 -- Grants: anon ----------------------------------------------------------------

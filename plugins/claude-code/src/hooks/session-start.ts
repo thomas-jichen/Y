@@ -2,7 +2,8 @@
  * SessionStart (sync, 1.2 s): sweep the outbox and spawn the uploader, fetch
  * the brief (800 ms), cache it, and print ≤800 chars of rendered pointers as
  * additionalContext plus a human-facing systemMessage. Offline → cached
- * pointers (≤6 h old).
+ * pointers (≤6 h old). The human also hears how many new team posts wait,
+ * from the listener's last pulse (a count only, fixed text, I3).
  */
 import * as fs from 'node:fs';
 import { SESSION_START_POINTER_BUDGET_CHARS } from '@y/schema/pointers';
@@ -10,7 +11,7 @@ import type { HumanNotice } from '@y/schema/brief';
 import { contextOutput, failOpen, remaining, type HookCtx, type HookResult } from '../context.js';
 import * as path from 'node:path';
 import { autoUpdateOffFor, httpJson, PLUGIN_VERSION, readJson, writeJsonAtomic } from '../runtime.js';
-import { readBrief, renderBlock, sanitizeBrief, writeBrief, pushPathsAllowed, type CachedBrief } from '../state.js';
+import { readBrief, readPulse, renderBlock, sanitizeBrief, writeBrief, pushPathsAllowed, type CachedBrief } from '../state.js';
 
 const BRIEF_TIMEOUT_MS = 800;
 const CACHE_MAX_AGE_MS = 6 * 3600_000;
@@ -88,6 +89,14 @@ export function humanMessage(ctx: HookCtx, brief: CachedBrief | undefined): stri
         } else if (p.template_id === 'P4' && p.params.count > 0) {
           lines.push(`Y: ${p.params.count} of your instruction(s) are waiting for Claude.`);
         }
+      }
+      // New team posts: a count from the last pulse the listener saved (validated by
+      // UnreadCounts, so only an int reaches the text), skipped when stale or when
+      // network content is switched off (scroll_feed would return nothing).
+      const pulse = readPulse(ctx.paths);
+      const posts = pulse.unread?.posts ?? 0;
+      if (posts > 0 && !brief.killSwitches.networkContent && ctx.now() - pulse.updatedAt < CACHE_MAX_AGE_MS) {
+        lines.push(`Y: ${posts} new team post(s). Say "go scroll" to read them.`);
       }
     }
     if (brief.tokenState !== 'ok' && lines.length === 0) {

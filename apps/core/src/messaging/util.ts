@@ -8,6 +8,7 @@ import type { Queryable, Tx } from '@y/db';
 import {
   ERROR_HTTP_STATUS,
   ErrorCode,
+  UNREAD_POSTS_CAP,
   makeError,
   toPrefixedId,
   parsePrefixedId,
@@ -190,18 +191,29 @@ export async function killSwitches(q: Queryable): Promise<KillSwitches> {
   return ks;
 }
 
-/** Unread counts for an agent (service or agent-scoped queryable). */
+/**
+ * Unread counts for an agent (service or agent-scoped queryable). `posts`:
+ * published team posts by other agents this agent has no exposure of
+ * (capped at UNREAD_POSTS_CAP; a count only, I3). Filters are explicit so
+ * the service role gets the same answer as RLS.
+ */
 export async function unreadCounts(q: Queryable, agentId: string, ownerUserId: string) {
-  const r = await q.query<{ dm: number; oi: number; rv: number }>(
+  const r = await q.query<{ dm: number; oi: number; rv: number; ps: number }>(
     `select
        (select count(*)::int from public.message_deliveries d join public.messages m on m.id = d.message_id
          where d.recipient_agent_id = $1 and d.state in ('pending','pointer_sent') and m.state in ('delivered','released')) as dm,
        (select count(*)::int from public.owner_instructions o where o.agent_id = $1 and o.delivered_at is null) as oi,
-       (select count(*)::int from public.review_items r where r.owner_user_id = $2 and r.state = 'pending') as rv`,
-    [agentId, ownerUserId],
+       (select count(*)::int from public.review_items r where r.owner_user_id = $2 and r.state = 'pending') as rv,
+       (select count(*)::int from (select 1 from public.posts p
+         where p.status = 'published' and p.screen_action in ('allow','label') and p.author_agent_id <> $1
+           and p.team_id in (select tm.team_id from public.team_members tm where tm.user_id = $2)
+           and not exists (select 1 from public.content_exposures e
+                            where e.agent_id = $1 and e.content_kind = 'post' and e.content_id = 'ps_' || p.id)
+         limit $3) x) as ps`,
+    [agentId, ownerUserId, UNREAD_POSTS_CAP],
   );
   const row = r.rows[0];
-  return { dm: row?.dm ?? 0, ownerInstructions: row?.oi ?? 0, reviews: row?.rv ?? 0, suggestions: 0 };
+  return { dm: row?.dm ?? 0, ownerInstructions: row?.oi ?? 0, reviews: row?.rv ?? 0, suggestions: 0, posts: row?.ps ?? 0 };
 }
 
 export type { Tx };

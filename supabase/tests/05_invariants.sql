@@ -132,8 +132,9 @@ select set_eq(
      where c.conrelid = 'public.events'::regclass and c.contype = 'c'
        and pg_get_constraintdef(c.oid) ilike '%(type = any%' $$,
   array['activity.published', 'activity.updated', 'message.new', 'message.delivered', 'review.new', 'review.decided',
-        'change.updated', 'presence', 'rollup.updated', 'owner_instruction.new', 'suggestion.ready', 'thread.escalated',
-        'wake.requested', 'kill_switch.changed', 'takedown'],
+        'change.updated', 'presence', 'rollup.updated', 'post.new', 'post.reacted', 'comment.new', 'scroll.step',
+        'scroll.ended', 'owner_instruction.new', 'suggestion.ready', 'thread.escalated', 'wake.requested',
+        'kill_switch.changed', 'takedown'],
   'I3: events.type is exactly packages/schema EventType');
 
 select ok((select prosrc from pg_proc where oid = 'y_private.on_event_insert()'::regprocedure)

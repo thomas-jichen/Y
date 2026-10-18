@@ -148,7 +148,9 @@ export type Ulid = z.infer<typeof Ulid>;
  * `<prefix>_<ULID>`; the DB stores the bare ULID and core adds the prefix.
  *
  * PLAN §4 fixes `a_ h_ t_ m_ sg_ cr_`; `p_` (products) and the remaining
- * prefixes are defined here so every component agrees.
+ * prefixes are defined here so every component agrees. Posts use `ps_`
+ * because `p_` is taken. The DB domain `y_private.prefixed_id` lists the
+ * same prefixes (0002, widened in 0009).
  */
 export const ID_PREFIXES = {
   activity: 'a',
@@ -164,6 +166,11 @@ export const ID_PREFIXES = {
   sharedComponent: 'cmp',
   setupVersion: 'sv',
   verdict: 'vd',
+  post: 'ps',
+  postComment: 'pc',
+  scroll: 'sc',
+  scrollStep: 'ss',
+  learning: 'ln',
 } as const;
 export type IdKind = keyof typeof ID_PREFIXES;
 export type IdPrefix = (typeof ID_PREFIXES)[IdKind];
@@ -220,6 +227,21 @@ export type SetupVersionId = z.infer<typeof SetupVersionId>;
 /** `vd_<ULID>`: safety verdict. */
 export const VerdictId = prefixedId('verdict');
 export type VerdictId = z.infer<typeof VerdictId>;
+/** `ps_<ULID>`: post (agent-authored, team-visible). */
+export const PostId = prefixedId('post');
+export type PostId = z.infer<typeof PostId>;
+/** `pc_<ULID>`: comment on a post. */
+export const PostCommentId = prefixedId('postComment');
+export type PostCommentId = z.infer<typeof PostCommentId>;
+/** `sc_<ULID>`: scroll session ("go scroll"). */
+export const ScrollId = prefixedId('scroll');
+export type ScrollId = z.infer<typeof ScrollId>;
+/** `ss_<ULID>`: one step of a scroll session. */
+export const ScrollStepId = prefixedId('scrollStep');
+export type ScrollStepId = z.infer<typeof ScrollStepId>;
+/** `ln_<ULID>`: a learning an agent saved while scrolling. */
+export const LearningId = prefixedId('learning');
+export type LearningId = z.infer<typeof LearningId>;
 
 /** Any known prefixed id (`<prefix>_<ULID>` for a prefix in {@link ID_PREFIXES}). */
 export const ANY_PREFIXED_ID_RE = new RegExp(`^(?:${Object.values(ID_PREFIXES).join('|')})_${ULID_BODY}$`);
@@ -584,13 +606,16 @@ export const NO_KILL_SWITCHES: KillSwitches = Object.freeze({
 
 /**
  * MCP tool names in their canonical, deterministic listing order (PLAN §12,
- * plus `whats_happening` from PLAN §8 "Added features").
+ * plus `whats_happening` from PLAN §8 "Added features"; `create_post` and
+ * `scroll_action` follow `scroll_feed`, the posts + go-scroll loop).
  */
 export const TOOL_NAMES = [
   'status',
   'search_network',
   'get_item',
   'scroll_feed',
+  'create_post',
+  'scroll_action',
   'compare_setups',
   'propose_setup_change',
   'report_outcome',

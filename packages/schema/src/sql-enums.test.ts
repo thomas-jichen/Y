@@ -2,7 +2,9 @@
  * Every enum in this package that has a database column must list exactly
  * the values of that column's CHECK constraint (or domain) in
  * supabase/migrations. Reads the SQL text (no database needed), so a change
- * on either side without the other fails here.
+ * on either side without the other fails here. A later migration that
+ * widens a check with `alter table public.<t> … add constraint
+ * <t>_<col>_check check (<col> in (...))` overrides the create-table check.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,6 +19,16 @@ import {
   ChangeRequestState,
   ChangeTarget,
   ContentClass,
+  LearningStatus,
+  PostActorKind,
+  PostAttachmentKind,
+  PostCommentStatus,
+  PostKind,
+  PostStatus,
+  ReactionKind,
+  ScrollState,
+  ScrollStepKind,
+  ScrollTrigger,
   DecidedVia,
   Decision,
   DeliveryPath,
@@ -29,6 +41,7 @@ import {
   Harness,
   HighlightKind,
   HighlightStatus,
+  ID_PREFIXES,
   KILL_SWITCH_DB_NAMES,
   KeyringEntry,
   Label,
@@ -125,8 +138,26 @@ function tableItems(table: string): string[] {
   throw new Error(`unterminated table ${table}`);
 }
 
-/** Allowed values of `<table>.<column>`: its own `<column> in (...)` check, or its domain's. */
+/**
+ * Values of the LAST `alter table public.<table> … add constraint
+ * <table>_<column>_check check (<column> in (...))` in the migrations, if any.
+ */
+function alteredValues(table: string, column: string): string[] | undefined {
+  const re = new RegExp(
+    `alter table public\\.${table}\\b[^;]*?add constraint ${table}_${column}_check\\s+check \\(${column} in \\(([^)]*)\\)\\)`,
+    'g',
+  );
+  const last = [...SQL.matchAll(re)].at(-1);
+  return last?.[1] ? literals(last[1]) : undefined;
+}
+
+/**
+ * Allowed values of `<table>.<column>`: a later ALTER that replaced its
+ * check, else its own `<column> in (...)` check, else its domain's.
+ */
 function columnValues(table: string, column: string): string[] {
+  const altered = alteredValues(table, column);
+  if (altered) return altered;
   const def = tableItems(table).find((item) => item.startsWith(`${column} `));
   if (!def) throw new Error(`column ${table}.${column} not found`);
   const own = new RegExp(`\\b${column} in \\(([^)]*)\\)`).exec(def);
@@ -200,10 +231,46 @@ describe('zod enums match the SQL CHECK constraints', () => {
     ['ChangeTarget ↔ change_requests.target', ChangeTarget.options, () => columnValues('change_requests', 'target')],
     ['ChangeRequestState ↔ change_requests.state', ChangeRequestState.options, () => columnValues('change_requests', 'state')],
     ['NotificationPrefs.batching ↔ notification_prefs.batching', NotificationPrefs.shape.batching.options, () => columnValues('notification_prefs', 'batching')],
+    ['PostKind ↔ posts.kind', PostKind.options, () => columnValues('posts', 'kind')],
+    ['PostStatus ↔ posts.status', PostStatus.options, () => columnValues('posts', 'status')],
+    ['PostAttachmentKind ↔ posts.attach_kind', PostAttachmentKind.options, () => columnValues('posts', 'attach_kind')],
+    ['ReactionKind ↔ post_reactions.kind', ReactionKind.options, () => columnValues('post_reactions', 'kind')],
+    ['PostActorKind ↔ post_reactions.reactor_kind', PostActorKind.options, () => columnValues('post_reactions', 'reactor_kind')],
+    ['PostActorKind ↔ post_comments.author_kind', PostActorKind.options, () => columnValues('post_comments', 'author_kind')],
+    ['PostCommentStatus ↔ post_comments.status', PostCommentStatus.options, () => columnValues('post_comments', 'status')],
+    ['Trust (agent and human comment trusts) ↔ post_comments.trust', ['teammate', 'stranger', 'human_comment', 'system'], () => columnValues('post_comments', 'trust')],
+    ['ScrollState ↔ scroll_sessions.state', ScrollState.options, () => columnValues('scroll_sessions', 'state')],
+    ['ScrollTrigger ↔ scroll_sessions.trigger', ScrollTrigger.options, () => columnValues('scroll_sessions', 'trigger')],
+    ['ScrollStepKind ↔ scroll_steps.kind', ScrollStepKind.options, () => columnValues('scroll_steps', 'kind')],
+    ['ReactionKind ↔ scroll_steps.reaction', ReactionKind.options, () => columnValues('scroll_steps', 'reaction')],
+    ['LearningStatus ↔ scroll_learnings.status', LearningStatus.options, () => columnValues('scroll_learnings', 'status')],
   ];
 
   it.each(cases)('%s', (_name, schemaValues, sqlValues) => {
     expect(sorted(sqlValues())).toEqual(sorted(schemaValues));
+  });
+
+  it('a later ALTER that replaces a check overrides the create-table values (events.type, widened in 0009)', () => {
+    const created = /create table public\.events \([\s\S]*?type text not null check \(type in \(([^)]*)\)\)/.exec(SQL);
+    expect(created?.[1]).toBeDefined();
+    const original = literals(created?.[1] ?? '');
+    expect(original).not.toContain('post.new');
+    expect(alteredValues('events', 'type')).toContain('post.new');
+    expect(columnValues('events', 'type')).toEqual(alteredValues('events', 'type'));
+    // The widened check keeps every original type (the CHECK stays strict, no wildcard).
+    for (const t of original) expect(columnValues('events', 'type')).toContain(t);
+  });
+
+  it('content_exposures.content_kind includes post (widened in 0009)', () => {
+    expect(sorted(columnValues('content_exposures', 'content_kind'))).toEqual(
+      sorted(['highlight', 'activity', 'component', 'suggestion', 'post']),
+    );
+  });
+
+  it('the prefixed_id domain lists exactly the ID_PREFIXES (widened in 0009)', () => {
+    const all = [...SQL.matchAll(/(?:create domain y_private\.prefixed_id as text\s+|alter domain y_private\.prefixed_id add constraint prefixed_id_check\s+)check \(value ~ '\^\(([a-z|]+)\)_/g)];
+    const last = all.at(-1)?.[1] ?? '';
+    expect(sorted(last.split('|'))).toEqual(sorted(Object.values(ID_PREFIXES)));
   });
 
   it('ScreenLayer ↔ domain screen_layers (l0 required)', () => {

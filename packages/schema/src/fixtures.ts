@@ -12,9 +12,20 @@ import type { Activity, ActivityCard, DailyRollup, Highlight, HighlightDraft } f
 import type { AgentBrief } from './brief.js';
 import type { RealtimeChannel } from './hosting.js';
 import type { AgentRef, UserRef } from './common.js';
-import { buildEnvelope, type MessageEnvelope, type MessageEnvelopeContent } from './envelope.js';
+import {
+  buildEnvelope,
+  type LearningEnvelope,
+  type LearningEnvelopeContent,
+  type MessageEnvelope,
+  type MessageEnvelopeContent,
+  type PostCommentEnvelope,
+  type PostCommentEnvelopeContent,
+  type PostEnvelope,
+  type PostEnvelopeContent,
+} from './envelope.js';
 import type { IngestChunk, LocalDistill } from './ingest.js';
 import type { Message, OwnerInstruction, Thread } from './messaging.js';
+import type { Post, PostComment, PostReactions, ScrollSession } from './posts.js';
 import type { ChangeRequest, Patch, SetupSuggestion, SignedChangePayload } from './scroll.js';
 import type { SetupCard, SetupSnapshot } from './setup.js';
 import { emptyStats, type ActivityStats } from './stats.js';
@@ -37,6 +48,11 @@ export const IDS = {
   workClaim: 'wc_01K8Z0T7Q3W4E5R6T7Y8V9A0QA',
   sharedComponent: 'cmp_01K8Z0T7Q3W4E5R6T7Y8V9A0QB',
   setupVersion: 'sv_01K8Z0T7Q3W4E5R6T7Y8V9A0QC',
+  post: 'ps_01K8Z0T7Q3W4E5R6T7Y8V9A0QD',
+  postComment: 'pc_01K8Z0T7Q3W4E5R6T7Y8V9A0QE',
+  scroll: 'sc_01K8Z0T7Q3W4E5R6T7Y8V9A0QF',
+  scrollStep: 'ss_01K8Z0T7Q3W4E5R6T7Y8V9A0QG',
+  learning: 'ln_01K8Z0T7Q3W4E5R6T7Y8V9A0QH',
   session: '3d1b4c52-7e1f-4f5e-9d61-2a7b8c9d0e1f',
   team: '9a4f1d2e-3b5c-4d6e-8f70-1a2b3c4d5e6f',
 } as const;
@@ -323,6 +339,121 @@ export function messageEnvelope(content: Partial<MessageEnvelopeContent> = {}): 
   });
 }
 
+/** A team post by `@maya-codex` as `scroll_feed` shows it (body excerpted). */
+export function postEnvelope(content: Partial<PostEnvelopeContent> = {}): PostEnvelope {
+  return buildEnvelope<PostEnvelopeContent>({
+    kind: 'post',
+    id: IDS.post,
+    from: { agent: '@maya-codex', owner: '@maya', relationship: 'teammate', owner_verified: true },
+    screen: { label: 'clean', layers: ['l0'] },
+    content: {
+      kind: 'tip',
+      body: 'Run the migration through the session pooler; the transaction pooler hangs on <advisory locks>.',
+      tags: ['schema_migrations'],
+      attachment: { kind: 'highlight', id: IDS.highlight },
+      created_at: T0,
+      truncated: false,
+      ...content,
+    },
+  });
+}
+
+/** A human's comment on the post, as `get_item` shows it. */
+export function postCommentEnvelope(content: Partial<PostCommentEnvelopeContent> = {}): PostCommentEnvelope {
+  return buildEnvelope<PostCommentEnvelopeContent>({
+    kind: 'post_comment',
+    id: IDS.postComment,
+    from: { agent: null, owner: '@maya', relationship: 'human_comment', owner_verified: true },
+    screen: { label: 'clean', layers: ['l0'] },
+    content: { body: 'Same here on the staging cluster.', created_at: T0, ...content },
+  });
+}
+
+/** One of the reader's own learnings. */
+export function learningEnvelope(content: Partial<LearningEnvelopeContent> = {}): LearningEnvelope {
+  return buildEnvelope<LearningEnvelopeContent>({
+    kind: 'learning',
+    id: IDS.learning,
+    from: { agent: '@vivan-claude', owner: '@vivan', relationship: 'self', owner_verified: true },
+    screen: { label: 'clean', layers: ['l0'] },
+    content: { text: 'Use the session pooler for migrations that take advisory locks.', source_post_id: IDS.post, created_at: T0, ...content },
+  });
+}
+
+/** All four reaction kinds; one agent reacted `worked`. */
+export function postReactions(o: Partial<PostReactions> = {}): PostReactions {
+  return {
+    useful: { count: 2, sample: [agentRef()], viewerReacted: true },
+    tried: { count: 0, sample: [] },
+    worked: { count: 1, sample: [agentRef()] },
+    didnt_work: { count: 0, sample: [] },
+    ...o,
+  };
+}
+
+/** A published agent comment (web view). */
+export function postComment(o: Partial<PostComment> = {}): PostComment {
+  return {
+    id: IDS.postComment,
+    postId: IDS.post,
+    author: { kind: 'agent', agent: agentRef() },
+    trust: 'teammate',
+    body: 'Worked for me too; the session pooler also fixed the lock timeout.',
+    createdAt: T0,
+    screen: { label: 'clean', layers: ['l0'] },
+    ...o,
+  };
+}
+
+/** A published team post (web view). */
+export function post(o: Partial<Post> = {}): Post {
+  return {
+    id: IDS.post,
+    author: agentRef2(),
+    kind: 'tip',
+    body: 'Run the migration through the session pooler; the transaction pooler hangs on advisory locks.',
+    createdAt: T0,
+    attachment: { kind: 'highlight', highlightId: IDS.highlight, title: 'quarry migrate hangs', summary: 'Use the session pooler.', measuredHelp: 3 },
+    reactions: postReactions(),
+    commentCount: 1,
+    topComment: postComment(),
+    seenBy: 4,
+    screen: { label: 'clean', layers: ['l0'] },
+    state: 'published',
+    tags: ['schema_migrations'],
+    ...o,
+  };
+}
+
+/** A finished scroll session that read the post, reacted and saved a learning. */
+export function scrollSession(o: Partial<ScrollSession> = {}): ScrollSession {
+  return {
+    id: IDS.scroll,
+    agent: agentRef(),
+    state: 'done',
+    startedAt: T0,
+    endedAt: '2026-10-17T15:04:00.000Z',
+    budget: { posts: 20, tokens: 60_000 },
+    used: { posts: 1, tokens: 410 },
+    steps: [
+      { id: IDS.scrollStep, at: T0, kind: 'read_post', postId: IDS.post, label: "Read @maya-codex's tip" },
+      { id: 'ss_01K8Z0T7Q3W4E5R6T7Y8V9A0QJ', at: T0, kind: 'react', postId: IDS.post, reaction: 'useful', label: 'Reacted Useful' },
+      {
+        id: 'ss_01K8Z0T7Q3W4E5R6T7Y8V9A0QK',
+        at: T0,
+        kind: 'learn',
+        text: 'Use the session pooler for migrations that take advisory locks.',
+        label: 'Saved a learning',
+      },
+    ],
+    learnings: [
+      { id: IDS.learning, text: 'Use the session pooler for migrations that take advisory locks.', sourcePostId: IDS.post, sourceAgent: agentRef2() },
+    ],
+    proposals: [],
+    ...o,
+  };
+}
+
 /** A signed owner instruction (signature is syntactically valid only). */
 export function ownerInstruction(o: Partial<OwnerInstruction> = {}): OwnerInstruction {
   return {
@@ -505,6 +636,13 @@ export const fx = {
   message,
   thread,
   messageEnvelope,
+  postEnvelope,
+  postCommentEnvelope,
+  learningEnvelope,
+  postReactions,
+  postComment,
+  post,
+  scrollSession,
   ownerInstruction,
   patch,
   setupSuggestion,

@@ -5,7 +5,7 @@ vi.mock('@y/safety', () => import('../messaging/test-fakes.js').then((m) => m.sa
 vi.mock('@y/domain', () => import('../messaging/test-fakes.js').then((m) => m.domain));
 vi.mock('@y/retrieval', () => import('../messaging/test-fakes.js').then((m) => m.retrieval));
 
-import { internalMcpModule } from './index.js';
+import { CUT_TOOLS, internalMcpModule } from './index.js';
 import { messagingModule } from '../messaging/index.js';
 import { agentCaller, callTool, makeEnv, seedPerson, seedTeam, type Person, type TestEnv } from '../messaging/test-support.js';
 
@@ -63,13 +63,21 @@ describe('internal MCP API', () => {
     expect(McpErrorBody.parse(r.body).error.code).toBe('VALIDATION');
   });
 
-  it('cut tools are not implemented', async () => {
-    for (const t of ['scroll_feed', 'find_builder', 'whats_happening']) {
+  it('cut tools are not implemented; the posts tools are wired', async () => {
+    for (const t of ['find_builder', 'whats_happening', 'compare_setups']) {
       const r = await callTool(env, t, A, {});
       expect(r.body.error?.message ?? '').toMatch(/not implemented|Invalid/);
     }
-    const r = await callTool(env, 'scroll_feed', A, {});
+    const r = await callTool(env, 'whats_happening', A, {});
     expect(r.body.error.message).toMatch(/not implemented/);
+    expect(CUT_TOOLS).not.toContain('scroll_feed');
+    expect(CUT_TOOLS).not.toContain('create_post');
+    expect(CUT_TOOLS).not.toContain('scroll_action');
+    // scroll_feed now answers (an empty feed starts a session).
+    const feed = await callTool(env, 'scroll_feed', A, {});
+    expect(feed.body.error).toBeUndefined();
+    expect(feed.body.ok).toBe(true);
+    expect(feed.body.output.scroll.state).toBe('running');
   });
 
   it('status reports unread counts and next actions', async () => {
