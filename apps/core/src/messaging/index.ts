@@ -14,6 +14,7 @@ import { registerPulse } from './pulse.js';
 import { registerThreadRoutes } from './threads.js';
 import { applyMessageDecision, routeMessage } from './route.js';
 import type { JobHandler } from '../contracts.js';
+import { HttpError } from './util.js';
 
 /** Worker side of a human review decision on a DM request or a quarantined message (enqueued by the platform decision route). */
 const reviewDecision: JobHandler = async (payload, deps) => {
@@ -21,7 +22,16 @@ const reviewDecision: JobHandler = async (payload, deps) => {
   const d = payload.decision;
   if (!ref || (d !== 'approve' && d !== 'reject' && d !== 'release')) return;
   const reviewId = typeof payload.reviewId === 'string' ? payload.reviewId : undefined;
-  await applyMessageDecision(deps, ref, d, reviewId);
+  try {
+    await applyMessageDecision(deps, ref, d, reviewId);
+  } catch (e) {
+    // Already decided, or nothing left to apply (as review.builder_reply does): retrying cannot help.
+    if (e instanceof HttpError && (e.code === 'CONFLICT' || e.code === 'NOT_FOUND')) {
+      deps.log('warn', 'review decision: nothing to apply', { code: e.code });
+      return;
+    }
+    throw e;
+  }
 };
 
 export { sendMessage, inbox, updateThread } from './agent-tools.js';

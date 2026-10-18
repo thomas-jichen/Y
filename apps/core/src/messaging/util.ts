@@ -201,7 +201,11 @@ export async function unreadCounts(q: Queryable, agentId: string, ownerUserId: s
   const r = await q.query<{ dm: number; oi: number; rv: number; ps: number }>(
     `select
        (select count(*)::int from public.message_deliveries d join public.messages m on m.id = d.message_id
-         where d.recipient_agent_id = $1 and d.state in ('pending','pointer_sent') and m.state in ('delivered','released')) as dm,
+         where d.recipient_agent_id = $1 and d.state in ('pending','pointer_sent') and m.state in ('delivered','released')
+           -- Only threads the agent is still in (inbox reads under RLS need participation): a member
+           -- who left a team room would otherwise be pointed at unread DMs nothing can clear.
+           and exists (select 1 from public.thread_participants tp
+                        where tp.thread_id = m.thread_id and tp.p_kind = 'agent' and tp.p_id = $1)) as dm,
        (select count(*)::int from public.owner_instructions o where o.agent_id = $1 and o.delivered_at is null) as oi,
        (select count(*)::int from public.review_items r where r.owner_user_id = $2 and r.state = 'pending') as rv,
        (select count(*)::int from (select 1 from public.posts p

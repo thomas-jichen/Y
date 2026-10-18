@@ -201,6 +201,20 @@ export async function builderReplyDetail(deps: CoreDeps, caller: Caller, item: R
   return { item, question, draft, thread: detail.thread };
 }
 
+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9_.:-]{8,128}$/;
+
+/** True once 9103 is applied (y_private bookkeeping tables); older databases keep the previous behaviour. */
+async function hasPrivateTable(deps: CoreDeps, name: 'thread_pauses' | 'owner_instruction_keys'): Promise<boolean> {
+  return deps.db.asService(async (s) =>
+    (await s.query<{ ok: boolean }>(`select to_regclass($1) is not null as ok`, [`y_private.${name}`])).rows[0]?.ok === true);
+}
+
+/** The 9103 pause trigger refusing a human who is not the pauser (or a teammate of theirs). */
+function isPauseOwnerError(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown } | null;
+  return !!e && e.code === '42501' && typeof e.message === 'string' && e.message.includes('only the owner who paused this thread');
+}
+
 export function registerThreadRoutes(app: App, deps: CoreDeps): void {
   const human = async (authorization: string | undefined) => {
     const caller = await requireCaller(deps, authorization);
@@ -309,7 +323,13 @@ export function registerThreadRoutes(app: App, deps: CoreDeps): void {
       const threadId = bare('thread', c.req.param('id'));
       const body = InstructRequest.safeParse(await c.req.json().catch(() => null));
       if (!body.success) return c.json(validationError(body.error), 400);
-      const out = await issueOwnerInstruction(deps, { userId: caller.userId, claims: caller.claims, threadId, body: body.data.body, via: 'web' });
+      // Idempotency-Key (UI.md §5 rule 8): a double submit or a retry returns the instruction already issued.
+      // A malformed key is ignored (the request behaves as it did without one).
+      const key = c.req.header('idempotency-key');
+      const idempotencyKey = key && IDEMPOTENCY_KEY_RE.test(key) && (await hasPrivateTable(deps, 'owner_instruction_keys')) ? key : undefined;
+      const out = await issueOwnerInstruction(deps, {
+        userId: caller.userId, claims: caller.claims, threadId, body: body.data.body, via: 'web', ...(idempotencyKey ? { idempotencyKey } : {}),
+      });
       const res: InstructResponse = { id: out.id, state: out.state };
       return c.json(res);
     } catch (err) { return errorResponse(c, err, deps); }
@@ -320,6 +340,8 @@ export function registerThreadRoutes(app: App, deps: CoreDeps): void {
       try {
         const caller = await human(c.req.header('authorization'));
         const threadId = bare('thread', c.req.param('id'));
+        // Who paused it is recorded by the database (9103 trigger, same statement): only they or a
+        // teammate of theirs lift the pause, whichever way the row is updated.
         await deps.db.asUser(caller.claims, async (tx) => {
           const t = await tx.query<{ state: string }>(`select state from public.threads where id = $1`, [threadId]);
           const cur = t.rows[0]?.state;
@@ -330,7 +352,14 @@ export function registerThreadRoutes(app: App, deps: CoreDeps): void {
               : cur === 'paused_by_owner' || cur === 'resolved';
           if (cur === next) return;
           if (!allowed) throw new HttpError('CONFLICT', `cannot ${action} a ${cur} thread`);
-          await tx.query(`update public.threads set state = $2 where id = $1`, [threadId, next]);
+          try {
+            await tx.query(`update public.threads set state = $2 where id = $1`, [threadId, next]);
+          } catch (err) {
+            if (isPauseOwnerError(err)) {
+              throw new HttpError('SCOPE_FORBIDDEN', 'only the owner who paused this thread (or a teammate of theirs) can lift the pause');
+            }
+            throw err;
+          }
         });
         return c.json(await threadView(deps, caller, threadId));
       } catch (err) { return errorResponse(c, err, deps); }

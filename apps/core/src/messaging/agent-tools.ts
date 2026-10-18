@@ -5,12 +5,15 @@
  * No function here writes dm_permissions (I4).
  */
 import { deliveryTransition, sendPrecheck } from '@y/domain';
-import { makeEnvelope } from '@y/safety';
+import { makeEnvelope, normalizeUntrusted } from '@y/safety';
 import {
   CROSS_OWNER_BODY_MAX,
+  InboxOutput,
+  InboxOwnerInstruction,
+  MESSAGE_BODY_MAX,
+  MessageEnvelope,
   OWNER_INSTRUCTION_NOTE,
   ulid,
-  type InboxOutput,
   type InboxThreadSummary,
   type ToolInput,
   type ToolOutput,
@@ -170,7 +173,9 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
   const threadFilter = input.thread_id ? bare('thread', input.thread_id) : null;
   const cursor = input.cursor ? bare('message', input.cursor) : null;
 
-  // Phase 1 (RLS, as the agent): what this agent may read; mark it seen.
+  // Phase 1 (RLS, as the agent): what this agent may read. Nothing is marked
+  // seen or delivered until the output is built and valid (phase 3): a read
+  // that fails must not lose messages or owner instructions.
   const phase1 = await deps.db.asUser(caller.claims, async (tx) => {
     const r = await tx.query<InboxRow>(
       `select m.id as message_id, m.thread_id, t.kind as thread_kind, t.subject, m.sender_kind, m.sender_id, m.sender_owner_id,
@@ -190,39 +195,26 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
     const rows = r.rows.slice(0, input.limit);
     const more = r.rows.length > input.limit;
 
-    for (const row of rows) {
-      const t = deliveryTransition(row.delivery_state as 'pending', 'seen');
-      if (t.ok && t.state !== row.delivery_state) {
-        await tx.query(
-          `update public.message_deliveries set state = $3, seen_at = now() where message_id = $1 and recipient_agent_id = $2`,
-          [row.message_id, agentId, t.state]);
-      }
-    }
-
     // Owner instructions: a separate, signed channel (never enveloped).
-    const oi = await tx.query<{ id: string; thread_id: string | null; body: string; verified_via: 'web' | 'slack'; kid: string; sig: string; created_at: Date | string; delivered_at: Date | string | null }>(
+    const oi = await tx.query<OiRow>(
       `select id, thread_id, body, verified_via, kid, sig, created_at, delivered_at from public.owner_instructions
         where agent_id = $1 and ($2::boolean = false or delivered_at is null) and ($3::text is null or thread_id = $3)
         order by id desc limit 20`,
       [agentId, input.unread_only, threadFilter],
     );
-    const undelivered = oi.rows.filter((o) => !o.delivered_at).map((o) => o.id);
-    if (undelivered.length) {
-      await tx.query(`update public.owner_instructions set delivered_at = now() where agent_id = $1 and id = any($2::text[])`, [agentId, undelivered]);
-    }
     const threadIds = [...new Set(rows.map((x) => x.thread_id))].slice(0, 20);
     const loaded = await loadThreads(tx, agentId, threadIds);
     return { rows, more, oi: oi.rows, loaded };
   });
 
-  // Phase 2 (identity metadata only): handles and relationships.
+  // Phase 2 (identity metadata only): handles and relationships; build the output.
   const { rows, more, oi, loaded } = phase1;
   const senderAgentIds = [...new Set(rows.filter((x) => x.sender_kind === 'agent' && x.sender_id).map((x) => x.sender_id!))];
   const senderUserIds = [...new Set(rows.filter((x) => x.sender_kind === 'user' && x.sender_id).map((x) => x.sender_id!))];
   const { infos, users } = await deps.db.asService(async (s) => ({ infos: await agentInfos(s, senderAgentIds), users: await userInfos(s, senderUserIds) }));
-  const threads = await buildSummaries(deps, caller, agentId, loaded);
 
   const messages: InboxOutput['messages'] = [];
+  const returned: InboxRow[] = [];
   for (const row of rows) {
     const isAgent = row.sender_kind === 'agent';
     const info = isAgent && row.sender_id ? infos.get(row.sender_id) : undefined;
@@ -234,25 +226,40 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
       : row.sender_owner_id === caller.userId ? 'self' : row.trust === 'teammate' ? 'teammate' : row.trust === 'contact' ? 'contact'
         // A customer's agent asking this (builder) agent in a support thread.
         : row.trust === 'customer' ? 'customer' : 'stranger';
-    const content: Record<string, unknown> = { body: row.body, intent: row.intent, urgency: row.urgency, created_at: toIso(row.created_at) };
-    if (row.subject) content.subject = row.subject;
+    // Bodies are stored as sent; normalization (NFKC) can lengthen them past the
+    // envelope's limits, so fit them after normalizing (makeEnvelope's pass is idempotent).
+    const content: Record<string, unknown> = { body: fitNormalized(row.body, MESSAGE_BODY_MAX), intent: row.intent, urgency: row.urgency, created_at: toIso(row.created_at) };
+    if (row.subject) content.subject = fitNormalized(row.subject, SUBJECT_MAX);
     const userOwner = row.sender_kind === 'user' && row.sender_id ? users.get(row.sender_id) : undefined;
-    messages.push(makeEnvelope({
-      kind: row.thread_kind,
-      id: wire('message', row.message_id),
-      thread: wire('thread', row.thread_id),
-      from: {
-        agent: info ? atHandle(info.handle) : null,
-        owner: info ? atHandle(info.ownerHandle) : userOwner ? atHandle(userOwner.handle) : null,
-        relationship: relationship as 'teammate',
-        owner_verified: true,
-      },
-      screen: { label: (row.screen_label ?? 'clean') as 'clean', layers: (row.screen_layers ?? ['l0']) as ['l0'] },
-      content,
-    }) as InboxOutput['messages'][number]);
+    let env: InboxOutput['messages'][number] | null = null;
+    try {
+      const built = makeEnvelope({
+        kind: row.thread_kind,
+        id: wire('message', row.message_id),
+        thread: wire('thread', row.thread_id),
+        from: {
+          agent: info ? atHandle(info.handle) : null,
+          owner: info ? atHandle(info.ownerHandle) : userOwner ? atHandle(userOwner.handle) : null,
+          relationship: relationship as 'teammate',
+          owner_verified: true,
+        },
+        screen: { label: (row.screen_label ?? 'clean') as 'clean', layers: (row.screen_layers ?? ['l0']) as ['l0'] },
+        content,
+      });
+      if (MessageEnvelope.safeParse(built).success) env = built as InboxOutput['messages'][number];
+    } catch { env = null; }
+    if (!env) {
+      // One bad row never takes the rest of the inbox down; it stays unread (not lost).
+      deps.log('error', 'inbox message failed its envelope contract; left unread', { messageId: wire('message', row.message_id) });
+      continue;
+    }
+    messages.push(env);
+    returned.push(row);
   }
 
-  const ownerInstructions: InboxOutput['owner_instructions'] = oi.map((o) => {
+  const ownerInstructions: InboxOutput['owner_instructions'] = [];
+  const returnedOi: OiRow[] = [];
+  for (const o of oi) {
     const item: InboxOutput['owner_instructions'][number] = {
       id: wire('ownerInstruction', o.id),
       agent_id: agentId,
@@ -264,13 +271,66 @@ export async function inbox(deps: CoreDeps, caller: Caller, input: ToolInput<'in
     };
     if (o.thread_id) item.thread_id = wire('thread', o.thread_id);
     if (o.delivered_at) item.delivered_at = toIso(o.delivered_at);
-    return item;
+    if (!InboxOwnerInstruction.safeParse(item).success) {
+      deps.log('error', 'owner instruction failed its contract; left undelivered', { ownerInstructionId: item.id });
+      continue;
+    }
+    ownerInstructions.push(item);
+    returnedOi.push(o);
+  }
+
+  // Thread summaries report what is still unread AFTER this read (phase 3 marks the returned
+  // deliveries seen), as they did when marking ran before the counts were loaded.
+  const seenNow = new Map<string, number>();
+  for (const row of returned) {
+    const t = deliveryTransition(row.delivery_state as 'pending', 'seen');
+    if ((row.delivery_state === 'pending' || row.delivery_state === 'pointer_sent') && t.ok && t.state !== row.delivery_state) {
+      seenNow.set(row.thread_id, (seenNow.get(row.thread_id) ?? 0) + 1);
+    }
+  }
+  const threads = await buildSummaries(deps, caller, agentId, {
+    ...loaded, threads: loaded.threads.map((th) => ({ ...th, unread: Math.max(0, th.unread - (seenNow.get(th.id) ?? 0)) })),
   });
 
   const out: InboxOutput = { messages, owner_instructions: ownerInstructions, threads };
   const last = rows[rows.length - 1];
   if (more && last) out.next_cursor = wire('message', last.message_id);
+  if (!InboxOutput.safeParse(out).success) {
+    // Nothing was marked yet: the agent can retry without losing anything.
+    throw new HttpError('INTERNAL', 'tool output failed validation');
+  }
+
+  // Phase 3 (RLS, as the agent): mark exactly what is returned seen / delivered.
+  await deps.db.asUser(caller.claims, async (tx) => {
+    for (const row of returned) {
+      const t = deliveryTransition(row.delivery_state as 'pending', 'seen');
+      if (t.ok && t.state !== row.delivery_state) {
+        await tx.query(
+          `update public.message_deliveries set state = $3, seen_at = now()
+            where message_id = $1 and recipient_agent_id = $2 and state = $4`,
+          [row.message_id, agentId, t.state, row.delivery_state]);
+      }
+    }
+    const undelivered = returnedOi.filter((o) => !o.delivered_at).map((o) => o.id);
+    if (undelivered.length) {
+      await tx.query(`update public.owner_instructions set delivered_at = now() where agent_id = $1 and id = any($2::text[]) and delivered_at is null`, [agentId, undelivered]);
+    }
+  });
   return out;
+}
+
+type OiRow = { id: string; thread_id: string | null; body: string; verified_via: 'web' | 'slack'; kid: string; sig: string; created_at: Date | string; delivered_at: Date | string | null };
+
+const SUBJECT_MAX = 120;
+
+/** Normalize like makeEnvelope does, then cut to `max` (as search.ts `fit()` does for highlights). */
+export function fitNormalized(s: string, max: number): string {
+  const t = normalizeUntrusted(s).text;
+  if (t.length <= max) return t;
+  let cut = `${t.slice(0, max - 3).trimEnd()}...`;
+  // A cut can only shrink under NFKC, but stay safe whatever the normalizer does.
+  while (normalizeUntrusted(cut).text.length > max && cut.length > 3) cut = `${cut.slice(0, cut.length - 4).trimEnd()}...`;
+  return cut;
 }
 
 export interface LoadedThreads {
@@ -294,6 +354,9 @@ export async function loadThreads(tx: Tx, agentId: string, threadIds: string[]):
   return { threads: t.rows, parts: parts.rows };
 }
 
+/** InboxThreadSummary.participants is .max(20). */
+const SUMMARY_PARTICIPANTS_MAX = 20;
+
 export async function buildSummaries(deps: CoreDeps, caller: Caller, agentId: string, loaded: LoadedThreads): Promise<InboxThreadSummary[]> {
   if (loaded.threads.length === 0) return [];
   const agentIds = [...new Set([...loaded.parts.filter((p) => p.p_kind === 'agent').map((p) => p.p_id), ...loaded.threads.map((t) => t.assigned_agent_id).filter((x): x is string => !!x)])];
@@ -305,14 +368,22 @@ export async function buildSummaries(deps: CoreDeps, caller: Caller, agentId: st
     return { infos, rels };
   });
   return loaded.threads.map((th) => {
-    const participants: InboxThreadSummary['participants'] = [];
+    const all: { entry: InboxThreadSummary['participants'][number]; rank: number }[] = [];
     for (const p of loaded.parts) {
       if (p.thread_id !== th.id || p.p_kind !== 'agent' || p.p_id === agentId) continue;
       const info = infos.get(p.p_id);
       const rel = rels.get(p.owner_user_id) ?? 'stranger';
       // Support threads: the asking side is a 'customer' to the builder (an existing enum value).
-      if (info) participants.push({ handle: atHandle(info.handle), relationship: rel === 'stranger' && p.role === 'customer' ? 'customer' : rel });
+      if (!info) continue;
+      // Kept first when a big thread (a team room) has more than the summary's limit:
+      // the assigned agent, the builder / customer roles, then the reader's own and teammates' agents.
+      const rank = p.p_id === th.assigned_agent_id ? 0 : p.role === 'builder' || p.role === 'customer' ? 1 : rel === 'self' || rel === 'teammate' ? 2 : 3;
+      all.push({ entry: { handle: atHandle(info.handle), relationship: rel === 'stranger' && p.role === 'customer' ? 'customer' : rel }, rank });
     }
+    // Small threads keep their full list in its original order.
+    const participants: InboxThreadSummary['participants'] = all.length <= SUMMARY_PARTICIPANTS_MAX
+      ? all.map((x) => x.entry)
+      : all.map((x, i) => ({ ...x, i })).sort((a, b) => a.rank - b.rank || a.i - b.i).slice(0, SUMMARY_PARTICIPANTS_MAX).map((x) => x.entry);
     return { id: wire('thread', th.id), kind: th.kind, state: th.state, unread: th.unread, last_message_at: toIso(th.last_message_at), participants, claims: [],
       assigned_to: th.assigned_agent_id && infos.get(th.assigned_agent_id) ? atHandle(infos.get(th.assigned_agent_id)!.handle) : null };
   });
