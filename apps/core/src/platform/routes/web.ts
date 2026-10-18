@@ -22,7 +22,8 @@ import {
   type ReviewKind,
 } from '@y/schema';
 import type { Caller, CoreDeps, PushEvent } from '../../contracts.js';
-import { authenticate } from '../http.js';
+import { authenticate, bearerFrom } from '../http.js';
+import { takeToken, type BucketSpec } from '../rate-limit.js';
 import { loadActivities, reviewItemsFromRows } from '../mappers.js';
 import { realtimeChannelFor } from '../realtime-channel.js';
 import { requireRecentLogin } from '../web-guard.js';
@@ -35,17 +36,36 @@ import { bareId, fail, iso, num, parseOr, readJson, sha256Hex } from '../util.js
 const PAGE = 20;
 
 /**
- * Per-process limits of GET /api/v1/stream. Exported so tests can tighten them.
+ * Limits of GET /api/v1/stream. Exported so tests can tighten them.
  * - maxPerUser: open streams per user in this process (#85); more get RATE_LIMITED. A stream that
  *   has not looped for 3 heartbeats no longer counts, so a leaked entry can't lock a user out.
- * - reauthMs: how often an open stream re-checks its caller (#83): a bearer is verified again and
- *   the user must still exist; otherwise the stream ends (EventSource reconnects and re-authenticates).
- * - replayPages: Last-Event-ID replay reads pages of 100 missed events, at most this many (#47).
+ * - maxTotal: open streams in this process across all users (#85), so minting many accounts
+ *   can't open unbounded streams (and serverless pollers, which are at most one per stream).
+ * - connect: token bucket on stream connects per user, shared by every instance (api.take_token),
+ *   so open/close churn and Last-Event-ID replays can't hammer the DB. The web client reconnects
+ *   at most about once a second and falls back to polling after three refusals.
+ * - reauthMs: how often an open stream re-checks its caller (#83): a bearer (header or y_session
+ *   cookie) is verified again and the user must still be active; otherwise the stream ends
+ *   (EventSource reconnects and re-authenticates).
+ * - replayMax: Last-Event-ID replay reads at most this many missed events in one query (#47). When
+ *   it is reached the stream sends `event: resync` after the replayed events and ends, so the
+ *   client reconnects from the last replayed id (or refetches) instead of silently missing events.
  */
-export const STREAM_LIMITS = { maxPerUser: 20, reauthMs: 5 * 60_000, replayPages: 10 };
-const REPLAY_PAGE = 100;
+export const STREAM_LIMITS: { maxPerUser: number; maxTotal: number; connect: BucketSpec; reauthMs: number; replayMax: number } = {
+  maxPerUser: 20,
+  maxTotal: 2000,
+  connect: { rate: 1 / 2, burst: 60 },
+  reauthMs: 5 * 60_000,
+  replayMax: 1000,
+};
 /** Open streams per deps (one app) → user → stream → last loop time (ms). */
 const openStreams = new WeakMap<CoreDeps, Map<string, Map<symbol, number>>>();
+/** Streams this app counts as open (all users). For tests and diagnostics. */
+export function openStreamCount(deps: CoreDeps): number {
+  let n = 0;
+  for (const slots of openStreams.get(deps)?.values() ?? []) n += slots.size;
+  return n;
+}
 
 /**
  * Feed cursors carry published_at at full (microsecond) precision: a JS Date keeps only
@@ -359,18 +379,39 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
     const caller = await authenticate(c, deps, 'web');
     if (caller instanceof Response) return caller;
     const lastId = c.req.header('last-event-id');
-    // authenticate() takes ?token= only without an Authorization header; with one, the bearer is re-verified later.
-    const authorization = c.req.header('authorization');
+    // authenticate() takes ?token= only without an Authorization header; otherwise it used bearerFrom()
+    // (the header, else the y_session cookie), and that same bearer is re-verified later (#83).
+    const viaStreamToken = !!c.req.query('token') && !c.req.header('authorization');
+    const authorization = viaStreamToken ? undefined : bearerFrom(c);
 
+    let rl: Awaited<ReturnType<typeof takeToken>> = { allowed: true };
+    try {
+      rl = await deps.db.asUser(caller.claims, (tx) => takeToken(tx, 'web:stream', [caller.userId], STREAM_LIMITS.connect));
+    } catch (e) {
+      deps.log('warn', 'stream connect rate check failed', { err: String(e) }); // fail open: a DB blip must not refuse streams
+    }
+    if (!rl.allowed) {
+      return fail(c, 'RATE_LIMITED', 'too many event stream connections; retry shortly', { retryable: true, retryAfterS: rl.retryAfterS });
+    }
+
+    // Count and register synchronously (no await from here to mine.set), so concurrent connects can't overshoot.
     let byUser = openStreams.get(deps);
     if (!byUser) openStreams.set(deps, (byUser = new Map()));
-    let mine = byUser.get(caller.userId);
-    if (!mine) byUser.set(caller.userId, (mine = new Map()));
     const opened = Date.now();
-    for (const [k, at] of mine) if (opened - at > STREAM_HEARTBEAT_S * 3000) mine.delete(k);
-    if (mine.size >= STREAM_LIMITS.maxPerUser) {
+    let total = 0;
+    for (const [uid, slots] of byUser) {
+      for (const [k, at] of slots) if (opened - at > STREAM_HEARTBEAT_S * 3000) slots.delete(k);
+      if (slots.size === 0) byUser.delete(uid);
+      total += slots.size;
+    }
+    let mine = byUser.get(caller.userId);
+    if (mine && mine.size >= STREAM_LIMITS.maxPerUser) {
       return fail(c, 'RATE_LIMITED', 'too many open event streams for this account; close a tab and retry', { retryable: true, retryAfterS: 30 });
     }
+    if (total >= STREAM_LIMITS.maxTotal) {
+      return fail(c, 'RATE_LIMITED', 'the event stream is busy; retry shortly', { retryable: true, retryAfterS: 30 });
+    }
+    if (!mine) byUser.set(caller.userId, (mine = new Map()));
     const slot = Symbol('stream');
     mine.set(slot, opened);
     const streams = mine;
@@ -386,7 +427,7 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
           const again = await deps.auth.verifyBearer(authorization);
           if (!again || again.userId !== caller.userId) return false;
         }
-        const u = await deps.db.asService((s) => s.query('select 1 from public.users where id = $1', [caller.userId]));
+        const u = await deps.db.asService((s) => s.query(`select 1 from public.users where id = $1 and status = 'active'`, [caller.userId]));
         return (u.rowCount ?? 0) > 0;
       } catch (e) {
         deps.log('warn', 'stream re-auth check failed', { err: String(e) });
@@ -414,18 +455,31 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
         // Flush headers now: proxies (the Vite dev/preview proxy, some CDNs) hold them until the first body chunk.
         await stream.write(': open\n\n');
         if (lastId && /^\d{1,19}$/.test(lastId)) {
-          // my_events pages ascend by id; the replay goes ahead of any live event, oldest first (#47).
-          const missed: PushEvent[] = [];
-          let after = Number(lastId);
-          for (let page = 0; page < STREAM_LIMITS.replayPages; page++) {
-            const r = await deps.db.asUser(caller.claims, (tx) =>
-              tx.query<{ id: string | number; type: string; payload: Record<string, unknown> }>('select * from api.my_events($1, $2)', [after, REPLAY_PAGE]),
-            );
-            for (const row of r.rows) {
-              missed.push({ id: String(row.id), type: row.type, audienceAgentIds: [], audienceUserIds: [caller.userId], payload: row.payload ?? {} });
+          // my_events ascends by id; the replay goes ahead of any live event, oldest first (#47).
+          const r = await deps.db.asUser(caller.claims, (tx) =>
+            tx.query<{ id: string | number; type: string; payload: Record<string, unknown> }>('select * from api.my_events($1, $2)', [
+              Number(lastId),
+              STREAM_LIMITS.replayMax,
+            ]),
+          );
+          const missed: PushEvent[] = r.rows.map((row) => ({
+            id: String(row.id),
+            type: row.type,
+            audienceAgentIds: [],
+            audienceUserIds: [caller.userId],
+            payload: row.payload ?? {},
+          }));
+          if (missed.length >= STREAM_LIMITS.replayMax) {
+            // More may be missing: send what was read, then tell the client to resume from the last
+            // replayed id (EventSource does so on reconnect) instead of skipping ahead to live events.
+            let upTo = Number(lastId);
+            for (const e of missed) {
+              upTo = Math.max(upTo, Number(e.id));
+              const se = toStreamEvent({ type: e.type as never, payload: e.payload as never });
+              if (se) await stream.writeSSE({ id: String(e.id), event: se.type, data: JSON.stringify(se) });
             }
-            if (r.rows.length < REPLAY_PAGE) break;
-            after = Number(r.rows[r.rows.length - 1]!.id);
+            await stream.writeSSE({ event: 'resync', data: JSON.stringify({ type: 'resync', reason: 'replay_truncated', last_event_id: String(upTo) }) });
+            return;
           }
           queue.unshift(...missed);
         }

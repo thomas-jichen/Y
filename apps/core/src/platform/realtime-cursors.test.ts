@@ -10,7 +10,7 @@ import type { CoreConfig, PushEvent } from '../contracts.js';
 import { makeEnv, seedPerson, webCaller, type Person, type TestEnv } from '../messaging/test-support.js';
 import { PgPushBus } from './bus.js';
 import { migrateCore, platformModule } from './index.js';
-import { STREAM_LIMITS } from './routes/web.js';
+import { openStreamCount, STREAM_LIMITS } from './routes/web.js';
 import { ServerlessPushBus } from './serverless-bus.js';
 
 const quiet = () => undefined;
@@ -76,6 +76,27 @@ describe('event ids follow commit order (#33)', () => {
       [userId],
     );
     expect(ordered.rows.map((r) => r.n)).toEqual([1, 2, 3]);
+  });
+
+  it('a lone writer keeps its id (no re-draw when it already holds the newest id)', async () => {
+    let provisional = 0;
+    await db.asService(async (tx) => {
+      const ins = await tx.query<{ id: string }>(
+        `insert into public.events (type, audience_user_ids, payload) values ('presence', array[$1]::uuid[], '{"lone":true}') returning id`,
+        [userId],
+      );
+      provisional = Number(ins.rows[0]!.id);
+    });
+    const after = await db.query<{ id: string; last: string }>(
+      `select (select id from public.events where payload ? 'lone') as id, pg_sequence_last_value('public.events_id_seq') as last`,
+    );
+    expect(Number(after.rows[0]!.id)).toBe(provisional);
+    expect(Number(after.rows[0]!.last)).toBe(provisional);
+    // The commit-time lock never fails a commit on lock_timeout.
+    const cfg = await db.query<{ cfg: string[] }>(
+      `select proconfig as cfg from pg_proc where proname = 'events_commit_order' and pronamespace = 'y_private'::regnamespace`,
+    );
+    expect(cfg.rows[0]!.cfg).toContain('lock_timeout=0');
   });
 
   it('the bus delivers an event whose transaction drew a lower id but committed after the watermark moved', async () => {
@@ -345,5 +366,143 @@ describe('GET /api/v1/stream (#47, #83, #85)', () => {
     expect(d.res.status).toBe(200);
     await b.close();
     await d.close();
+  });
+
+  /** Opens a stream with arbitrary headers/query (the helper above always sends dan's bearer). */
+  async function openRaw(path: string, headers: Record<string, string>) {
+    const ac = new AbortController();
+    const res = await env.app.request(path, { headers, signal: ac.signal });
+    let text = '';
+    let done = false;
+    const reader = res.status === 200 ? res.body!.getReader() : null;
+    const pump = (async () => {
+      if (!reader) return;
+      for (;;) {
+        const r = await reader.read().catch(() => ({ done: true, value: undefined }));
+        if (r.done) break;
+        text += new TextDecoder().decode(r.value);
+      }
+      done = true;
+    })();
+    const close = async () => {
+      ac.abort();
+      await reader?.cancel().catch(() => undefined);
+      await pump;
+    };
+    closers.push(close);
+    return { res, text: () => text, done: () => done, close };
+  }
+  const presence = (id: string): PushEvent => ({
+    id,
+    type: 'presence',
+    audienceAgentIds: [],
+    audienceUserIds: [],
+    payload: { agentId: `a_${'0'.repeat(26)}`, presence: 'live' },
+  });
+
+  it('ends a stream-token stream once its user is suspended (#83)', async () => {
+    const fay = await seedPerson(env.db, 'stream-fay');
+    const auth = env.deps.auth as { verifyStreamToken?: (t: string) => unknown };
+    const prev = auth.verifyStreamToken;
+    auth.verifyStreamToken = (t: string) => (t === 'sst_fay' ? webCaller(fay) : null);
+    try {
+      STREAM_LIMITS.reauthMs = 0;
+      const s = await openRaw('/api/v1/stream?token=sst_fay', {});
+      expect(s.res.status).toBe(200);
+      await until(() => s.text().includes(': open'));
+      for (const p of [...pushers]) p(presence('999100001'));
+      await until(() => s.text().includes('id: 999100001'));
+      expect(s.done()).toBe(false);
+      await env.db.query(`update public.users set status = 'suspended' where id = $1`, [fay.userId]);
+      for (const p of [...pushers]) p(presence('999100002'));
+      await until(() => s.done());
+      expect(s.done()).toBe(true);
+      expect(s.text()).not.toContain('id: 999100002');
+    } finally {
+      auth.verifyStreamToken = prev;
+    }
+  });
+
+  it('re-verifies a y_session cookie stream and ends it once the session is revoked (#83)', async () => {
+    STREAM_LIMITS.reauthMs = 0;
+    env.token('dan-cookie', webCaller(dan));
+    const s = await openRaw('/api/v1/stream', { cookie: 'y_session=dan-cookie' });
+    expect(s.res.status).toBe(200);
+    await until(() => s.text().includes(': open'));
+    for (const p of [...pushers]) p(presence('999200001'));
+    await until(() => s.text().includes('id: 999200001'));
+    env.callers.delete('dan-cookie');
+    for (const p of [...pushers]) p(presence('999200002'));
+    await until(() => s.done());
+    expect(s.done()).toBe(true);
+    expect(s.text()).not.toContain('id: 999200002');
+  });
+
+  it('rate-limits stream connects per user across instances (#85)', async () => {
+    const gus = await seedPerson(env.db, 'stream-gus');
+    const tok = env.token('gus-web', webCaller(gus));
+    STREAM_LIMITS.connect = { rate: 1 / 3600, burst: 3 };
+    for (let i = 0; i < 3; i++) {
+      const s = await openRaw('/api/v1/stream', { authorization: tok });
+      expect(s.res.status).toBe(200);
+      await s.close();
+    }
+    const limited = await openRaw('/api/v1/stream', { authorization: tok });
+    expect(limited.res.status).toBe(429);
+    const body = (await limited.res.json()) as { error: { code: string; retry_after_s?: number } };
+    expect(body.error.code).toBe('RATE_LIMITED');
+    // Another user's bucket is separate.
+    const hal = await seedPerson(env.db, 'stream-hal');
+    const other = await openRaw('/api/v1/stream', { authorization: env.token('hal-web', webCaller(hal)) });
+    expect(other.res.status).toBe(200);
+    await other.close();
+  });
+
+  it('caps open streams per process across users (#85)', async () => {
+    STREAM_LIMITS.maxTotal = openStreamCount(env.deps) + 2;
+    const ivy = await seedPerson(env.db, 'stream-ivy');
+    const jon = await seedPerson(env.db, 'stream-jon');
+    const kim = await seedPerson(env.db, 'stream-kim');
+    const a = await openRaw('/api/v1/stream', { authorization: env.token('ivy-web', webCaller(ivy)) });
+    const b = await openRaw('/api/v1/stream', { authorization: env.token('jon-web', webCaller(jon)) });
+    expect([a.res.status, b.res.status]).toEqual([200, 200]);
+    const kimTok = env.token('kim-web', webCaller(kim));
+    const c = await openRaw('/api/v1/stream', { authorization: kimTok });
+    expect(c.res.status).toBe(429);
+    await a.close();
+    let d = await openRaw('/api/v1/stream', { authorization: kimTok });
+    for (let i = 0; i < 50 && d.res.status !== 200; i++) {
+      await sleep(20);
+      d = await openRaw('/api/v1/stream', { authorization: kimTok });
+    }
+    expect(d.res.status).toBe(200);
+  });
+
+  it('a replay that hits its cap sends what it read, then resync, and ends; the client resumes from there (#47)', async () => {
+    const lea = await seedPerson(env.db, 'stream-lea');
+    const tok = env.token('lea-web', webCaller(lea));
+    STREAM_LIMITS.replayMax = 50;
+    const base = Number((await env.db.query<{ v: string }>(`select coalesce(max(id), 0) as v from public.events`)).rows[0]!.v);
+    await env.db.query(
+      `insert into public.events (type, audience_user_ids, payload) select 'presence', array[$1]::uuid[], $2::jsonb from generate_series(1, 60)`,
+      [lea.userId, PRESENCE],
+    );
+    const s = await openRaw('/api/v1/stream', { authorization: tok, 'last-event-id': String(base) });
+    expect(s.res.status).toBe(200);
+    await until(() => s.done(), 5_000);
+    expect(s.done()).toBe(true);
+    const first = ids(s.text());
+    expect(first).toHaveLength(50);
+    expect([...first].sort((x, y) => x - y)).toEqual(first);
+    expect(s.text()).toContain('event: resync');
+    expect(s.text().indexOf('event: resync')).toBeGreaterThan(s.text().lastIndexOf('id: '));
+    // Live events that arrived meanwhile are not sent past the gap.
+    const last = first[first.length - 1]!;
+    const s2 = await openRaw('/api/v1/stream', { authorization: tok, 'last-event-id': String(last) });
+    await until(() => ids(s2.text()).length >= 10, 5_000);
+    const rest = ids(s2.text());
+    expect(rest).toHaveLength(10);
+    expect(rest.every((id) => id > last)).toBe(true);
+    expect(s2.text()).not.toContain('event: resync');
   });
 });
