@@ -17,6 +17,27 @@ import { migrateCore } from '../src/platform/index.js';
 const dir = mkdtempSync(join(tmpdir(), 'y-sls-'));
 const CRON = 'smoke-cron-secret-0123456789';
 const DEMO = 'smoke-demo-secret-0123456789';
+/** Env vars that could aim the in-process entry at a real database or service. */
+const SCRUBBED_ENV = [
+  'DATABASE_URL',
+  'DATABASE_LISTEN_URL',
+  'Y_DB_FLAVOR',
+  'Y_DB_LOCAL',
+  'SUPABASE_URL',
+  'SUPABASE_ANON_KEY',
+  'SUPABASE_PUBLISHABLE_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'SUPABASE_JWT_SECRET',
+  'SUPABASE_JWKS_URL',
+  'SLACK_BOT_TOKEN',
+  'SLACK_SIGNING_SECRET',
+  'SLACK_TEAM_ID',
+  'ANTHROPIC_API_KEY',
+  'AI_GATEWAY_API_KEY',
+  'Y_EMBED_URL',
+  'Y_EMBED_SECRET',
+  'Y_REALTIME_REST',
+] as const;
 const steps: string[] = [];
 const ok = (s: string) => {
   steps.push(s);
@@ -34,7 +55,11 @@ try {
   await pre.close();
   ok(`migrated a file-backed PGlite at ${dir}`);
 
-  // 2. Production-shaped serverless env, then load the Vercel entry.
+  // 2. Production-shaped serverless env, then load the Vercel entry. The entry builds its db
+  // from process.env, so an exported DATABASE_URL (DEPLOY.md has operators export the prod
+  // pooler URL) would win over Y_DATA_DIR and point this smoke at production. Drop every
+  // database and external-service variable first: the smoke only ever talks to the PGlite.
+  for (const k of SCRUBBED_ENV) delete process.env[k];
   Object.assign(process.env, {
     NODE_ENV: 'production',
     VERCEL: '1',
@@ -92,7 +117,14 @@ try {
   // The entry's handlers share one lazily built app; reach its db to age the session past the idle cutoff.
   const { deps } = await (entry.POST as unknown as { ready: () => Promise<{ deps: { db: Db } }> }).ready();
   const db = deps.db;
-  await db.asService((tx) => tx.query(`update public.sessions set last_event_at = now() - interval '31 minutes' where status = 'open'`));
+  // Age only the smoke's own session (never "every open session").
+  const aged = await db.asService((tx) =>
+    tx.query(
+      `update public.sessions set last_event_at = now() - interval '31 minutes' where status = 'open' and harness_session_id = $1`,
+      ['smoke-sls-2'],
+    ),
+  );
+  check(aged.rowCount === 1, `expected to age exactly the smoke session, aged ${aged.rowCount ?? 0}`);
   ok(`POST /api/v1/ingest → ${open.json.activityId} left open; aged it past the 30 min idle cutoff`);
 
   // First cron minute: the tick arms the recurring close_idle job (due in 5 min); fast-forward it.

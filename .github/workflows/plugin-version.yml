@@ -3,6 +3,11 @@
 # hooks read their version from that file; no rebuild needed). A push that
 # already changed the version is left alone. Pushes made with GITHUB_TOKEN
 # don't trigger workflows, so the bump commit doesn't loop.
+#
+# The bump publishes to every autoUpdate install, so it only runs after the
+# plugin-dist check (a read-only job) confirms the committed hook bundles
+# match a rebuild from source. A stale or hand-edited bundle fails that check
+# and is never bumped.
 name: plugin-version
 
 on:
@@ -12,17 +17,25 @@ on:
       - 'plugins/claude-code/**'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: plugin-version
   cancel-in-progress: false
 
 jobs:
+  verify-dist:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/plugin-dist.yml
+
   bump:
+    needs: verify-dist
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
