@@ -25230,11 +25230,12 @@ function userPromptSubmit(ctx) {
       pointers.push(parked);
     }
     const has = (t) => pointers.some((p) => p.template_id === t);
-    if (dm > (prev.dm || 0) && !has("P1")) pointers.push({ template_id: "P1", params: { count: clamp(dm) } });
-    if (ownerInstructions > (prev.ownerInstructions || 0) && !has("P4")) {
+    const moved = pulse.cursor !== void 0 && pulse.cursor !== prev.cursor;
+    if (dm > 0 && (dm > (prev.dm || 0) || moved) && !has("P1")) pointers.push({ template_id: "P1", params: { count: clamp(dm) } });
+    if (ownerInstructions > 0 && (ownerInstructions > (prev.ownerInstructions || 0) || moved) && !has("P4")) {
       pointers.push({ template_id: "P4", params: { count: clamp(ownerInstructions) } });
     }
-    writeJsonAtomic(file2, { dm, ownerInstructions });
+    writeJsonAtomic(file2, { dm, ownerInstructions, ...pulse.cursor ? { cursor: pulse.cursor } : {} });
     if (pointers.length === 0) return OK;
     return contextOutput("UserPromptSubmit", renderBlock(pointers, 400));
   });

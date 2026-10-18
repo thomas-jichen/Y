@@ -16,6 +16,8 @@ import { takePendingWake } from '../wake-budget.js';
 interface Pointed {
   dm: number;
   ownerInstructions: number;
+  /** Pulse cursor when these counts were seen. */
+  cursor?: string;
 }
 
 const clamp = (n: number) => Math.min(999, Math.max(1, Math.floor(n)));
@@ -36,12 +38,16 @@ export function userPromptSubmit(ctx: HookCtx): Promise<HookResult> {
       pointers.push(parked);
     }
     const has = (t: string) => pointers.some((p) => p.template_id === t);
-    if (dm > (prev.dm || 0) && !has('P1')) pointers.push({ template_id: 'P1', params: { count: clamp(dm) } });
-    if (ownerInstructions > (prev.ownerInstructions || 0) && !has('P4')) {
+    // The agent reads its inbox through MCP, which never lowers the local counts, so
+    // read-one-then-get-one leaves the count unchanged. A moved cursor means new
+    // agent events arrived since the last pointer: point again at whatever is unread.
+    const moved = pulse.cursor !== undefined && pulse.cursor !== prev.cursor;
+    if (dm > 0 && (dm > (prev.dm || 0) || moved) && !has('P1')) pointers.push({ template_id: 'P1', params: { count: clamp(dm) } });
+    if (ownerInstructions > 0 && (ownerInstructions > (prev.ownerInstructions || 0) || moved) && !has('P4')) {
       pointers.push({ template_id: 'P4', params: { count: clamp(ownerInstructions) } });
     }
     // Counts that went down were read: lower the watermark so new items point again.
-    writeJsonAtomic(file, { dm, ownerInstructions } satisfies Pointed);
+    writeJsonAtomic(file, { dm, ownerInstructions, ...(pulse.cursor ? { cursor: pulse.cursor } : {}) } satisfies Pointed);
     if (pointers.length === 0) return OK;
     return contextOutput('UserPromptSubmit', renderBlock(pointers, 400));
   });

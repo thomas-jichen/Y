@@ -393,6 +393,23 @@ describe('UserPromptSubmit', () => {
     expect((await run('UserPromptSubmit', { session_id: SID, prompt: 'again' })).stdout).toBeUndefined();
     expect(core.requests).toHaveLength(0);
   });
+
+  it('points again when a new DM arrives at the same unread count', async () => {
+    fs.mkdirSync(path.join(dir, 'state'), { recursive: true });
+    const pulse = (cursor: string) =>
+      fs.writeFileSync(
+        path.join(dir, 'state', 'pulse.json'),
+        JSON.stringify({ cursor, unread: { dm: 1, ownerInstructions: 0, reviews: 0, suggestions: 0 }, updatedAt: 1 }),
+      );
+    pulse('c1');
+    const first = await run('UserPromptSubmit', { session_id: SID, prompt: 'p1' });
+    expect(JSON.parse(first.stdout!).hookSpecificOutput.additionalContext).toBe('Y: 1 unread DM(s). Call the inbox tool.');
+    // The agent read that DM over MCP (local count stays 1), then another arrived: count 1 again, cursor moved.
+    pulse('c2');
+    const second = await run('UserPromptSubmit', { session_id: SID, prompt: 'p2' });
+    expect(JSON.parse(second.stdout!).hookSpecificOutput.additionalContext).toBe('Y: 1 unread DM(s). Call the inbox tool.');
+    expect((await run('UserPromptSubmit', { session_id: SID, prompt: 'p3' })).stdout).toBeUndefined();
+  });
 });
 
 describe('listener', () => {
