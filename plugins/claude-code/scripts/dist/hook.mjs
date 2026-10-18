@@ -23027,7 +23027,21 @@ var InternalMcpMeta = external_exports.object({
   /** Random per-request value; core accepts a signed request carrying one only once (replay guard). */
   nonce: external_exports.string().regex(/^[A-Za-z0-9_-]{16,64}$/).optional(),
   /** Hash of the MCP client's network address (never the address): the rate-limit key for signed-out calls. */
-  clientKey: external_exports.string().regex(/^[a-f0-9]{16,64}$/).optional()
+  clientKey: external_exports.string().regex(/^[a-f0-9]{16,64}$/).optional(),
+  /**
+   * Where `clientKey` came from: `header` = a client-IP header the deploy
+   * named as trusted (Y_CLIENT_IP_HEADER); `forwarded_for` = the rightmost
+   * X-Forwarded-For hop, which may be a proxy shared by many clients. Core
+   * keys per-client signed-out limits on `header` keys (and on keys without
+   * a source) only; `forwarded_for` keys take the shared signed-out bucket.
+   */
+  clientKeySource: external_exports.enum(["header", "forwarded_for"]).optional(),
+  /**
+   * The sender validates `compare_setups` component names as SetupSignalName
+   * (`[`/`]`, up to 160 chars). An apps/mcp that sends meta without it is
+   * an older build: core then leaves out names that are not ComponentName.
+   */
+  wideSetupNames: external_exports.literal(true).optional()
 });
 var InternalMcpRequest = external_exports.object({
   input: external_exports.unknown(),
