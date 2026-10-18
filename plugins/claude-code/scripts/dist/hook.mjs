@@ -12,7 +12,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-var PLUGIN_VERSION = "0.1.0";
+var PLUGIN_VERSION = "0.1.1";
 function loadConfig(env) {
   const token = env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
   const apiUrl = (env.CLAUDE_PLUGIN_OPTION_API_URL?.trim() || "http://localhost:8787").replace(/\/+$/, "");
