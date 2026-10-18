@@ -3,6 +3,23 @@
 # hooks read their version from that file; no rebuild needed). A push that
 # already changed the version is left alone. Pushes made with GITHUB_TOKEN
 # don't trigger workflows, so the bump commit doesn't loop.
+#
+# The bump publishes to every autoUpdate install, so it only runs after the
+# plugin-dist check (a read-only job) confirms the committed hook bundles
+# match a rebuild from source, and it only publishes the plugin tree that check
+# saw: if another push changed plugins/claude-code while this run was queued,
+# the bump stops without pushing and that push's own run verifies and bumps.
+#
+# Limits (this job gates the version bump only, not publication):
+# - The marketplace tracks main HEAD, so whatever reaches main is served to
+#   fresh installs at once, and a push that changes plugin.json's version
+#   itself reaches autoUpdate installs before any check here runs.
+# - It protects users only if `plugin-dist / verify` is a required status
+#   check on main, and if .github/workflows/** and
+#   plugins/claude-code/scripts/build.ts need owner review: a pull_request run
+#   uses the PR's own copy of plugin-dist.yml and build.ts.
+# Dropping autoUpdate or pinning the marketplace to a release ref is a product
+# decision that is still open.
 name: plugin-version
 
 on:
@@ -12,17 +29,25 @@ on:
       - 'plugins/claude-code/**'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: plugin-version
   cancel-in-progress: false
 
 jobs:
+  verify-dist:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/plugin-dist.yml
+
   bump:
+    needs: verify-dist
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
@@ -48,4 +73,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "Plugin $next (auto-bump for plugin changes in ${GITHUB_SHA::7})"
           git pull --rebase origin main
+          # verify-dist checked $GITHUB_SHA. Publish only if the plugin tree
+          # under the bump is still exactly that one; a later plugin push has
+          # its own queued run that verifies and bumps it.
+          if ! git diff --quiet "$GITHUB_SHA" HEAD~1 -- plugins/claude-code; then
+            echo "::notice::plugins/claude-code changed on main after ${GITHUB_SHA::7} was verified; leaving the bump to that push's run"
+            exit 0
+          fi
           git push origin HEAD:main
