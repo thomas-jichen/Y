@@ -53,7 +53,7 @@ The S1 spike (`docs/spikes/S1-asyncrewake-idle-wake.md`) showed that `asyncRewak
 
 **Exactly one live listener per session.** `state/listener-<sid>.json` holds `{pid, generation, startedAt}`. A new listener exits 0 at once when a live process holds an unexpired slot. Otherwise it takes the slot with `generation + 1` and re-reads the file to settle a rename race. A listener that sees a newer generation (before a poll, or after a poll returns) steps aside without waking, and a listener only removes the slot if it still owns it.
 
-**Exit 2 only on real news.** The listener exits 2 only when the pulse response's `wake.targetSessionId` is this session, the push-path kill switch is off, and the matching unread count is above zero (`dm` for P1, `ownerInstructions` for P4). Everything else, including errors, a revoked token and the end of the window, exits 0.
+**Exit 2 only on real news.** The listener exits 2 only when the pulse response's `wake.targetSessionId` is this session, the push-path kill switch is off, and the matching unread count is above zero (`dm` for P1, `ownerInstructions` for P4). Everything else, including errors, a revoked token and the end of the window, exits 0. With a local `wake_on_dm=owner-only` stricter than core's own setting (the brief's `policy.wakeOnDm`), a DM wake (P1) is parked for the next prompt instead, because a P1 pointer can't tell the owner's own agents from teammates; when core itself applies owner-only, its wakes are trusted.
 
 **Local wake budget** (`src/wake-budget.ts`, `state/wake-budget.json`): at least 60 s between wakes, at most 6 per hour and 30 per day. The budget is per machine, so ten sessions don't get ten times the ceiling. Core has its own server-side budget (`wake_ledger`), and this one is defense in depth against a misbehaving server. Over budget, the listener exits 0 and parks the rendered-from-template pointer in `state/pending-wake-<sid>.json`. UserPromptSubmit delivers it on the next human message (re-validated, single use, dropped after 24 h).
 
@@ -67,15 +67,16 @@ The S1 spike (`docs/spikes/S1-asyncrewake-idle-wake.md`) showed that `asyncRewak
 
 | File | Owner | Contents |
 |---|---|---|
-| `brief.json` | SessionStart (kill switches also from the listener's pulses) | Sanitized brief (pointers, kill switches, pulse token, realtime channel) |
+| `brief.json` | SessionStart | Sanitized brief (pointers, kill switches, pulse token, realtime channel, policy) |
+| `kill-switches.json` | listener (each pulse), uploader (brief refresh when older than 60 s) | `{killSwitches, at}`; overlays the brief's switches while newer than it |
 | `builder-claims.json` | SessionStart | Public npm/PyPI builder claims for P7 (`fetchedAt`, `failedAt`) |
 | `pulse.json` | listener, uploader | Cursor and unread counts (SessionStart reads `posts` for the human notice when under 6 h old) |
 | `pulse-cursor-<sid>.json` | listener (removed by SessionEnd) | This session's own event cursor (falls back to `pulse.json` when absent) |
-| `setup-sent.json` | uploader | Hash of the last setup snapshot core accepted (Stop sends only the hash while it matches) |
+| `setup-sent.json` | uploader | Hash of the last setup snapshot core accepted, or rejected outright (`rejected: true`); Stop sends only the hash while it matches |
 | `listener-<sid>.json` | listener | `{pid, generation, startedAt}` of the live listener |
 | `needs-listener-<sid>.json` | Stop mark | `{since}` while the session has no live listener |
 | `wake-budget.json` | listener | Recent wake times (last 24 h); `wake-budget.lock/` serializes updates |
-| `pending-wake-<sid>.json` | listener → UserPromptSubmit | A pointer deferred by the budget |
+| `pending-wake-<sid>.json` | listener → UserPromptSubmit | A pointer deferred by the budget, lock contention, or a local `wake_on_dm=owner-only` stricter than core's setting |
 | `pointed-<sid>.json` | UserPromptSubmit | Unread watermarks already pointed at |
 | `turn-<sid>.json` | UserPromptSubmit listener spawn → Stop mark, SessionEnd | `{since}` while a turn is in progress (presence) |
 | `ended-<sid>.json` | SessionEnd → listener | Tells a listener that outlived its session to exit |

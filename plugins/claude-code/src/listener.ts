@@ -33,10 +33,19 @@
  * that has none yet, so another writer can't skip or replay this session's
  * wakes.
  *
- * Settings: `wake_on_dm=owner-only` wakes only for owner instructions (P4); a
- * DM wake is parked for the next prompt instead. A long poll that returns
- * early with no new events is spaced by {@link MIN_IDLE_POLL_MS} (doubling
- * while it repeats), so a misbehaving server can't turn it into a hot loop.
+ * Settings: core decides who may wake (packages/domain dmDecision) from its
+ * own `agent_settings.wake_on_dm`, which admits the owner's own agents under
+ * `owner-only`. When the plugin's local `wake_on_dm=owner-only` is stricter
+ * than core's setting (the brief's `policy.wakeOnDm`), a P1 wake may come
+ * from a teammate and the pointer can't tell (it carries a handle only), so
+ * it is parked for the next prompt; owner instructions (P4) still wake.
+ *
+ * Pacing: a long poll that returns early without a wake for this session is
+ * followed by a short wait: {@link MIN_IDLE_POLL_MS} (doubling to 30 s) when
+ * nothing moved; when the cursor moved, after {@link BUSY_POLLS_FREE} such
+ * polls in a row, {@link MIN_BUSY_POLL_MS} (doubling to 5 s). So neither a
+ * stuck server nor an always-new cursor becomes a hot loop. Doorbell rings are spaced the same way ({@link MIN_RING_POLL_MS},
+ * doubling under sustained rings).
  *
  * Transport: in server mode `GET /api/v1/pulse?cursor&wait` long-polls. When
  * the cached brief carries a Supabase realtime channel (serverless core), the
@@ -72,6 +81,14 @@ const TURN_CHECK_MS = 15_000;
 /** Long poll: minimum spacing after a 2xx that came back early without moving the cursor. */
 export const MIN_IDLE_POLL_MS = 2_000;
 const MAX_IDLE_POLL_MS = 30_000;
+/** Long poll: minimum spacing after an early 2xx that moved the cursor but carried no wake for this session. */
+export const MIN_BUSY_POLL_MS = 250;
+const MAX_BUSY_POLL_MS = 5_000;
+/** Early cursor-moving polls in a row that get no floor (a burst of real events). */
+export const BUSY_POLLS_FREE = 3;
+/** Doorbell: minimum spacing between ring-triggered polls (doubles while rings keep coming faster). */
+export const MIN_RING_POLL_MS = 2_000;
+const MAX_RING_POLL_MS = 60_000;
 const CURSOR_RE = /^[A-Za-z0-9_\-.~=]{1,512}$/;
 
 const SID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -211,6 +228,16 @@ function isRealNews(pointer: Pointer | undefined, unread: UnreadCounts | undefin
   return unread.dm + unread.ownerInstructions > 0;
 }
 
+/**
+ * Local `wake_on_dm=owner-only` parks a DM wake unless core already applied
+ * owner-only (its brief policy says so): core's decision admits the owner's
+ * own agents, but a P1 pointer can't tell them from a teammate.
+ */
+function localOwnerOnlyParks(ctx: HookCtx, pointer: Pointer | undefined): boolean {
+  if (ctx.config.wakeOnDm !== 'owner-only' || pointer?.template_id === 'P4') return false;
+  return readBrief(ctx.paths)?.policy?.wakeOnDm !== 'owner-only';
+}
+
 type Mode = { kind: 'longpoll' } | { kind: 'doorbell'; ch: SupabaseChannel; Ws: WsCtor } | { kind: 'slowpoll' };
 
 function pickMode(ctx: HookCtx, o: ListenOpts): Mode {
@@ -251,6 +278,12 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
     let backoff = backoffMin;
     let bellBackoff = backoffMin;
     let idleFloor = MIN_IDLE_POLL_MS;
+    let busyFloor = MIN_BUSY_POLL_MS;
+    let busyStreak = 0;
+    let ringFloor = MIN_RING_POLL_MS;
+    let rang = false;
+    let lastPollAt = 0;
+    let ringThrottled = false;
     try {
       while (ctx.now() < endAt) {
         if (superseded(ctx, sid, mine)) return OK; // a newer listener for this session → step aside
@@ -258,11 +291,28 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
           clearSessionEnded(ctx.paths, sid); // SessionEnd ran: stop heartbeating a session that's gone
           return OK;
         }
+        if (rang) {
+          // Ring-triggered polls are spaced (anyone who learns the topic can ring): at most one per
+          // ringFloor, doubling while rings keep arriving faster than that.
+          rang = false;
+          const since = ctx.now() - lastPollAt;
+          if (since < ringFloor) {
+            if (ringThrottled) ringFloor = Math.min(MAX_RING_POLL_MS, ringFloor * 2);
+            ringThrottled = true;
+            const gap = ringFloor - since;
+            if (ctx.now() + gap >= endAt) break;
+            await wait(gap);
+            continue; // re-check the slot and the session before polling
+          }
+          ringThrottled = false;
+          ringFloor = MIN_RING_POLL_MS;
+        }
         const left = endAt - ctx.now();
         const waitS = mode.kind === 'longpoll' ? Math.min(PULSE_MAX_WAIT_S, Math.floor((left - 2_000) / 1000)) : 0;
         if (mode.kind === 'longpoll' && waitS < 1) break;
         const active = isTurnActive(ctx, sid);
         const polledAt = ctx.now();
+        lastPollAt = polledAt;
         const q = new URLSearchParams({ wait: String(waitS), sessionId: sid, active: active ? '1' : '0' });
         const cursor = sessionCursor(ctx, sid);
         if (cursor) q.set('cursor', cursor);
@@ -283,7 +333,7 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
             const newCursor = typeof r.cursor === 'string' && CURSOR_RE.test(r.cursor) ? r.cursor : undefined;
             updatePulse(ctx.paths, { ...(newCursor ? { cursor: newCursor } : {}), ...(unread.success ? { unread: unread.data } : {}) }, ctx.now());
             if (newCursor) writeJsonAtomic(cursorFile(ctx, sid), { cursor: newCursor });
-            if (ks.success) mergeKillSwitches(ctx.paths, ks.data);
+            if (ks.success) mergeKillSwitches(ctx.paths, ks.data, ctx.now());
             const wake = r.wake as { targetSessionId?: unknown; pointer?: unknown } | undefined;
             const pushOk = ks.success && !ks.data.pushPaths;
             // A newer listener took the slot while this poll was in flight: it owns the wake.
@@ -291,28 +341,42 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
             if (wake && wake.targetSessionId === sid && pushOk) {
               const valid = Pointer.safeParse(wake.pointer);
               const pointer = valid.success ? valid.data : undefined;
-              if (isRealNews(pointer, unread.success ? unread.data : undefined) && ctx.config.wakeOnDm === 'owner-only' && pointer?.template_id !== 'P4') {
-                // owner-only: only the human's own instructions may wake the session; DMs wait for the next prompt.
-                if (pointer) parkPendingWake(ctx.paths, sid, pointer, ctx.now());
-              } else if (isRealNews(pointer, unread.success ? unread.data : undefined)) {
-                const budget = takeWake(ctx.paths, ctx.now());
-                if (!budget.allow) {
+              if (isRealNews(pointer, unread.success ? unread.data : undefined)) {
+                if (localOwnerOnlyParks(ctx, pointer)) {
+                  // Local owner-only is stricter than core's setting: this DM may be a teammate's.
+                  if (pointer) parkPendingWake(ctx.paths, sid, pointer, ctx.now());
+                  logLine(ctx.config.dataDir, 'listen', 'wake deferred to next prompt: wake_on_dm=owner-only');
+                } else {
+                  const budget = takeWake(ctx.paths, ctx.now());
+                  if (budget.allow) {
+                    const text = (pointer ? renderOne(pointer) : null) ?? fallbackText();
+                    return { exitCode: 2, stderr: text };
+                  }
                   if (pointer) parkPendingWake(ctx.paths, sid, pointer, ctx.now());
                   logLine(ctx.config.dataDir, 'listen', `wake deferred to next prompt: over budget (${budget.reason})`);
-                  return OK;
+                  // Over budget: stop listening for this turn. Lock contention (busy) is not a budget
+                  // verdict: the pointer is parked and the listener keeps listening.
+                  if (budget.reason !== 'busy') return OK;
                 }
-                const text = (pointer ? renderOne(pointer) : null) ?? fallbackText();
-                return { exitCode: 2, stderr: text };
               }
             }
             const ra = typeof r.retryAfterS === 'number' && r.retryAfterS > 0 ? Math.min(3600, r.retryAfterS) : 0;
             delay = ra * 1000;
             if (mode.kind === 'longpoll') {
               const early = waitS > 0 && ctx.now() - polledAt < Math.min(waitS * 1000, MIN_IDLE_POLL_MS);
-              if (early && (newCursor === undefined || newCursor === cursor)) {
+              if (!early) {
+                idleFloor = MIN_IDLE_POLL_MS;
+                busyFloor = MIN_BUSY_POLL_MS;
+                busyStreak = 0;
+              } else if (newCursor === undefined || newCursor === cursor) {
                 delay = Math.max(delay, idleFloor);
                 idleFloor = Math.min(MAX_IDLE_POLL_MS, idleFloor * 2);
-              } else {
+                busyStreak = 0;
+              } else if (++busyStreak > BUSY_POLLS_FREE) {
+                // New events again and again, none a wake for this session: a short floor (doubling),
+                // so an always-new cursor can't spin; a short burst of real events goes through at once.
+                delay = Math.max(delay, busyFloor);
+                busyFloor = Math.min(MAX_BUSY_POLL_MS, busyFloor * 2);
                 idleFloor = MIN_IDLE_POLL_MS;
               }
             }
@@ -321,8 +385,10 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
           } else {
             delay = res.retryAfterS ? res.retryAfterS * 1000 : backoff;
             backoff = Math.min(BACKOFF_MAX_MS, backoff * 2);
+            busyStreak = 0;
           }
         } catch {
+          busyStreak = 0;
           delay = backoff;
           backoff = Math.min(BACKOFF_MAX_MS, backoff * 2);
         }
@@ -351,7 +417,10 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
             r = await bell!.wait(Math.max(0, Math.min(turnCheckMs, until - ctx.now())));
             if (r !== 'timeout') break;
           }
-          if (r === 'ring') bellBackoff = backoffMin;
+          if (r === 'ring') {
+            bellBackoff = backoffMin;
+            rang = true;
+          }
           if (r === 'timeout' && endAt - ctx.now() <= 2_000) break;
           continue;
         }

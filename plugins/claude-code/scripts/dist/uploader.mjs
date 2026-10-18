@@ -22969,7 +22969,12 @@ function parsePolicy(raw) {
   const capture = BriefPolicy.shape.capture.safeParse(r.capture);
   if (!capture.success) return void 0;
   const salt = BriefPolicy.shape.repoKeySalt.safeParse(r.repoKeySalt);
-  return { capture: capture.data, ...salt.success && salt.data ? { repoKeySalt: salt.data } : {} };
+  const wake = BriefPolicy.shape.wakeOnDm.safeParse(r.wakeOnDm);
+  return {
+    capture: capture.data,
+    ...salt.success && salt.data ? { repoKeySalt: salt.data } : {},
+    ...wake.success ? { wakeOnDm: wake.data } : {}
+  };
 }
 var ALL_ENGAGED = { pushPaths: true, networkContent: true, apply: true, ingest: true };
 function arr(v) {
@@ -23008,7 +23013,31 @@ function readBrief(p) {
   const b = readJson(p.brief);
   if (!b || typeof b.fetchedAt !== "number") return void 0;
   const again = sanitizeBrief({ ...b, v: 1 }, b.fetchedAt);
-  return again;
+  if (!again) return void 0;
+  const live = readLiveKillSwitches(p);
+  return live && live.at >= again.fetchedAt ? { ...again, killSwitches: live.killSwitches } : again;
+}
+function killSwitchesFile(p) {
+  return path3.join(p.state, "kill-switches.json");
+}
+function readLiveKillSwitches(p) {
+  const raw = readJson(killSwitchesFile(p));
+  if (!raw || typeof raw.at !== "number" || !Number.isFinite(raw.at)) return void 0;
+  const ks = KillSwitches.safeParse(raw.killSwitches);
+  return ks.success ? { killSwitches: ks.data, at: raw.at } : void 0;
+}
+function killSwitchesSeenAt(p) {
+  const b = readJson(p.brief);
+  const fetchedAt = typeof b?.fetchedAt === "number" ? b.fetchedAt : void 0;
+  const live = readLiveKillSwitches(p)?.at;
+  if (fetchedAt === void 0) return void 0;
+  return Math.max(fetchedAt, live ?? 0);
+}
+function mergeKillSwitches(p, ks, now = Date.now()) {
+  const b = readBrief(p);
+  if (!b) return;
+  const next = { pushPaths: ks.pushPaths, networkContent: ks.networkContent, apply: ks.apply, ingest: ks.ingest };
+  writeJsonAtomic(killSwitchesFile(p), { killSwitches: next, at: now });
 }
 function setupSentFile(p) {
   return path3.join(p.state, "setup-sent.json");
@@ -23032,6 +23061,23 @@ function updatePulse(p, patch, now) {
 // src/uploader.ts
 var MAX_ATTEMPTS = 10;
 var MAX_NETWORK_ERRORS_PER_RUN = 6;
+var MAX_NETWORK_ATTEMPTS = 20;
+var MAX_REDRIVES = 3;
+var REDRIVE_AFTER_MS = 10 * 6e4;
+var REDRIVE_MAX_AGE_MS = 7 * 24 * 36e5;
+var KILL_SWITCH_REFRESH_MS = 6e4;
+var DEFINITIVE_REJECTIONS = /* @__PURE__ */ new Set([400, 413, 422]);
+var CONNECTIVITY_CODES = /* @__PURE__ */ new Set([
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ENETUNREACH",
+  "ENETDOWN",
+  "EHOSTUNREACH",
+  "EHOSTDOWN",
+  "EADDRNOTAVAIL",
+  "UND_ERR_CONNECT_TIMEOUT"
+]);
 var LOCK_STALE_MS = 5 * 6e4;
 function acquireLock(p, now) {
   ensureDir(p.outbox);
@@ -23059,16 +23105,97 @@ function acquireLock(p, now) {
 function attemptsFile(chunk) {
   return path4.join(path4.dirname(chunk), `.${path4.basename(chunk)}.attempts`);
 }
+function readAttempts(chunk) {
+  const a = readJson(attemptsFile(chunk));
+  return { n: typeof a?.n === "number" ? a.n : 0, ...typeof a?.net === "number" ? { net: a.net } : {} };
+}
 function bumpAttempts(chunk) {
-  const f = attemptsFile(chunk);
-  const n = (readJson(f)?.n ?? 0) + 1;
-  writeJsonAtomic(f, { n });
+  const a = readAttempts(chunk);
+  const n = a.n + 1;
+  writeJsonAtomic(attemptsFile(chunk), { ...a, n });
   return n;
 }
-function moveToDead(p, chunk) {
+function bumpNetworkAttempts(chunk) {
+  const a = readAttempts(chunk);
+  const net = (a.net ?? 0) + 1;
+  writeJsonAtomic(attemptsFile(chunk), { ...a, net });
+  return net;
+}
+function deadMetaFile(p, name) {
+  return path4.join(p.outbox, ".dead-meta", name);
+}
+function readDeadMeta(p, name) {
+  const m = readJson(deadMetaFile(p, name));
+  if (!m || typeof m.deadAt !== "number" || typeof m.redrives !== "number") return void 0;
+  return m;
+}
+function moveToDead(p, chunk, cls, now) {
   ensureDir(p.dead);
-  fs3.renameSync(chunk, path4.join(p.dead, path4.basename(chunk)));
+  const name = path4.basename(chunk);
+  fs3.renameSync(chunk, path4.join(p.dead, name));
   fs3.rmSync(attemptsFile(chunk), { force: true });
+  try {
+    ensureDir(path4.dirname(deadMetaFile(p, name)));
+    writeJsonAtomic(deadMetaFile(p, name), { class: cls, deadAt: now, redrives: readDeadMeta(p, name)?.redrives ?? 0 });
+  } catch {
+  }
+}
+function chunkTime(name) {
+  const m = /^(\d{13})-/.exec(name);
+  return m ? Number(m[1]) : void 0;
+}
+function redriveDead(p, now) {
+  let names;
+  try {
+    names = fs3.readdirSync(p.dead).filter((f) => f.endsWith(".json") && !f.startsWith("."));
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  for (const name of names) {
+    const meta3 = readDeadMeta(p, name);
+    const born = chunkTime(name);
+    if (!meta3 || meta3.class !== "5xx" || meta3.redrives >= MAX_REDRIVES) continue;
+    if (now - meta3.deadAt < REDRIVE_AFTER_MS || born === void 0 || now - born > REDRIVE_MAX_AGE_MS) continue;
+    try {
+      fs3.renameSync(path4.join(p.dead, name), path4.join(p.outbox, name));
+      writeJsonAtomic(deadMetaFile(p, name), { ...meta3, redrives: meta3.redrives + 1 });
+      n++;
+    } catch {
+    }
+  }
+  return n;
+}
+function isConnectivityError(e) {
+  const err = e;
+  if (!err || typeof err !== "object") return false;
+  if (err.name === "AbortError" || err.name === "TimeoutError") return false;
+  const code = typeof err.code === "string" ? err.code : typeof err.cause?.code === "string" ? err.cause.code : void 0;
+  if (code) return CONNECTIVITY_CODES.has(code);
+  return err.name === "TypeError" && err.cause?.name !== "AbortError";
+}
+function dropRejectedSnapshot(p, file2, body) {
+  const b = body;
+  if (!b || typeof b !== "object" || !b.setup || typeof b.setup.hash !== "string" || !b.setup.snapshot) return false;
+  try {
+    writeJsonAtomic(file2, { ...b, setup: { hash: b.setup.hash } });
+    writeJsonAtomic(setupSentFile(p), { hash: b.setup.hash, rejected: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function refreshKillSwitches(o, token, now) {
+  const seen = killSwitchesSeenAt(o.paths);
+  if (seen === void 0 || now - seen < KILL_SWITCH_REFRESH_MS) return;
+  try {
+    const q = new URLSearchParams({ pluginVersion: PLUGIN_VERSION });
+    const res = await httpJson(o.fetch, "GET", `${o.config.apiUrl}/api/v1/agent/brief?${q}`, { token, timeoutMs: 5e3 });
+    if (res.status < 200 || res.status >= 300 || !res.body || typeof res.body !== "object") return;
+    const ks = KillSwitches.safeParse(res.body.killSwitches);
+    if (ks.success) mergeKillSwitches(o.paths, ks.data, now);
+  } catch {
+  }
 }
 function recordSetupSent(p, body) {
   const setup = body?.setup;
@@ -23086,12 +23213,14 @@ async function drainOutbox(o) {
   const budget = o.budgetMs ?? 9e4;
   const summary = { sent: 0, dead: 0, remaining: 0, locked: false };
   if (!o.config.token) return { ...summary, remaining: listChunks(o.paths).length };
+  if (listChunks(o.paths).length > 0) await refreshKillSwitches(o, o.config.token, start);
   if (readBrief(o.paths)?.killSwitches.ingest) return { ...summary, remaining: listChunks(o.paths).length };
   if (!acquireLock(o.paths, start)) return { ...summary, locked: true, remaining: listChunks(o.paths).length };
   let token = o.config.token;
   let refreshed = false;
   let netErrors = 0;
   try {
+    redriveDead(o.paths, start);
     for (; ; ) {
       const next = listChunks(o.paths)[0];
       if (!next) break;
@@ -23100,14 +23229,14 @@ async function drainOutbox(o) {
       try {
         body = JSON.parse(fs3.readFileSync(next, "utf8"));
       } catch {
-        moveToDead(o.paths, next);
+        moveToDead(o.paths, next, "invalid", now());
         summary.dead++;
         continue;
       }
       let status = 0;
       let retryAfterS;
       let resBody;
-      let networkError = false;
+      let networkError;
       try {
         const res = await httpJson(o.fetch, "POST", `${o.config.apiUrl}/api/v1/ingest`, {
           token,
@@ -23118,10 +23247,16 @@ async function drainOutbox(o) {
         retryAfterS = res.retryAfterS;
         resBody = res.body;
       } catch (e) {
-        networkError = true;
-        logLine(o.config.dataDir, "uploader", `network error: ${e?.message ?? e}`.slice(0, 300));
+        networkError = isConnectivityError(e) ? "offline" : "counted";
+        logLine(o.config.dataDir, "uploader", `network error (${networkError}): ${e?.message ?? e}`.slice(0, 300));
       }
       if (networkError) {
+        if (networkError === "counted" && bumpNetworkAttempts(next) >= MAX_NETWORK_ATTEMPTS) {
+          moveToDead(o.paths, next, "network", now());
+          summary.dead++;
+          netErrors = 0;
+          continue;
+        }
         netErrors++;
         if (netErrors >= MAX_NETWORK_ERRORS_PER_RUN) break;
         const delay2 = Math.min(3e4, backoff * 2 ** (netErrors - 1));
@@ -23134,6 +23269,7 @@ async function drainOutbox(o) {
         fs3.rmSync(next, { force: true });
         fs3.rmSync(attemptsFile(next), { force: true });
         summary.sent++;
+        fs3.rmSync(deadMetaFile(o.paths, path4.basename(next)), { force: true });
         recordSetupSent(o.paths, body);
         const r = IngestResponse.safeParse(resBody);
         if (r.success) updatePulse(o.paths, { cursor: r.data.pulse.cursor, unreadTotal: r.data.pulse.unread }, now());
@@ -23155,9 +23291,13 @@ async function drainOutbox(o) {
         await wait(delay2);
         continue;
       }
+      if (DEFINITIVE_REJECTIONS.has(status) && dropRejectedSnapshot(o.paths, next, body)) {
+        logLine(o.config.dataDir, "uploader", `ingest ${path4.basename(next)} rejected with a setup snapshot: retrying without it`);
+        continue;
+      }
       const n = bumpAttempts(next);
       if (n >= MAX_ATTEMPTS) {
-        moveToDead(o.paths, next);
+        moveToDead(o.paths, next, status >= 500 || status === 408 ? "5xx" : "rejected", now());
         summary.dead++;
         continue;
       }

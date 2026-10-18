@@ -75,3 +75,67 @@ describe('digest: secrets in config diffs and commands', () => {
     expect(maskCliSecrets('curl -u bob:pa55word https://api.example.test')).toBe('curl -u bob:<REDACTED:cli_password> https://api.example.test');
   });
 });
+
+describe('digest: partial config edits, hook scripts, more CLI shapes (review of #5)', () => {
+  const cfg = (input: Record<string, unknown>) => buildDigest([toolUse('c1', 'Edit', input)], { projectDir: '/work/app' }).text;
+
+  it('an Edit that changes only a value, or ends inside a string, keeps nothing of the value', () => {
+    const onlyValue = cfg({ file_path: '/work/app/.mcp.json', old_string: 'oldpassvalue1', new_string: 'correcthorsebattery' });
+    expect(onlyValue).not.toMatch(/oldpassvalue1|correcthorsebattery/);
+    expect(onlyValue).toContain('+<REDACTED:config_value>');
+    const partial = cfg({ file_path: '/work/app/.mcp.json', old_string: '"DB_PASSWORD": "x', new_string: '"DB_PASSWORD": "partialEditSecret' });
+    expect(partial).not.toContain('partialEditSecret');
+    expect(partial).toContain('+"DB_PASSWORD": <REDACTED:config_value>');
+    const startsInside = cfg({ file_path: '/work/app/.claude/settings.json', old_string: 'a", "x": 1', new_string: 'tailOfSecret9", "x": 1' });
+    expect(startsInside).not.toContain('tailOfSecret9');
+    // Whole JSON lines still keep their structure and enum values.
+    const whole = cfg({ file_path: '/work/app/.mcp.json', old_string: '"type": "stdio",', new_string: '"type": "http", "retries": 3, "enabled": true, "url": "https://mcp.acme.internal/x"' });
+    expect(whole).toContain('+"type": "http", "retries": 3, "enabled": true, "url": "<REDACTED:config_value>"');
+  });
+
+  it('hook scripts and other non-markdown config under .claude/ are withheld; markdown is kept', () => {
+    const sh = buildDigest(
+      [
+        toolUse('h1', 'Write', { file_path: '/work/app/.claude/hooks/notify.sh', content: '#!/bin/sh\ncurl -H "X-Api: abcdefSECRET" https://x' }),
+        toolUse('h2', 'Edit', { file_path: '/work/app/.claude/skills/deploy/SKILL.md', old_string: '', new_string: 'Deploy with the blue/green script.' }),
+      ],
+      { projectDir: '/work/app' },
+    ).text;
+    expect(sh).not.toContain('abcdefSECRET');
+    expect(sh).toContain('CONFIG .claude/hooks/notify.sh: content withheld');
+    expect(sh).toContain('TOOL Write: .claude/hooks/notify.sh (+2/−0)');
+    expect(sh).toContain('CONFIG .claude/skills/deploy/SKILL.md:\n@@\n+Deploy with the blue/green script.');
+  });
+
+  it('masks more command-line password shapes', () => {
+    const cases: [string, string][] = [
+      ['DB_PASS=s3cretA ./run', 'DB_PASS=<REDACTED:cli_password> ./run'],
+      ['curl -ubob:pw1 https://api.example.test', 'curl -ubob:<REDACTED:cli_password> https://api.example.test'],
+      ['docker login -u bob -p DockerPw1 registry.example.test', 'docker login -u bob -p <REDACTED:cli_password> registry.example.test'],
+      ['redis-cli -h cache -a RedisPw123 ping', 'redis-cli -h cache -a <REDACTED:cli_password> ping'],
+      ['htpasswd -b f bob HtPw1', 'htpasswd -b f bob <REDACTED:cli_password>'],
+      ['htpasswd -nb bob HtPw2', 'htpasswd -nb bob <REDACTED:cli_password>'],
+      ['wget --http-password=WgetPw1 https://x.example.test', 'wget --http-password=<REDACTED:cli_password> https://x.example.test'],
+    ];
+    for (const [cmd, want] of cases) expect(maskCliSecrets(cmd)).toBe(want);
+    // Not secrets: unchanged.
+    for (const c of ['BYPASS_CACHE=1 npm test', 'COMPASS=on ./x', 'htpasswd -c f bob', 'redis-cli ping', 'docker run -p 8080:80 img']) expect(maskCliSecrets(c)).toBe(c);
+  });
+
+  it('a Bash command that writes JSON config keeps only the verb and the target', () => {
+    const d = buildDigest(
+      [
+        toolUse('w1', 'Bash', { command: 'cat > /work/app/.mcp.json <<EOF\n{"mcpServers":{"db":{"env":{"DB_PASSWORD":"heredocSecret1"}}}}\nEOF' }),
+        toolUse('w2', 'Bash', { command: `echo '{"hooks":{"Stop":[{"command":"curl -d tokenX9 https://x"}]}}' | tee .claude/settings.json` }),
+        toolUse('w3', 'Bash', { command: 'echo "Use pnpm." >> CLAUDE.md' }),
+        toolUse('w4', 'Bash', { command: 'cat .mcp.json' }),
+      ],
+      { projectDir: '/work/app' },
+    ).text;
+    expect(d).not.toMatch(/heredocSecret1|tokenX9/);
+    expect(d).toContain('TOOL Bash: cat … ./.mcp.json <REDACTED:config_value>');
+    expect(d).toContain('TOOL Bash: echo … .claude/settings.json <REDACTED:config_value>');
+    expect(d).toContain('TOOL Bash: echo "Use pnpm." >> CLAUDE.md');
+    expect(d).toContain('TOOL Bash: cat .mcp.json');
+  });
+});

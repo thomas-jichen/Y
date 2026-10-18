@@ -30,6 +30,9 @@ export type BudgetVerdict = { allow: true } | { allow: false; reason: 'interval'
 
 /** A lock older than this is from a crashed listener and is broken. */
 export const WAKE_LOCK_STALE_MS = 5_000;
+/** How long takeWake spins for a lock another listener holds (it is held for a read and a write). */
+export const WAKE_LOCK_SPIN_MS = 150;
+const SPIN_STEP_MS = 5;
 
 interface BudgetFile {
   /** Epoch ms of recent wakes (last 24 h only), ascending. */
@@ -83,14 +86,29 @@ function acquireWakeLock(p: Paths): boolean {
   }
 }
 
+function sleepSync(ms: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    /* no Atomics.wait: retry at once */
+  }
+}
+
 /**
  * Check the budget and, when allowed, record the wake, under a short lock so
  * two listeners can't both pass the check and overwrite each other's entry.
- * Never waits: when another listener holds the lock the verdict is
- * `busy` (the caller parks the pointer for the next prompt).
+ * Another listener holds the lock only for a read and a write, so this spins
+ * up to {@link WAKE_LOCK_SPIN_MS} for it; only if it is still held is the
+ * verdict `busy` (the caller parks the pointer and keeps listening).
  */
-export function takeWake(p: Paths, now: number): BudgetVerdict {
-  if (!acquireWakeLock(p)) return { allow: false, reason: 'busy' };
+export function takeWake(p: Paths, now: number, spinMs: number = WAKE_LOCK_SPIN_MS): BudgetVerdict {
+  const until = Date.now() + spinMs;
+  let locked = acquireWakeLock(p);
+  while (!locked && Date.now() < until) {
+    sleepSync(SPIN_STEP_MS);
+    locked = acquireWakeLock(p);
+  }
+  if (!locked) return { allow: false, reason: 'busy' };
   try {
     const wakes = readWakes(p, now);
     const v = checkBudget(wakes, now);

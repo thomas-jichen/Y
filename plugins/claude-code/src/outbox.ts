@@ -54,11 +54,12 @@ export function writeChunk(p: Paths, chunk: IngestChunk, now: number, capBytes: 
   let out = chunk;
   let used = outboxBytes(p);
   if (used > capBytes) {
-    // Oldest dead-lettered chunks go first: nothing will ever send them.
+    // Oldest dead-lettered chunks go first: at most a few 5xx ones would ever be re-driven.
     for (const d of jsonFiles(p.dead)) {
       if (used <= capBytes) break;
       try {
         fs.rmSync(d.file, { force: true });
+        fs.rmSync(path.join(p.outbox, '.dead-meta', path.basename(d.file)), { force: true });
         used -= d.size;
       } catch {
         /* best effort */

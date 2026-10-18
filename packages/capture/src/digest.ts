@@ -46,24 +46,83 @@ const s = (v: unknown): string => (typeof v === 'string' ? v : '');
 
 /** A marker in `@y/redact`'s grammar, so pass-1 redaction keeps it as is. */
 const CLI_SECRET = '<REDACTED:cli_password>';
-const SECRET_NAME = '[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?)[A-Za-z0-9_]*';
+const CONFIG_VALUE = '<REDACTED:config_value>';
+const SECRET_NAME =
+  '(?:[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?)[A-Za-z0-9_]*|(?:[A-Za-z0-9_]*_)?(?:PASS|PW)(?:_[A-Za-z0-9_]*)?)';
 const ENV_ASSIGN_RE = new RegExp(`(^|[\\s;&|(])((?:export\\s+)?${SECRET_NAME})=("[^"]*"|'[^']*'|\\S+)`, 'gi');
 const MYSQL_RE = /\b(?:mysql\w*|mariadb\w*)\b/;
+const ARG = `("[^"]*"|'[^']*'|\\S+)`;
+
+/** `htpasswd -b[c…] file user PW` / `htpasswd -nb user PW`: the password is a positional argument. */
+function maskHtpasswd(cmd: string): string {
+  return cmd.replace(/(\bhtpasswd((?:\s+-[A-Za-z]+)+))((?:\s+(?:"[^"]*"|'[^']*'|\S+))+)/g, (m, head: string, flags: string, rest: string) => {
+    if (!/b/.test(flags)) return m;
+    const positional = /n/.test(flags) ? 2 : 3;
+    const args = [...rest.matchAll(/(\s+)("[^"]*"|'[^']*'|\S+)/g)];
+    if (args.length < positional) return m;
+    return head + args.map((a, i) => (i === positional - 1 ? `${a[1]}${CLI_SECRET}` : a[0])).join('');
+  });
+}
 
 /**
  * Mask passwords that command-line tools take as arguments: `sshpass -p X`,
- * `--password X` / `--password=X`, `mysql -pX`, `curl -u user:X` and
- * `PGPASSWORD=X`-style assignments. Generic secret shapes are `@y/redact`'s job;
- * these have no shape of their own, only a position. Exported for tests.
+ * `--password X` / `--password=X` (and `--http-password`-style), `mysql -pX`, `curl -u user:X` (or
+ * `-uuser:X`), `docker login -p X`, `redis-cli -a X`, `htpasswd -b … X` and
+ * `PGPASSWORD=X` / `DB_PASS=X`-style assignments. Generic secret shapes are
+ * `@y/redact`'s job; these have no shape of their own, only a position.
+ * Exported for tests.
  */
 export function maskCliSecrets(cmd: string): string {
   let out = cmd
-    .replace(/(\bsshpass\s+-p\s*)("[^"]*"|'[^']*'|\S+)/g, `$1${CLI_SECRET}`)
-    .replace(/(\s--(?:password|passwd)(?:=|\s+))(?!-)("[^"]*"|'[^']*'|\S+)/gi, `$1${CLI_SECRET}`)
+    .replace(new RegExp(`(\\bsshpass\\s+-p\\s*)${ARG}`, 'g'), `$1${CLI_SECRET}`)
+    .replace(new RegExp(`(\\s--(?:[a-z]+-)?(?:password|passwd)(?:=|\\s+))(?!-)${ARG}`, 'gi'), `$1${CLI_SECRET}`)
     .replace(ENV_ASSIGN_RE, (_m, pre: string, name: string) => `${pre}${name}=${CLI_SECRET}`);
-  if (/\b(?:curl|wget|http)\b/.test(out)) out = out.replace(/(\s(?:-u|--user)(?:=|\s+)["']?[^\s:"']+:)([^\s"']+)/g, `$1${CLI_SECRET}`);
+  if (/\b(?:curl|wget|http)\b/.test(out)) out = out.replace(/(\s(?:-u\s*|--user(?:=|\s+))["']?[^\s:"'-][^\s:"']*:)([^\s"']+)/g, `$1${CLI_SECRET}`);
   if (MYSQL_RE.test(out)) out = out.replace(/(\s-p)(?![\s-])("[^"]*"|'[^']*'|\S+)/g, `$1${CLI_SECRET}`);
+  if (/\b(?:docker|podman|nerdctl|buildah|skopeo|helm\s+registry)\s+login\b/.test(out)) {
+    out = out.replace(new RegExp(`(\\s-p\\s*)(?!-)${ARG}`, 'g'), `$1${CLI_SECRET}`);
+  }
+  if (/\bredis-cli\b/.test(out)) out = out.replace(new RegExp(`(\\s(?:-a\\s*|--pass\\s+))(?!-)${ARG}`, 'g'), `$1${CLI_SECRET}`);
+  if (/\bhtpasswd\b/.test(out)) out = maskHtpasswd(out);
   return out;
+}
+
+/** A shell word naming a config path (quotes stripped). */
+function configTarget(word: string): string | undefined {
+  const w = word.replace(/^["']|["']$/g, '');
+  return CONFIG_PATH_RE.test(w.replace(/\\/g, '/')) ? w : undefined;
+}
+
+const isMarkdown = (p: string) => /\.md$/i.test(p);
+
+/**
+ * A Bash command that writes agent config other than markdown (`cat > .mcp.json
+ * <<EOF …`, `echo '{…}' > .claude/settings.json`, `tee`, `sed -i`) carries the
+ * same env values and hook commands as an Edit of it: keep the verb and the
+ * target, drop the rest. Undefined when the command writes no such file.
+ */
+function maskConfigWrite(cmd: string): string | undefined {
+  const targets: string[] = [];
+  for (const m of cmd.matchAll(/>{1,2}\|?\s*("[^"]+"|'[^']+'|[^\s;&|<>]+)/g)) {
+    const t = configTarget(m[1]!);
+    if (t) targets.push(t);
+  }
+  for (const m of cmd.matchAll(/\btee\b((?:\s+-\S+)*)((?:\s+(?:"[^"]+"|'[^']+'|[^\s;&|<>-][^\s;&|<>]*))+)/g)) {
+    for (const w of m[2]!.trim().split(/\s+/)) {
+      const t = configTarget(w);
+      if (t) targets.push(t);
+    }
+  }
+  if (/\b(?:sed|perl)\b[^;&|]*\s-[A-Za-z]*i/.test(cmd) || /\bsed\b[^;&|]*--in-place/.test(cmd)) {
+    for (const w of cmd.split(/\s+/)) {
+      const t = configTarget(w);
+      if (t) targets.push(t);
+    }
+  }
+  const hidden = targets.filter((t) => !isMarkdown(t));
+  if (hidden.length === 0) return undefined;
+  const verb = /^\s*([A-Za-z0-9_./-]+)/.exec(cmd)?.[1] ?? 'write';
+  return `${verb} … ${[...new Set(hidden)].join(' ')} ${CONFIG_VALUE}`;
 }
 
 function toolArg(name: string, input: Input, projectDir?: string): string {
@@ -71,7 +130,7 @@ function toolArg(name: string, input: Input, projectDir?: string): string {
     case 'Bash': {
       const root = projectDir?.replace(/\/+$/, '');
       const cmd = root ? s(input.command).split(root).join('.') : s(input.command);
-      return oneLine(maskCliSecrets(cmd), 300);
+      return oneLine(maskConfigWrite(cmd) ?? maskCliSecrets(cmd), 300);
     }
     case 'Edit':
     case 'MultiEdit':
@@ -115,24 +174,49 @@ function toolArg(name: string, input: Input, projectDir?: string): string {
   }
 }
 
-const CONFIG_VALUE = '<REDACTED:config_value>';
 /** JSON keys whose string values are enums or tool names, kept so the distiller still sees the shape. */
 const SAFE_JSON_KEYS = new Set(['type', 'matcher', 'defaultMode', 'outputStyle', 'model', 'theme', 'source']);
 
 /**
  * JSON agent config (`.mcp.json`, `.claude/settings*.json`, hooks.json) holds
  * MCP env blocks, headers, args (connection strings) and hook commands, which
- * the setup snapshot never sends (setup.ts). Keep keys, numbers, booleans and
- * structure; replace string values with a marker, except a few enum keys.
+ * the setup snapshot never sends (setup.ts). Allowlist: a line keeps only
+ * JSON tokens it can read completely (keys, punctuation, numbers, booleans,
+ * null, and the string values of a few enum keys); every other string value
+ * becomes the marker, and from the first thing that isn't a whole JSON token
+ * (an Edit fragment that starts or ends inside a string, a bare value, a
+ * comment) the rest of the line does too.
  */
 function maskJsonConfigLine(line: string): string {
-  return line.replace(/"((?:[^"\\]|\\.)*)"(\s*:\s*)?/g, (m, str: string, colon: string | undefined, offset: number, whole: string) => {
-    if (colon) return m; // a key
-    const before = whole.slice(0, offset);
-    const key = /"((?:[^"\\]|\\.)*)"\s*:\s*$/.exec(before)?.[1];
-    if (key !== undefined && SAFE_JSON_KEYS.has(key) && /^[A-Za-z0-9_.:|*() -]{0,60}$/.test(str)) return m;
-    return `"${CONFIG_VALUE}"`;
-  });
+  const sign = /^[+-]/.test(line) ? line[0]! : '';
+  const body = sign ? line.slice(1) : line;
+  if (!sign && body === '@@') return line;
+  let out = '';
+  let i = 0;
+  let lastKey: string | undefined;
+  const TOKEN = /\s+|[{}[\],]|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?(?![\w.])|(?:true|false|null)(?![\w])|"((?:[^"\\]|\\.)*)"(\s*:)?/y;
+  while (i < body.length) {
+    TOKEN.lastIndex = i;
+    const m = TOKEN.exec(body);
+    if (!m) {
+      out += CONFIG_VALUE; // not a whole JSON token from here on: nothing of it is kept
+      break;
+    }
+    const [tok, str, colon] = m;
+    if (str !== undefined && colon) {
+      out += tok;
+      lastKey = str;
+    } else if (str !== undefined) {
+      const keep = lastKey !== undefined && SAFE_JSON_KEYS.has(lastKey) && /^[A-Za-z0-9_.:|*() -]{0,60}$/.test(str);
+      out += keep ? tok : `"${CONFIG_VALUE}"`;
+      lastKey = undefined;
+    } else {
+      out += tok;
+      if (!/^\s+$/.test(tok)) lastKey = undefined;
+    }
+    i += tok.length;
+  }
+  return sign + out;
 }
 
 function configDiff(name: string, input: Input, isJson = false): string[] {
@@ -193,8 +277,15 @@ export function buildDigest(records: readonly ClaudeRecord[], opts?: DigestOptio
         entries.push({ kind: 'TOOL', text: line, window: false });
         const path = s(input.file_path) || s(input.notebook_path);
         if (!mcp && /^(?:Edit|MultiEdit|Write)$/.test(b.name) && CONFIG_PATH_RE.test(path.replace(/\\/g, '/'))) {
-          const diff = configDiff(b.name, input, /\.json$/i.test(path));
-          entries.push({ kind: 'CONFIG', text: `CONFIG ${relPath(path, opts?.projectDir)}:\n${diff.join('\n')}`, window: false });
+          const rel = relPath(path, opts?.projectDir);
+          if (isMarkdown(path)) {
+            entries.push({ kind: 'CONFIG', text: `CONFIG ${rel}:\n${configDiff(b.name, input).join('\n')}`, window: false });
+          } else if (/\.json$/i.test(path)) {
+            entries.push({ kind: 'CONFIG', text: `CONFIG ${rel}:\n${configDiff(b.name, input, true).join('\n')}`, window: false });
+          } else {
+            // Hook scripts and other non-markdown config: commands and credentials, never their text.
+            entries.push({ kind: 'CONFIG', text: `CONFIG ${rel}: content withheld`, window: false });
+          }
         }
       } else if (b.type === 'tool_result') {
         const tool = tools.get(b.toolUseId);

@@ -161,7 +161,7 @@ function pruneSeq(dir, keep) {
 }
 function readStdin(timeoutMs, stream = process.stdin) {
   if (stream.isTTY) return Promise.resolve("");
-  return new Promise((resolve2) => {
+  return new Promise((resolve3) => {
     let buf = "";
     let done = false;
     const finish2 = () => {
@@ -172,7 +172,7 @@ function readStdin(timeoutMs, stream = process.stdin) {
       stream.removeAllListeners("end");
       stream.removeAllListeners("error");
       stream.pause();
-      resolve2(buf);
+      resolve3(buf);
     };
     const timer = setTimeout(finish2, timeoutMs);
     stream.setEncoding("utf8");
@@ -5599,7 +5599,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve2) {
+function isRecursive(inst, stack, resolve3) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -5609,7 +5609,7 @@ function isRecursive(inst, stack, resolve2) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve2);
+      const answer = isRecursive(child, stack, resolve3);
       if (answer > result)
         result = answer;
     }
@@ -5620,7 +5620,7 @@ function isRecursive(inst, stack, resolve2) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve2) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve3) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -5684,7 +5684,7 @@ function isRecursive(inst, stack, resolve2) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve2 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve3 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -23754,21 +23754,65 @@ function relPath(path13, projectDir) {
 var asInput2 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) ? v : {};
 var s = (v) => typeof v === "string" ? v : "";
 var CLI_SECRET = "<REDACTED:cli_password>";
-var SECRET_NAME = "[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?)[A-Za-z0-9_]*";
+var CONFIG_VALUE = "<REDACTED:config_value>";
+var SECRET_NAME = "(?:[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?)[A-Za-z0-9_]*|(?:[A-Za-z0-9_]*_)?(?:PASS|PW)(?:_[A-Za-z0-9_]*)?)";
 var ENV_ASSIGN_RE = new RegExp(`(^|[\\s;&|(])((?:export\\s+)?${SECRET_NAME})=("[^"]*"|'[^']*'|\\S+)`, "gi");
 var MYSQL_RE = /\b(?:mysql\w*|mariadb\w*)\b/;
+var ARG = `("[^"]*"|'[^']*'|\\S+)`;
+function maskHtpasswd(cmd) {
+  return cmd.replace(/(\bhtpasswd((?:\s+-[A-Za-z]+)+))((?:\s+(?:"[^"]*"|'[^']*'|\S+))+)/g, (m, head, flags, rest) => {
+    if (!/b/.test(flags)) return m;
+    const positional = /n/.test(flags) ? 2 : 3;
+    const args = [...rest.matchAll(/(\s+)("[^"]*"|'[^']*'|\S+)/g)];
+    if (args.length < positional) return m;
+    return head + args.map((a, i) => i === positional - 1 ? `${a[1]}${CLI_SECRET}` : a[0]).join("");
+  });
+}
 function maskCliSecrets(cmd) {
-  let out = cmd.replace(/(\bsshpass\s+-p\s*)("[^"]*"|'[^']*'|\S+)/g, `$1${CLI_SECRET}`).replace(/(\s--(?:password|passwd)(?:=|\s+))(?!-)("[^"]*"|'[^']*'|\S+)/gi, `$1${CLI_SECRET}`).replace(ENV_ASSIGN_RE, (_m, pre, name) => `${pre}${name}=${CLI_SECRET}`);
-  if (/\b(?:curl|wget|http)\b/.test(out)) out = out.replace(/(\s(?:-u|--user)(?:=|\s+)["']?[^\s:"']+:)([^\s"']+)/g, `$1${CLI_SECRET}`);
+  let out = cmd.replace(new RegExp(`(\\bsshpass\\s+-p\\s*)${ARG}`, "g"), `$1${CLI_SECRET}`).replace(new RegExp(`(\\s--(?:[a-z]+-)?(?:password|passwd)(?:=|\\s+))(?!-)${ARG}`, "gi"), `$1${CLI_SECRET}`).replace(ENV_ASSIGN_RE, (_m, pre, name) => `${pre}${name}=${CLI_SECRET}`);
+  if (/\b(?:curl|wget|http)\b/.test(out)) out = out.replace(/(\s(?:-u\s*|--user(?:=|\s+))["']?[^\s:"'-][^\s:"']*:)([^\s"']+)/g, `$1${CLI_SECRET}`);
   if (MYSQL_RE.test(out)) out = out.replace(/(\s-p)(?![\s-])("[^"]*"|'[^']*'|\S+)/g, `$1${CLI_SECRET}`);
+  if (/\b(?:docker|podman|nerdctl|buildah|skopeo|helm\s+registry)\s+login\b/.test(out)) {
+    out = out.replace(new RegExp(`(\\s-p\\s*)(?!-)${ARG}`, "g"), `$1${CLI_SECRET}`);
+  }
+  if (/\bredis-cli\b/.test(out)) out = out.replace(new RegExp(`(\\s(?:-a\\s*|--pass\\s+))(?!-)${ARG}`, "g"), `$1${CLI_SECRET}`);
+  if (/\bhtpasswd\b/.test(out)) out = maskHtpasswd(out);
   return out;
+}
+function configTarget(word) {
+  const w = word.replace(/^["']|["']$/g, "");
+  return CONFIG_PATH_RE.test(w.replace(/\\/g, "/")) ? w : void 0;
+}
+var isMarkdown = (p) => /\.md$/i.test(p);
+function maskConfigWrite(cmd) {
+  const targets = [];
+  for (const m of cmd.matchAll(/>{1,2}\|?\s*("[^"]+"|'[^']+'|[^\s;&|<>]+)/g)) {
+    const t = configTarget(m[1]);
+    if (t) targets.push(t);
+  }
+  for (const m of cmd.matchAll(/\btee\b((?:\s+-\S+)*)((?:\s+(?:"[^"]+"|'[^']+'|[^\s;&|<>-][^\s;&|<>]*))+)/g)) {
+    for (const w of m[2].trim().split(/\s+/)) {
+      const t = configTarget(w);
+      if (t) targets.push(t);
+    }
+  }
+  if (/\b(?:sed|perl)\b[^;&|]*\s-[A-Za-z]*i/.test(cmd) || /\bsed\b[^;&|]*--in-place/.test(cmd)) {
+    for (const w of cmd.split(/\s+/)) {
+      const t = configTarget(w);
+      if (t) targets.push(t);
+    }
+  }
+  const hidden = targets.filter((t) => !isMarkdown(t));
+  if (hidden.length === 0) return void 0;
+  const verb = /^\s*([A-Za-z0-9_./-]+)/.exec(cmd)?.[1] ?? "write";
+  return `${verb} … ${[...new Set(hidden)].join(" ")} ${CONFIG_VALUE}`;
 }
 function toolArg(name, input2, projectDir) {
   switch (name) {
     case "Bash": {
       const root = projectDir?.replace(/\/+$/, "");
       const cmd = root ? s(input2.command).split(root).join(".") : s(input2.command);
-      return oneLine(maskCliSecrets(cmd), 300);
+      return oneLine(maskConfigWrite(cmd) ?? maskCliSecrets(cmd), 300);
     }
     case "Edit":
     case "MultiEdit":
@@ -23811,16 +23855,37 @@ function toolArg(name, input2, projectDir) {
     }
   }
 }
-var CONFIG_VALUE = "<REDACTED:config_value>";
 var SAFE_JSON_KEYS = /* @__PURE__ */ new Set(["type", "matcher", "defaultMode", "outputStyle", "model", "theme", "source"]);
 function maskJsonConfigLine(line) {
-  return line.replace(/"((?:[^"\\]|\\.)*)"(\s*:\s*)?/g, (m, str2, colon, offset, whole) => {
-    if (colon) return m;
-    const before = whole.slice(0, offset);
-    const key = /"((?:[^"\\]|\\.)*)"\s*:\s*$/.exec(before)?.[1];
-    if (key !== void 0 && SAFE_JSON_KEYS.has(key) && /^[A-Za-z0-9_.:|*() -]{0,60}$/.test(str2)) return m;
-    return `"${CONFIG_VALUE}"`;
-  });
+  const sign = /^[+-]/.test(line) ? line[0] : "";
+  const body = sign ? line.slice(1) : line;
+  if (!sign && body === "@@") return line;
+  let out = "";
+  let i = 0;
+  let lastKey;
+  const TOKEN = /\s+|[{}[\],]|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?(?![\w.])|(?:true|false|null)(?![\w])|"((?:[^"\\]|\\.)*)"(\s*:)?/y;
+  while (i < body.length) {
+    TOKEN.lastIndex = i;
+    const m = TOKEN.exec(body);
+    if (!m) {
+      out += CONFIG_VALUE;
+      break;
+    }
+    const [tok, str2, colon] = m;
+    if (str2 !== void 0 && colon) {
+      out += tok;
+      lastKey = str2;
+    } else if (str2 !== void 0) {
+      const keep = lastKey !== void 0 && SAFE_JSON_KEYS.has(lastKey) && /^[A-Za-z0-9_.:|*() -]{0,60}$/.test(str2);
+      out += keep ? tok : `"${CONFIG_VALUE}"`;
+      lastKey = void 0;
+    } else {
+      out += tok;
+      if (!/^\s+$/.test(tok)) lastKey = void 0;
+    }
+    i += tok.length;
+  }
+  return sign + out;
 }
 function configDiff(name, input2, isJson = false) {
   const out = [];
@@ -23867,9 +23932,16 @@ function buildDigest(records, opts) {
         entries.push({ kind: "TOOL", text: line, window: false });
         const path13 = s(input2.file_path) || s(input2.notebook_path);
         if (!mcp && /^(?:Edit|MultiEdit|Write)$/.test(b.name) && CONFIG_PATH_RE.test(path13.replace(/\\/g, "/"))) {
-          const diff = configDiff(b.name, input2, /\.json$/i.test(path13));
-          entries.push({ kind: "CONFIG", text: `CONFIG ${relPath(path13, opts?.projectDir)}:
-${diff.join("\n")}`, window: false });
+          const rel = relPath(path13, opts?.projectDir);
+          if (isMarkdown(path13)) {
+            entries.push({ kind: "CONFIG", text: `CONFIG ${rel}:
+${configDiff(b.name, input2).join("\n")}`, window: false });
+          } else if (/\.json$/i.test(path13)) {
+            entries.push({ kind: "CONFIG", text: `CONFIG ${rel}:
+${configDiff(b.name, input2, true).join("\n")}`, window: false });
+          } else {
+            entries.push({ kind: "CONFIG", text: `CONFIG ${rel}: content withheld`, window: false });
+          }
         }
       } else if (b.type === "tool_result") {
         const tool = tools.get(b.toolUseId);
@@ -24633,40 +24705,63 @@ function redact(text, opts) {
 
 // src/redaction.ts
 var cache = /* @__PURE__ */ new Map();
-function gitRemote(dir) {
+function gitConfigPath(dir) {
   let d = dir;
   for (let i = 0; d && i < 6; i++) {
+    const dotGit = path2.join(d, ".git");
+    let st;
     try {
-      const cfg = fs2.readFileSync(path2.join(d, ".git", "config"), "utf8");
-      const m = /\[remote "origin"\][^[]*?\burl\s*=\s*(\S+)/.exec(cfg);
-      return m?.[1];
+      st = fs2.statSync(dotGit);
     } catch {
-      const up = path2.dirname(d);
-      if (up === d) break;
-      d = up;
+      st = void 0;
     }
+    if (st?.isDirectory()) return path2.join(dotGit, "config");
+    if (st?.isFile()) {
+      const m = /^gitdir:\s*(.+?)\s*$/m.exec(readText2(dotGit) ?? "");
+      if (!m) return void 0;
+      const gitdir = path2.resolve(d, m[1]);
+      const common = readText2(path2.join(gitdir, "commondir"))?.trim();
+      return path2.join(common ? path2.resolve(gitdir, common) : gitdir, "config");
+    }
+    const up = path2.dirname(d);
+    if (up === d) break;
+    d = up;
   }
   return void 0;
 }
-function parseGitUser(cfg) {
-  const out = {};
-  let inUser = false;
+function gitRemote(dir) {
+  const file2 = gitConfigPath(dir);
+  const cfg = file2 ? readText2(file2) : void 0;
+  if (cfg === void 0) return void 0;
+  const m = /\[remote "origin"\][^[]*?\burl\s*=\s*(\S+)/.exec(cfg);
+  return m?.[1];
+}
+function configValue(raw) {
+  const v = raw.trim();
+  const q = /^"((?:[^"\\]|\\.)*)"/.exec(v);
+  if (q) return q[1].replace(/\\(.)/g, "$1").trim();
+  return v.replace(/\s[#;].*$/, "").replace(/^[#;].*$/, "").trim();
+}
+function scanGitConfig(cfg) {
+  const out = [];
+  let section;
   for (const raw of cfg.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith("#") || line.startsWith(";")) continue;
-    const sec = /^\[\s*([A-Za-z0-9.-]+)(?:\s+"[^"]*")?\s*\]$/.exec(line);
+    const sec = /^\[\s*([A-Za-z0-9.-]+)(\s+"[^"]*")?\s*\]/.exec(line);
     if (sec) {
-      inUser = sec[1].toLowerCase() === "user" && !/"/.test(line);
+      const name = sec[1].toLowerCase();
+      section = name === "user" && !sec[2] ? "user" : name === "include" && !sec[2] ? "include" : name === "includeif" && sec[2] ? "includeIf" : void 0;
       continue;
     }
-    if (!inUser) continue;
+    if (!section) continue;
     const kv = /^([A-Za-z0-9-]+)\s*=\s*(.*)$/.exec(line);
     if (!kv) continue;
     const k = kv[1].toLowerCase();
-    const v = kv[2].replace(/^"(.*)"$/, "$1").trim().slice(0, 200);
+    const v = configValue(kv[2]).slice(0, 200);
     if (!v) continue;
-    if (k === "name") out.name = v;
-    else if (k === "email") out.email = v;
+    if (section === "user" && (k === "name" || k === "email")) out.push({ key: k, value: v });
+    else if (section !== "user" && k === "path") out.push({ key: "include", value: v, conditional: section === "includeIf" });
   }
   return out;
 }
@@ -24677,21 +24772,54 @@ function readText2(file2) {
     return void 0;
   }
 }
-function gitIdentity(dir, home = os2.homedir()) {
-  const global = parseGitUser(readText2(path2.join(home, ".gitconfig")) ?? "");
-  let local = {};
-  let d = dir;
-  for (let i = 0; d && i < 6; i++) {
-    const cfg = readText2(path2.join(d, ".git", "config"));
-    if (cfg !== void 0) {
-      local = parseGitUser(cfg);
-      break;
+function includeTarget(value, from, home) {
+  if (value.startsWith("~/")) return path2.join(home, value.slice(2));
+  return path2.resolve(path2.dirname(from), value);
+}
+function readConfigSource(file2, home) {
+  const effective = {};
+  const all = { names: [], emails: [] };
+  const note = (k, v) => (k === "name" ? all.names : all.emails).push(v);
+  for (const e of scanGitConfig(readText2(file2) ?? "")) {
+    if (e.key !== "include") {
+      effective[e.key] = e.value;
+      note(e.key, e.value);
+      continue;
     }
-    const up = path2.dirname(d);
-    if (up === d) break;
-    d = up;
+    for (const inc2 of scanGitConfig(readText2(includeTarget(e.value, file2, home)) ?? "")) {
+      if (inc2.key === "include") continue;
+      note(inc2.key, inc2.value);
+      if (!e.conditional) effective[inc2.key] = inc2.value;
+    }
   }
-  return { ...global, ...local };
+  return { effective, all };
+}
+function gitSources(dir, home, xdgConfigHome) {
+  const files = [path2.join(xdgConfigHome, "git", "config"), path2.join(home, ".gitconfig")];
+  const local = gitConfigPath(dir);
+  if (local) files.push(local);
+  return files.map((f) => readConfigSource(f, home));
+}
+function defaultXdg(home) {
+  return home === os2.homedir() && process.env.XDG_CONFIG_HOME ? process.env.XDG_CONFIG_HOME : path2.join(home, ".config");
+}
+function gitIdentities(dir, home = os2.homedir(), xdgConfigHome = defaultXdg(home)) {
+  const names = /* @__PURE__ */ new Set();
+  const emails = /* @__PURE__ */ new Set();
+  for (const s2 of gitSources(dir, home, xdgConfigHome)) {
+    s2.all.names.forEach((n) => names.add(n));
+    s2.all.emails.forEach((e) => emails.add(e));
+  }
+  return { names: [...names], emails: [...emails] };
+}
+var COMMON_NAME_WORDS = new Set(
+  "will mark grant bill hope faith rose june april august frank jack earl dean lane chase cash gene hunter king miles page penny rich rusty sandy summer wade ward young brown green white black gray grey long little short small case cook bell hall hill wood stone field ford park price reed rice rock shaw snow storm west north south east love star best fox lamb day may ray max art joy guy win pat sue rob bob don ben dan tom ken roy sam lee kim van von de la le del der bay cole drew nick crystal amber ivy jade pearl ruby dawn eve autumn river sky skye rain clay glen dale hazel heath holly iris lily violet basil sage carter cooper porter mason taylor turner walker baker butler fisher fletcher miller parker potter sawyer shepherd smith tanner thatcher weaver wright archer bishop booth brook brooks burns bush cross dale dick dock duke fair fry gill hart hawk hay hood horn hunt keen knight lake land leach lord lucky major marsh mayor moon more moss nash noble oak pace pike pool pope rush salt sharp shields short silver steel sweet swift thorn trout wall wells wild wise wolf worth bond chance christian joy major victor angel august barley bear blue cloud coin dash echo free gold honey ice jet joy legend link lion lucky lux mars meadow mercy ocean phoenix poppy rebel royal saint scout shadow sonny spring sterling sunny tiger trinity unity wren zen test user admin root build main node".split(/\s+/)
+);
+function nameTerms(name) {
+  const full = name.trim();
+  if (!full) return [];
+  const parts = full.split(/\s+/).filter((t) => t.length >= 4 && !COMMON_NAME_WORDS.has(t.toLowerCase()));
+  return /\s/.test(full) ? [full, ...parts] : parts;
 }
 function identityTerms(cwd) {
   const key = cwd ?? "";
@@ -24704,24 +24832,33 @@ function identityTerms(cwd) {
     } catch {
       user = void 0;
     }
-    let git = {};
+    let git = { names: [], emails: [] };
     try {
-      git = gitIdentity(cwd);
+      git = gitIdentities(cwd);
     } catch {
-      git = {};
+      git = { names: [], emails: [] };
     }
+    const remote = gitRemote(cwd);
     terms = identityTermsFrom({
-      ...git.name ? { gitUser: git.name } : user ? { gitUser: user } : {},
-      ...git.email ? { gitEmail: git.email } : {},
+      ...user ? { gitUser: user } : {},
+      ...git.emails[0] ? { gitEmail: git.emails[0] } : {},
       hostname: os2.hostname(),
       ...cwd ? { dirname: path2.basename(cwd) } : {},
-      ...gitRemote(cwd) ? { remote: gitRemote(cwd) } : {}
+      ...remote ? { remote } : {}
     });
-    if (git.name && user) {
-      const extra = identityTermsFrom({ gitUser: user }).user;
-      const seen = new Set(terms.user.map((t) => t.toLowerCase()));
-      terms = { ...terms, user: [...terms.user, ...extra.filter((t) => !seen.has(t.toLowerCase()))] };
-    }
+    const extra = [
+      ...git.names.flatMap(nameTerms),
+      ...git.emails.slice(1).flatMap((e) => identityTermsFrom({ gitEmail: e }).user)
+    ];
+    const seen = new Set(terms.user.map((t) => t.toLowerCase()));
+    const add = extra.filter((t) => {
+      const k = t.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    const emails = git.emails.slice(1).filter((e) => !terms.email.some((x) => x.toLowerCase() === e.toLowerCase()));
+    terms = { ...terms, user: [...terms.user, ...add], email: [...terms.email, ...emails] };
   } catch {
     terms = void 0;
   }
@@ -24910,7 +25047,12 @@ function parsePolicy(raw) {
   const capture = BriefPolicy.shape.capture.safeParse(r.capture);
   if (!capture.success) return void 0;
   const salt = BriefPolicy.shape.repoKeySalt.safeParse(r.repoKeySalt);
-  return { capture: capture.data, ...salt.success && salt.data ? { repoKeySalt: salt.data } : {} };
+  const wake = BriefPolicy.shape.wakeOnDm.safeParse(r.wakeOnDm);
+  return {
+    capture: capture.data,
+    ...salt.success && salt.data ? { repoKeySalt: salt.data } : {},
+    ...wake.success ? { wakeOnDm: wake.data } : {}
+  };
 }
 var ALL_ENGAGED = { pushPaths: true, networkContent: true, apply: true, ingest: true };
 function arr(v) {
@@ -24949,10 +25091,21 @@ function readBrief(p) {
   const b = readJson(p.brief);
   if (!b || typeof b.fetchedAt !== "number") return void 0;
   const again = sanitizeBrief({ ...b, v: 1 }, b.fetchedAt);
-  return again;
+  if (!again) return void 0;
+  const live = readLiveKillSwitches(p);
+  return live && live.at >= again.fetchedAt ? { ...again, killSwitches: live.killSwitches } : again;
 }
 function writeBrief(p, b) {
   writeJsonAtomic(p.brief, b);
+}
+function killSwitchesFile(p) {
+  return path3.join(p.state, "kill-switches.json");
+}
+function readLiveKillSwitches(p) {
+  const raw = readJson(killSwitchesFile(p));
+  if (!raw || typeof raw.at !== "number" || !Number.isFinite(raw.at)) return void 0;
+  const ks = KillSwitches.safeParse(raw.killSwitches);
+  return ks.success ? { killSwitches: ks.data, at: raw.at } : void 0;
 }
 function setupSentFile(p) {
   return path3.join(p.state, "setup-sent.json");
@@ -25118,6 +25271,7 @@ function writeChunk(p, chunk, now, capBytes = OUTBOX_CAP_BYTES) {
       if (used <= capBytes) break;
       try {
         fs4.rmSync(d.file, { force: true });
+        fs4.rmSync(path5.join(p.outbox, ".dead-meta", path5.basename(d.file)), { force: true });
         used -= d.size;
       } catch {
       }
@@ -25409,6 +25563,10 @@ function humanMessage(ctx, brief) {
   if (ctx.config.insecureApiUrl) {
     lines.push("Y: api_url is plain http:// to another machine, so Y sends nothing (your agent token would travel unencrypted). Set an https:// api_url in the plugin settings; http:// works for localhost only.");
   } else if (!ctx.config.token) lines.push("Y: no agent token configured. Set agent_token in the plugin settings.");
+  const mcpUrl = ctx.env.CLAUDE_PLUGIN_OPTION_MCP_URL?.trim();
+  if (mcpUrl && isInsecureUrl(mcpUrl) && ctx.env.Y_ALLOW_INSECURE_URL !== "1") {
+    lines.push("Y: mcp_url is plain http:// to another machine, so the Y tools send your agent token unencrypted. Set an https:// mcp_url in the plugin settings; http:// works for localhost only.");
+  }
   if (brief) {
     for (const n of brief.humanNotices) {
       const url2 = safeNoticeUrl(n.url, ctx);
