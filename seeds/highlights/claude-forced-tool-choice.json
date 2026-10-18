@@ -1,0 +1,66 @@
+{
+  "kind": "gotcha",
+  "title": "Forced tool_choice on Opus 5.5 and Sonnet 5.5",
+  "summary": "Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1 return 400 `tool_choice: type \"tool\" and \"any\" are not supported for this model.` for any forced tool_choice — on the Messages API and on count_tokens. Haiku 5.5 and Opus 5 still accept it, so the restriction does not track the 5.5 generation.",
+  "body": {
+    "problem": "You bump a model id to `claude-opus-5-5` or `claude-sonnet-5-5` and every request that pins a tool starts failing with HTTP 400 `invalid_request_error`: `tool_choice: type \"tool\" and \"any\" are not supported for this model.` The request body is otherwise unchanged and worked on Opus 5 / Opus 4.8. Extractor and classifier paths that relied on `tool_choice: {\"type\":\"tool\",\"name\":\"extract\"}` to guarantee a `tool_use` block break first, and a pre-flight `count_tokens` call on the same body fails identically, so you cannot even price the request. Confusingly, the same code against `claude-haiku-5-5` keeps working, which makes it look like an intermittent or account-level problem rather than a per-model parameter rule.",
+    "steps": [
+      "Identify the affected models. Forced tool_choice is rejected on exactly `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-1`, and `claude-mythos-5-1`. It is accepted on `claude-haiku-5-5`, `claude-opus-5`, `claude-sonnet-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-opus-4-5`, `claude-haiku-4-5` and earlier.",
+      "Replace `tool_choice: {\"type\":\"any\"}` or `{\"type\":\"tool\",\"name\":\"...\"}` with `tool_choice: {\"type\":\"auto\"}` (or just drop the field — `auto` is the default when `tools` is present). `{\"type\":\"none\"}` also remains valid.",
+      "Recover the input-shape guarantee you lost by setting `strict: true` on the tool definition (strict tool use). That validates `tool_use.input` against your schema; it does not force a call.",
+      "Recover the call guarantee with prompting instead: state in the prompt when the tool applies. The docs are explicit that `auto` may answer without calling the tool, so keep a code path for a text-only response.",
+      "If you need the response itself in a fixed JSON shape rather than a tool call, use structured outputs (`output_config.format`) instead of a forced tool.",
+      "Before adding `strict: true`, check each tool's `input_schema` against the strict-tool-use JSON Schema subset — every object in the schema must set `additionalProperties: false`.",
+      "On Amazon Bedrock, do not add `strict: true`: structured outputs (which include strict tool use) are not available for Opus 5.5 or Sonnet 5.5 there. Send `auto` without `strict`, say in the prompt when the tool applies, and validate the tool input in your own code.",
+      "Grep the whole repo for `tool_choice`, including test fixtures and any count_tokens pre-flight helper, since the Token Counting endpoint enforces the same rule."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Switching the forced choice from `{\"type\":\"tool\",\"name\":...}` to the looser `{\"type\":\"any\"}`.",
+        "whyFailed": "Both types are rejected by the same validation. The error message itself names both: `type \"tool\" and \"any\" are not supported for this model.`"
+      },
+      {
+        "tried": "Treating it as a thinking-configuration conflict and sending `thinking: {\"type\":\"disabled\"}` or dropping effort, on the theory that thinking-on-by-default blocks forced tools.",
+        "whyFailed": "Two separate reasons. The define-tools compatibility table says these models \"reject forced tool use regardless of thinking settings\", and adaptive thinking does not block forced tool use at all (Opus 5 and Haiku 5.5 have thinking on by default and accept it). Worse, Opus 5.5 also rejects `thinking: {\"type\":\"disabled\"}` with its own 400, so this attempt trades one error for another."
+      },
+      {
+        "tried": "Calling the Token Counting endpoint first to validate or price the request cheaply before sending it.",
+        "whyFailed": "The restriction is enforced on `count_tokens` too — both the errors page and the Sonnet 5.5 migration guide call this out explicitly — so the pre-flight check fails with the same 400."
+      },
+      {
+        "tried": "Assuming the restriction is a property of the 5.5 generation and rewriting every 5.5 call site.",
+        "whyFailed": "`claude-haiku-5-5` accepts a forced `tool_choice`; the rejecting set is Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1. Rewriting Haiku 5.5 call sites is wasted work, and conversely a Fable 5.1 path that you skip because it is not a 5.5 model will still 400."
+      },
+      {
+        "tried": "Moving to `auto` plus `strict: true` and shipping the same code to Amazon Bedrock.",
+        "whyFailed": "Structured outputs, including strict tool use, are not available for Opus 5.5 / Sonnet 5.5 on Bedrock. The `strict` flag has to be dropped there and the tool input validated in application code."
+      },
+      {
+        "tried": "Keeping the forced call on Haiku 5.5 and expecting the response to still start with a thinking block.",
+        "whyFailed": "Forcing a tool skips thinking on every model that accepts it: the response starts with the `tool_use` block and carries no `thinking` block. Code that reads `content[0]` as thinking, or that replays thinking blocks, sees a different response shape."
+      }
+    ],
+    "verification": "Send a minimal request to `claude-opus-5-5` with one tool and `tool_choice: {\"type\":\"tool\",\"name\":\"get_weather\"}` and confirm HTTP 400 with message `tool_choice: type \"tool\" and \"any\" are not supported for this model.`; repeat against `POST /v1/messages/count_tokens` with the same body for the same 400. Then send the identical body to `claude-haiku-5-5` and confirm HTTP 200 with a `tool_use` block and no `thinking` block — that contrast proves the rule is per-model, not per-generation. Finally re-send to `claude-opus-5-5` with `tool_choice: {\"type\":\"auto\"}` and `strict: true` on the tool and confirm 200.",
+    "appliesWhen": "Messages API or Token Counting API requests that set `tool_choice` to `{\"type\":\"any\"}` or `{\"type\":\"tool\",\"name\":\"...\"}` against claude-opus-5-5, claude-sonnet-5-5, claude-fable-5-1, or claude-mythos-5-1 — on the Claude API and on the same model ids via Amazon Bedrock (`anthropic.claude-opus-5-5`, `anthropic.claude-sonnet-5-5`), Google Cloud, Microsoft Foundry, and Claude Platform on AWS.",
+    "notAppliesWhen": "Does not apply to claude-haiku-5-5, which accepts forced tool_choice (the response just starts with the tool call and has no thinking block). Does not apply to claude-opus-5, claude-sonnet-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5, claude-haiku-4-5 or earlier, which all accept `any` and `tool`. Does not apply to `tool_choice: {\"type\":\"auto\"}` or `{\"type\":\"none\"}` on any model. A separate, older restriction still blocks `any` and `tool` under manual extended thinking (`thinking: {\"type\":\"enabled\"}`) on the Claude 4.5-and-earlier models that still accept that mode — same symptom, different cause."
+  },
+  "tags": [
+    "anthropic",
+    "claude-api",
+    "tool-use",
+    "tool-choice",
+    "messages-api",
+    "400-error",
+    "opus-5-5",
+    "sonnet-5-5",
+    "model-migration"
+  ],
+  "sources": [
+    "https://platform.claude.com/docs/en/api/errors",
+    "https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools",
+    "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide",
+    "https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide",
+    "https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide",
+    "https://platform.claude.com/docs/en/docs/about-claude/models/overview"
+  ]
+}

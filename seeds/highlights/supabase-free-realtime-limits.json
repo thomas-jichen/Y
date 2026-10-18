@@ -1,0 +1,63 @@
+{
+  "kind": "gotcha",
+  "title": "Free-plan Realtime Broadcast: 200 connections, 100 msg/s, 256 KB payloads — and every broadcast bills 1 + N",
+  "summary": "Broadcast, including broadcast-from-the-database, is fully available on the Supabase Free plan; it is metered, not gated. The Free ceilings are 200 concurrent connections, 100 messages/second, 100 channel joins/second, a 256 KB broadcast payload (Pro gets 3,000 KB) and an org-wide 2 million messages/month. The sizing mistake is counting only sends: one broadcast to N subscribers is billed as 1 + N messages, so a 20-person room burns 21 messages per event.",
+  "body": {
+    "problem": "You are sizing a multiplayer/presence/live-updates feature on a Free Supabase project and need the actual Free-plan ceilings, plus whether triggering broadcasts from Postgres (realtime.send / realtime.broadcast_changes) is a paid-only capability. The pricing comparison table lists a boolean row for Postgres Changes but none for Broadcast, which is easy to misread as \"Broadcast is not included\".",
+    "steps": [
+      "Treat Broadcast as included on Free and budget against two meters: peak concurrent connections (Free 200, billed on the per-project peak for the cycle) and total Realtime messages (Free 2 million/month, org-wide across all projects).",
+      "Apply the fan-out rule when estimating messages: 1 send + 1 per receiving client. 2 million/month with a 20-subscriber room means roughly 95k broadcast events, not 2 million.",
+      "Respect per-second ceilings, not just monthly ones: 100 messages/second, 100 channel joins/second, 100 channels per connection, 20 presence messages/second on Free. Exceeding throughput disconnects clients with a tenant_events message (supabase-js reconnects when throughput drops); channel joins can be refused with too_many_channels / too_many_connections / too_many_joins.",
+      "Keep broadcast payloads under 256 KB on Free (Pro raises this to 3,000 KB) — this is the pricing page's \"Max Message Size\" row.",
+      "For broadcast-from-database: call realtime.send(payload, event, topic, is_private) in a trigger, or realtime.broadcast_changes() for row-change events, and create the RLS policy on realtime.messages that Realtime Authorization requires. Match the private flag on both ends — a private database broadcast never reaches a public channel and vice versa.",
+      "Make sure a WebSocket client has connected today before the database writes: clients create the daily realtime.messages partitions, realtime.send does not."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Sizing a room of 200 users on Free because the limit says 200 concurrent connections, then being surprised by throttling.",
+        "whyFailed": "Connections are only one meter. With 200 subscribers, a single broadcast costs 201 messages and the project is capped at 100 messages/second — so one event per second to a full room already exceeds the Free throughput limit, and the 2 million monthly quota drains in hours."
+      },
+      {
+        "tried": "Calling realtime.send() from a trigger on a quiet project and seeing nothing arrive, with no error from the trigger.",
+        "whyFailed": "Daily partitions of realtime.messages are created by connecting WebSocket clients, not by realtime.send. With no partition for today the insert fails and Postgres logs a WarnSendingBroadcastMessage warning — the broadcast is silently lost unless a client has connected first."
+      },
+      {
+        "tried": "Broadcasting from the database to a channel subscribed without private: true (or without calling setAuth).",
+        "whyFailed": "Database broadcasts default to private, Realtime Authorization is on by default, and private messages only reach private channels. Mismatched flags drop the message with no client-side error; you also need an RLS policy on realtime.messages for the topic."
+      },
+      {
+        "tried": "Switching to realtime.send_binary() for compact payloads across an existing mobile fleet.",
+        "whyFailed": "Binary broadcast messages only reach supabase-js 2.91.0 / supabase-swift 2.44.0 and later (feature shipped 2026-06-11); older clients silently drop them."
+      },
+      {
+        "tried": "Assuming a Free project just gets billed for overage like Pro without a spend cap.",
+        "whyFailed": "On Free (and on paid plans with Spend Cap enabled) exceeding a quota triggers a billing-email notification and a grace period under the Fair Use Policy, not metered overage — and a Free project with little weekly database activity is auto-paused regardless."
+      }
+    ],
+    "verification": "Open the project's Realtime logs (Dashboard > Database > Realtime logs) or the Realtime Inspector while load-testing a broadcast loop, and confirm the error codes you hit (tenant_events, too_many_connections, too_many_joins) line up with the Free row of the Limits-by-plan table; cross-check the message count against the org's Realtime Message Count usage, remembering the 1 + N rule.",
+    "appliesWhen": "Supabase hosted Realtime on the Free plan as of 2026-10-17 (limits table rows: 200 connections, 100 msg/s, 256 KB broadcast payload, 72 h replay retention; billing quota 2M messages/month, 200 peak connections).",
+    "notAppliesWhen": "Pro raises these to 500 connections / 500 msg/s / 3,000 KB payload / 5 million messages; Pro with spend cap disabled and Team reach 10,000 connections and 2,500 msg/s; Enterprise is custom and per-project configurable via support. Does not describe self-hosted Realtime, where these plan limits are not enforced. Postgres Changes payload limits (1,024 KB, with fields over 64 bytes dropped once exceeded) are a separate mechanism from Broadcast."
+  },
+  "tags": [
+    "supabase",
+    "realtime",
+    "broadcast",
+    "free-plan",
+    "limits",
+    "pricing",
+    "presence",
+    "postgres-triggers"
+  ],
+  "sources": [
+    "https://supabase.com/docs/guides/realtime/limits",
+    "https://raw.githubusercontent.com/supabase/supabase/master/apps/docs/content/guides/realtime/limits.mdx",
+    "https://raw.githubusercontent.com/supabase/supabase/master/apps/docs/content/guides/realtime/broadcast.mdx",
+    "https://raw.githubusercontent.com/supabase/supabase/master/apps/docs/content/guides/platform/manage-your-usage/realtime-messages.mdx",
+    "https://raw.githubusercontent.com/supabase/supabase/master/apps/docs/content/guides/platform/manage-your-usage/realtime-peak-connections.mdx",
+    "https://supabase.com/pricing",
+    "https://raw.githubusercontent.com/supabase/supabase/master/packages/shared-data/pricing.ts",
+    "https://raw.githubusercontent.com/supabase/supabase/master/apps/docs/content/guides/platform/billing-on-supabase.mdx",
+    "https://raw.githubusercontent.com/supabase/supabase/master/apps/docs/content/_partials/billing/exceeding_usage_quotas.mdx",
+    "https://supabase.com/docs/guides/platform/free-project-pausing"
+  ]
+}

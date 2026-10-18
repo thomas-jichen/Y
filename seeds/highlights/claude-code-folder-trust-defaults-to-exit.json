@@ -1,0 +1,40 @@
+{
+  "kind": "gotcha",
+  "title": "The folder-trust dialog defaults to \"No, exit\", so a blind Enter quits the session",
+  "summary": "Opening Claude Code in a folder it has not seen shows 'Quick safety check: Is this project you created or one you trust?' with 'No, exit' preselected and 'Yes, I trust this folder' second. Pressing Enter therefore exits. Any script that answers prompts with a bare carriage return will silently terminate the session in every new directory — send Down then Enter. The prompt also lays out each word with cursor-move escapes rather than spaces, so matching its text after stripping ANSI needs whitespace-insensitive comparison.",
+  "body": {
+    "problem": "You automate an interactive Claude Code session and handle dialogs by sending Enter. In any directory Claude has not been trusted in before, the first thing it shows is the folder-trust check — and the safe option is selected first, so your Enter picks 'No, exit' and the process ends a few seconds in. It looks like a crash or a startup failure rather than a declined prompt. A second problem compounds it when you try to detect the dialog: the TUI positions each word with escape sequences like ESC[4G instead of emitting spaces, so 'trust this folder' arrives as 'trustthisfolder' once escapes are stripped, and a plain substring match for the prompt text never fires.",
+    "steps": [
+      "Answer the dialog with Down (ESC[B) then Enter, not Enter alone.",
+      "Detect it on whitespace-stripped, ANSI-stripped output: match 'trustthisfolder' or 'Quicksafetycheck' rather than the human-readable strings.",
+      "Expect it once per new working directory, and note the path it reports may be the resolved one (/private/tmp/... rather than /tmp/...) which matters if you key state off the path.",
+      "Where the workflow allows it, avoid the dialog entirely by using claude -p, which does not present it."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Sending Enter to accept the prompt",
+        "whyFailed": "'No, exit' is the preselected option, so Enter declines and exits."
+      },
+      {
+        "tried": "Matching the literal string 'trust this folder' in the captured output",
+        "whyFailed": "Words are separated by cursor-position escapes, not spaces, so the stripped text contains no spaces between them."
+      }
+    ],
+    "verification": "Drive claude in a pty in a brand-new directory and send only a carriage return: it exits in a few seconds. Send ESC[B then a carriage return and the session proceeds to the prompt.",
+    "appliesWhen": "Claude Code 2.1.302 (CLI) started interactively in a directory not previously trusted",
+    "notAppliesWhen": "Already-trusted directories, or claude -p which shows no trust dialog"
+  },
+  "tags": [
+    "claude-code",
+    "cli",
+    "tui",
+    "folder-trust",
+    "automation",
+    "pty",
+    "ansi"
+  ],
+  "sources": [
+    "https://code.claude.com/docs/en/security",
+    "docs/spikes/S1-asyncrewake-idle-wake.md"
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "kind": "gotcha",
+  "title": "An HNSW index only serves the one distance operator its opclass declares",
+  "summary": "pgvector's HNSW index requires an ORDER BY on a bare distance operator, ascending — and that operator must be the one the index's opclass declares: vector_l2_ops serves only <->, vector_cosine_ops only <=>, vector_ip_ops only <#>, vector_l1_ops only <+>. An index built with vector_l2_ops will not serve ORDER BY embedding <=> $1, which is the usual reason a query seq-scans. Adding a WHERE clause does not disable the index: filtering is supported post-filtering and the planner's choice is a cost decision, not a rule.",
+  "body": {
+    "problem": "Your vector search is slow and EXPLAIN shows a sequential scan despite an HNSW index on the column. The folk explanation is that a WHERE clause disables the index — so people strip filters, see no improvement, and conclude pgvector is broken. The real constraint is operator/opclass matching: the index declares exactly one ORDER BY operator and serves only that one. Build with vector_l2_ops and query with <=> (cosine) and you get a seq scan, with no warning that the operator and the index disagree. Two related disqualifiers: the ORDER BY key must be the bare operator expression, so wrapping it (ORDER BY 1 - (embedding <=> $1) DESC, a common way to turn distance into similarity) is unindexed, as is any DESC ordering. ORDER BY itself is a hard requirement enforced in pgvector's code — the cost estimator returns infinite cost with no index order-bys, under the comment 'Never use index without order', and the scan errors with 'cannot scan hnsw index without order'. LIMIT is not enforced in code but matters in practice: pgvector's own test asserts a seq scan for a bounded-distance query with no LIMIT.",
+    "steps": [
+      "Match the opclass to the operator you query with: CREATE INDEX ... USING hnsw (embedding vector_cosine_ops) for <=>, vector_l2_ops for <->, vector_ip_ops for <#>, vector_l1_ops for <+>.",
+      "Keep the ORDER BY key a bare operator expression in ascending order: ORDER BY embedding <=> $1 LIMIT n. Do not wrap it in arithmetic and do not use DESC.",
+      "Compute similarity in the select list, not in the ORDER BY, when you need a 0..1 score: SELECT 1 - (embedding <=> $1) AS similarity ... ORDER BY embedding <=> $1 LIMIT n.",
+      "Always include a LIMIT; without one the planner reverts to a sequential scan in practice.",
+      "Keep your WHERE clauses — filtering is supported. If a selective filter makes the planner prefer a seq scan, that is a cost decision; check pgvector's iterative index scan settings rather than removing the filter."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Removing the WHERE clause to 'let the index work'",
+        "whyFailed": "WHERE does not disable the index. Filtering with an approximate index is documented, supported post-filtering; in pgvector's own regression tests the HNSW path is still chosen with filters matching 98% of rows."
+      },
+      {
+        "tried": "ORDER BY 1 - (embedding <=> $1) DESC to sort by similarity",
+        "whyFailed": "The ORDER BY key is no longer a bare distance operator and the direction is descending, so the index cannot serve it."
+      },
+      {
+        "tried": "Creating the index without naming an opclass and assuming it covers every operator",
+        "whyFailed": "Each opclass declares exactly one operator. Querying with any other distance operator silently falls back to a sequential scan."
+      }
+    ],
+    "verification": "EXPLAIN ANALYZE the query and look for 'Index Scan using <name>' rather than 'Seq Scan'. Flip the opclass to a mismatched one and the same query becomes a seq scan, which isolates operator matching as the cause.",
+    "appliesWhen": "pgvector 0.8.x HNSW indexes (verified against 0.8.7 source and tests)",
+    "notAppliesWhen": "Exact nearest-neighbour queries with no index, or IVFFlat indexes, which have their own selectivity behaviour"
+  },
+  "tags": [
+    "pgvector",
+    "postgres",
+    "hnsw",
+    "vector-search",
+    "query-planner",
+    "opclass",
+    "embeddings"
+  ],
+  "sources": [
+    "https://raw.githubusercontent.com/pgvector/pgvector/v0.8.7/README.md",
+    "https://raw.githubusercontent.com/pgvector/pgvector/v0.8.7/test/t/017_hnsw_filtering.pl",
+    "https://raw.githubusercontent.com/pgvector/pgvector/master/test/t/039_hnsw_cost.pl",
+    "https://raw.githubusercontent.com/pgvector/pgvector/v0.8.7/src/hnsw.c"
+  ]
+}

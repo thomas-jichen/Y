@@ -1,0 +1,55 @@
+{
+  "kind": "gotcha",
+  "title": "SessionEnd's shared 1.5s budget",
+  "summary": "All Claude Code SessionEnd hooks share one 1.5-second budget, not 1.5s each. Anything slower is cancelled with its output discarded. Setting a per-hook `timeout` raises the shared budget (up to 60s) but does not extend hooks that have no `timeout` of their own, and a plugin's own hook timeouts never raise the budget at all.",
+  "body": {
+    "problem": "Your SessionEnd cleanup hook — flushing a log, uploading session stats, killing a sidecar — works when you run the script by hand but silently does nothing on `/clear` or exit. It is being cancelled: Claude Code gives SessionEnd hooks a default 1.5-second budget, and that budget is shared across every SessionEnd hook of every type rather than granted per hook. A cancelled hook's output is discarded, and SessionEnd hooks have no decision control, so nothing in the transcript tells you the work was dropped.",
+    "steps": [
+      "Decide the real wall-clock cost of the cleanup. If it can exceed ~1.5s total across all your SessionEnd hooks, you must raise the budget explicitly.",
+      "Option A - per-hook timeout: add `\"timeout\": <seconds>` to that hook's entry in a settings file. The shared budget rises to match the highest per-hook `timeout` across your settings files, capped at 60 seconds.",
+      "Set `timeout` on EVERY SessionEnd hook you want extended. Raising the budget via one hook does not extend a sibling hook that has no `timeout` of its own — that one still gets the 1.5s default.",
+      "Option B - environment variable: start Claude Code with `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=5000 claude`. This overrides the budget in milliseconds AND becomes the per-hook timeout for every SessionEnd hook that sets no `timeout` of its own (v2.1.268 and later).",
+      "If the cleanup genuinely cannot fit in 60 seconds, do not run it inline in a SessionEnd hook. Have the hook spawn a fully detached process and exit immediately.",
+      "Do not rely on SessionEnd JSON output to report what happened: Claude Code discards SessionEnd hooks' JSON output fields, including `systemMessage`."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Setting `\"timeout\": 30` on one SessionEnd hook and assuming all SessionEnd hooks now get 30 seconds.",
+        "whyFailed": "The highest per-hook `timeout` raises the shared overall budget, but a hook that sets no `timeout` of its own keeps the 1.5-second default and is still cancelled at 1.5s."
+      },
+      {
+        "tried": "Shipping the cleanup hook inside a plugin's `hooks/hooks.json` with a generous `timeout`.",
+        "whyFailed": "\"Timeouts set on plugin-provided hooks don't raise the budget.\" A plugin cannot buy itself more SessionEnd time; the user has to raise the budget from their own settings or via the env var."
+      },
+      {
+        "tried": "Assuming the 600-second default for `command` hooks applies at session end.",
+        "whyFailed": "SessionEnd overrides it. The 600s default (30s on UserPromptSubmit/PreModelSwitch/PostModelSwitch, 10s on MessageDisplay) is irrelevant once the event is SessionEnd."
+      },
+      {
+        "tried": "On an older build, setting `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` and expecting a hook with no `timeout` to get the full value.",
+        "whyFailed": "Before v2.1.268 the env var raised only the overall budget; a hook without its own `timeout` was still cancelled after 1.5 seconds."
+      },
+      {
+        "tried": "Looking for an error in the transcript to confirm the hook ran.",
+        "whyFailed": "SessionEnd hooks have no decision control and their JSON output fields are discarded, so a cancelled hook leaves no visible signal. Have the script write a timestamped line to a file and check that file instead."
+      }
+    ],
+    "verification": "Write a SessionEnd hook whose script appends a timestamp to a file, sleeps 3 seconds, then appends a second timestamp. Run a session, then `/clear`. With no `timeout` set, only the first line appears — the hook was cancelled mid-sleep. Re-run with `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=5000 claude` and both lines appear. Use `--debug` to see the hook lifecycle.",
+    "appliesWhen": "Claude Code SessionEnd hooks of any type (command, http, mcp_tool, prompt, agent), on session exit, `/clear`, or an interactive `/resume` session switch. Verified against docs for Claude Code v2.1.302 (changelog dated 2026-10-16). The env var's \"also becomes each hook's default timeout\" behavior requires v2.1.268 and later.",
+    "notAppliesWhen": "Other hook events, which keep their own defaults (600s for command/http/mcp_tool, 30s for prompt, 60s for agent, lowered to 30s on UserPromptSubmit/PreModelSwitch/PostModelSwitch and 10s on MessageDisplay). Before v2.1.268 the env var raised only the shared budget, not the per-hook default. Also does not apply to work you deliberately detach from the hook process, which outlives the budget."
+  },
+  "tags": [
+    "claude-code",
+    "hooks",
+    "sessionend",
+    "timeout",
+    "cleanup",
+    "settings-json"
+  ],
+  "sources": [
+    "https://code.claude.com/docs/en/hooks",
+    "https://code.claude.com/docs/en/hooks.md",
+    "https://code.claude.com/docs/en/env-vars.md",
+    "https://code.claude.com/docs/en/hooks-guide.md"
+  ]
+}

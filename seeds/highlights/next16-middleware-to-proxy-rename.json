@@ -1,0 +1,47 @@
+{
+  "kind": "gotcha",
+  "title": "Next.js 16 renamed middleware to proxy — but a leftover middleware.ts still runs",
+  "summary": "Next.js 16.0.0 deprecated the middleware file convention in favour of proxy, and the middleware named export in favour of proxy. The widely repeated claim that a leftover middleware.ts is silently ignored is false: through next@16.4.2 it is still discovered, still runs, and only emits a one-time deprecation warning, so auth redirects keep working. Two things do break hard — shipping both middleware.ts and proxy.ts throws in build and dev, and renaming the file while leaving only `export function middleware()` throws ProxyMissingExportError.",
+  "body": {
+    "problem": "You upgrade to Next.js 16 and read that middleware.ts must be renamed to proxy.ts or it is ignored without error, so you go hunting for silently broken auth redirects. That is not the failure mode. A leftover middleware.ts keeps being discovered and executed; Next only logs 'The \"middleware\" file convention is deprecated. Please use \"proxy\" instead.' once. The real failures are the opposite shape and both are loud once you know to read the error. Keeping both files is a hard error thrown by next build and next dev, not a pick-one. And the common half-migration — rename the file to proxy.ts but leave the function as a named `middleware` export — throws ProxyMissingExportError, because the generated proxy entry resolves `mod.proxy || mod.default` and finds neither.",
+    "steps": [
+      "Rename middleware.ts to proxy.ts (same directory: project root, or src/).",
+      "Rename the export in the same commit: `export function proxy(request: NextRequest)`, or provide a default export. Renaming only the file is what produces ProxyMissingExportError.",
+      "Delete the old file rather than leaving it alongside the new one — having both is a build and dev error.",
+      "Keep the `config.matcher` export as-is; the matcher contract did not change.",
+      "If you see the deprecation warning in logs, treat it as a to-do rather than an outage: the old file is still running."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Assuming auth broke because middleware.ts is now ignored",
+        "whyFailed": "It is not ignored through next@16.4.2 — it still runs, with a one-time deprecation warning. Look elsewhere for the redirect bug."
+      },
+      {
+        "tried": "Renaming the file but keeping `export function middleware()`",
+        "whyFailed": "The proxy entry looks for `proxy` or a default export, so neither resolves and it throws ProxyMissingExportError."
+      },
+      {
+        "tried": "Keeping middleware.ts around as a fallback during migration",
+        "whyFailed": "Having both middleware.ts and proxy.ts is a thrown error in both next build and next dev."
+      }
+    ],
+    "verification": "On next@16, rename to proxy.ts with `export function proxy(...)` and confirm a request to a protected route still redirects to /login, and that the deprecation warning no longer appears in the dev server output.",
+    "appliesWhen": "next@16.0.0 and later, including 16.4.2",
+    "notAppliesWhen": "next@15 and earlier, where middleware.ts is the only supported convention"
+  },
+  "tags": [
+    "next@16",
+    "nextjs",
+    "middleware",
+    "proxy",
+    "auth",
+    "upgrade",
+    "deprecation"
+  ],
+  "sources": [
+    "https://nextjs.org/docs/app/api-reference/file-conventions/proxy",
+    "https://nextjs.org/blog/next-16",
+    "https://nextjs.org/docs/app/guides/upgrading/version-16",
+    "https://nextjs.org/docs/messages/middleware-to-proxy"
+  ]
+}

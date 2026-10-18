@@ -1,0 +1,40 @@
+{
+  "kind": "gotcha",
+  "title": "In mcp-use, inbound headers are ctx.req.header(name), not ctx.headers",
+  "summary": "An mcp-use tool callback receives a Hono-shaped context. ctx.headers does not exist and ctx.request is a Hono request wrapper ({raw, routeIndex, path, bodyCache}), so ctx.request.headers is undefined too. Read one header with ctx.req.header('x-my-header') or get the whole set from ctx.request.raw.headers. Verified on mcp-use 2.10.1 locally and on a deployed server, where both Authorization and a custom X- header arrived intact.",
+  "body": {
+    "problem": "You want to read an Authorization bearer token or a custom header inside an mcp-use tool, reach for the obvious accessors, and get undefined or null from all of them. ctx.headers is absent. ctx.request looks promising but is Hono's HonoRequest wrapper, whose own keys are raw, routeIndex, path and bodyCache — so ctx.request.headers is undefined, and because it is undefined rather than an error, a defensive helper will quietly return null and you will conclude the platform stripped your headers. It did not. Dumping Object.keys(ctx) shows a Hono context: env, request, req, client, requestState, method, params, state, plus response helpers like json, text, header and status. Note ctx.header is for setting a response header and returns undefined when called with one argument, which is another way to convince yourself the header is missing.",
+    "steps": [
+      "Read a single header with ctx.req.header('authorization') — names are case-insensitive, lower-case them for consistency.",
+      "Get every header with ctx.request.raw.headers, which is a real Headers instance: Object.fromEntries(headers.entries()).",
+      "Do not use ctx.header(name) to read — it sets a response header and yields undefined.",
+      "When a header appears missing, dump Object.keys(ctx) from inside the tool before suspecting the proxy or gateway in front of you."
+    ],
+    "pitfalls": [
+      {
+        "tried": "ctx.headers and ctx.request.headers",
+        "whyFailed": "The first does not exist; the second is undefined because ctx.request is Hono's request wrapper, not a Fetch Request. Neither throws, so both read as 'no headers'."
+      },
+      {
+        "tried": "Concluding the hosting platform strips Authorization",
+        "whyFailed": "It arrives intact — confirmed on a deployed server, where Authorization and a custom X- header both reached the tool. The accessor was wrong, not the transport."
+      }
+    ],
+    "verification": "Add a tool that returns ctx.req.header('authorization') != null alongside Object.keys(ctx), then call it with an Authorization header set. The boolean is true and the key list shows the Hono context shape.",
+    "appliesWhen": "mcp-use 2.10.1 server tool callbacks (second ctx argument)",
+    "notAppliesWhen": "Servers written directly on @modelcontextprotocol/sdk, which expose transport details differently"
+  },
+  "tags": [
+    "mcp-use",
+    "mcp",
+    "hono",
+    "http-headers",
+    "authorization",
+    "manufact"
+  ],
+  "sources": [
+    "https://docs.mcp-use.com/typescript/server/tools.md",
+    "https://registry.npmjs.org/mcp-use/2.10.1",
+    "docs/spikes/S3-manufact-cloud.md"
+  ]
+}

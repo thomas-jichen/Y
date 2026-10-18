@@ -1,0 +1,48 @@
+{
+  "kind": "gotcha",
+  "title": "Current Claude models reject non-default temperature, top_p and top_k",
+  "summary": "From Claude Opus 4.7 onward — Opus 4.7/4.8/5/5.5, Sonnet 5/5.5, Haiku 5.5, Fable 5/5.1, Mythos 5.1 — sampling parameters are only accepted at their default values. temperature: 1 is fine and temperature: 0 is a 400; top_p must be 0.99 if sent at all (top_p: 1 is a 400); any top_k is a 400; and sending temperature and top_p together is a 400 regardless of values. This is not a Haiku-specific quirk, which is how it is usually mis-reported. The rule that actually works is to omit all three.",
+  "body": {
+    "problem": "You port a working request to a current Claude model and get a 400 on a parameter that has been harmless for years. The confusing part is that the parameter is not rejected outright — temperature: 1 is accepted — so a smoke test that happens to send the default passes, and only your real call with temperature: 0 or 0.2 fails. Three further traps: top_p has a non-obvious permitted value of 0.99, so the intuitive top_p: 1 is rejected; top_k is rejected at any value; and temperature together with top_p is rejected even when each would be individually acceptable. Determinism-seeking code that sets temperature: 0 is the most common casualty, and it is usually blamed on the specific model in the error rather than recognised as a family-wide change from Opus 4.7 onward.",
+    "steps": [
+      "Remove temperature, top_p and top_k from requests to current models rather than setting them to defaults — omitting is always valid and will not drift if defaults change.",
+      "To reduce variance, reach for lower reasoning effort via output_config.effort, or constrain the output shape with structured outputs, instead of temperature: 0.",
+      "Never send temperature and top_p in the same request; that combination is rejected on its own.",
+      "Audit shared client wrappers, which often inject temperature: 0 globally — one default in a helper breaks every call site at once.",
+      "Check the per-model migration guide before assuming the restriction is model-specific; it applies from Opus 4.7 forward."
+    ],
+    "pitfalls": [
+      {
+        "tried": "Setting temperature: 0 for reproducible output",
+        "whyFailed": "Any value other than 1 returns a 400 on these models. Use effort or structured outputs to constrain behaviour."
+      },
+      {
+        "tried": "Setting top_p: 1 as a no-op",
+        "whyFailed": "The only accepted value is 0.99; 1 is rejected."
+      },
+      {
+        "tried": "Treating it as a Haiku 5.5 bug because that is where it was first hit",
+        "whyFailed": "The same rejection applies across Opus 4.7/4.8/5/5.5, Sonnet 5/5.5, Fable 5/5.1 and Mythos 5.1, so a model swap does not fix it."
+      }
+    ],
+    "verification": "Send the same request twice to a current model, once with temperature: 1 and once with temperature: 0. The first succeeds, the second returns 400. Removing the parameter entirely also succeeds.",
+    "appliesWhen": "Claude Opus 4.7 and every later model (Opus 4.8, Opus 5, Opus 5.5, Sonnet 5, Sonnet 5.5, Haiku 5.5, Fable 5/5.1, Mythos 5.1) on the Messages API",
+    "notAppliesWhen": "Opus 4.6, Sonnet 4.6, Haiku 4.5 and earlier, which still accept arbitrary temperature/top_p/top_k"
+  },
+  "tags": [
+    "anthropic",
+    "claude-api",
+    "messages-api",
+    "temperature",
+    "top-p",
+    "top-k",
+    "400-error",
+    "model-migration"
+  ],
+  "sources": [
+    "https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide",
+    "https://platform.claude.com/docs/en/models/haiku-5-5/overview",
+    "https://platform.claude.com/docs/en/models/opus-5-5/migration-guide",
+    "https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide"
+  ]
+}
