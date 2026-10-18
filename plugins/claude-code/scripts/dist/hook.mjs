@@ -23366,9 +23366,13 @@ var ms = (ts) => {
   const t = Date.parse(ts);
   return Number.isFinite(t) ? t : void 0;
 };
+function ownSet(m, k, v) {
+  Object.defineProperty(m, k, { value: v, writable: true, enumerable: true, configurable: true });
+}
 var inc = (m, k, by = 1) => {
-  if (!(k in m) && Object.keys(m).length >= 256) return;
-  m[k] = (m[k] ?? 0) + by;
+  const has = Object.hasOwn(m, k);
+  if (!has && Object.keys(m).length >= 256) return;
+  ownSet(m, k, (has ? m[k] : 0) + by);
 };
 function dedupedUsage(records) {
   const byId = /* @__PURE__ */ new Map();
@@ -23612,9 +23616,13 @@ function computeStats(main2, subagents, opts) {
     const mcp = splitMcpName(u.name);
     if (mcp) {
       const server = sanitizeStatKey(mcp.server);
-      if (!s2.mcp[server] && Object.keys(s2.mcp).length >= 64) continue;
-      s2.mcp[server] ??= {};
-      inc(s2.mcp[server], sanitizeStatKey(mcp.tool));
+      let tools = Object.hasOwn(s2.mcp, server) ? s2.mcp[server] : void 0;
+      if (!tools) {
+        if (Object.keys(s2.mcp).length >= 64) continue;
+        tools = {};
+        ownSet(s2.mcp, server, tools);
+      }
+      inc(tools, sanitizeStatKey(mcp.tool));
       continue;
     }
     inc(s2.toolCalls, sanitizeStatKey(u.name));
@@ -24497,6 +24505,133 @@ function addGeneric(text, taken, out) {
     out.push(span);
   }
 }
+var SECRET_KEY_RUN_RE = /[A-Za-z0-9_.-]+/g;
+var SECRET_KEY_HINT_RE = /pass|pwd|secret|token|key|cred|auth/i;
+var PASSWORD_WORDS = /* @__PURE__ */ new Set(["pwd", "pass"]);
+var PASSWORD_SUFFIX_RE = /(?:password|passwd|passphrase)$/;
+var SECRET_WORDS = /* @__PURE__ */ new Set(["secret", "token", "auth", "credential", "credentials", "apikey"]);
+var SECRET_ONE_WORDS = /(?:secret|apikey|accesskey|privatekey|secretkey|signingkey|authtoken|accesstoken|refreshtoken|apitoken|credentials?)$/;
+var KEY_QUALIFIERS = /* @__PURE__ */ new Set(["api", "access", "private", "secret", "client", "auth", "signing", "encryption", "master"]);
+var BARE_CHAR = String.raw`[^\s"'` + "`" + String.raw`;&|()<>{}[\],⏎]`;
+var QUOTED_TAIL_RE = new RegExp(
+  String.raw`(?:\\?["'])?[ \t]*(?::=|=>|=(?![=~])|:(?!:))[ \t]*(?:"((?:[^"\\\n\r⏎]|\\.){1,512})"|'([^'\n\r⏎]{1,512})'|\\"((?:[^"\\\n\r⏎]|\\(?!")){1,512})\\")`,
+  "dy"
+);
+var ENV_TAIL_RE = new RegExp(String.raw`=(` + BARE_CHAR + String.raw`{1,512})(?=$|[\s;&|)⏎])`, "dy");
+var INI_TAIL_RE = new RegExp(String.raw`[ \t]*=(?![=>~])[ \t]*(` + BARE_CHAR + String.raw`{1,512})[ \t]*(?:#[^\n\r⏎]*)?(?=$|[\r\n⏎])`, "dy");
+var YAML_TAIL_RE = /["']?[ \t]*:[ \t]+([^\n\r⏎]{1,512})(?=$|[\r\n⏎])/dy;
+var LINE_PREFIX_RE = /^[ \t]*(?:(?:OK|ERROR|TOOL) [A-Za-z0-9_.:-]{1,64}: )?[ \t+>-]*(?:export[ \t]+)?["']?$/;
+var REFERENCE_RE = /^\$|\$\{|\{\{|^%|^<.*>$|process\.env|^env\.|os\.environ|getenv|^@/;
+var LITERAL_WORD_RE = /^(?:true|false|null|nil|none|undefined|yes|no|on|off)$/i;
+var TYPE_WORDS = /* @__PURE__ */ new Set([
+  "string",
+  "number",
+  "boolean",
+  "bool",
+  "any",
+  "unknown",
+  "never",
+  "object",
+  "str",
+  "int",
+  "integer",
+  "float",
+  "bytes",
+  "char",
+  "void",
+  "text",
+  "varchar",
+  "uuid",
+  "date",
+  "optional",
+  "required",
+  "list",
+  "dict",
+  "array",
+  "secretstr",
+  "null",
+  "none",
+  "undefined"
+]);
+var SLUG_RE = /^[a-z]+(?:-[a-z]+)+$/;
+function secretKeyKind(run) {
+  const segs = run.split(".").filter((s2) => /[A-Za-z0-9]/.test(s2));
+  const key = segs[segs.length - 1];
+  if (!key) return void 0;
+  const words = key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").split(/[-_]+/).filter(Boolean).map((w) => w.toLowerCase());
+  const last = words[words.length - 1];
+  if (!last) return void 0;
+  const upper = /^[A-Z][A-Z0-9_]*$/.test(key);
+  if (PASSWORD_WORDS.has(last) || PASSWORD_SUFFIX_RE.test(last)) return { kind: "password", noun: last, upper };
+  if (SECRET_WORDS.has(last) || words.length === 1 && SECRET_ONE_WORDS.test(last)) return { kind: "other", noun: last, upper };
+  if (last === "key" && words.length >= 2 && KEY_QUALIFIERS.has(words[words.length - 2])) return { kind: "other", noun: last, upper };
+  return void 0;
+}
+function atLineStart(text, pos) {
+  let i = pos - 1;
+  const stop2 = Math.max(-1, pos - 97);
+  while (i > stop2 && text[i] !== "\n" && text[i] !== "\r" && text[i] !== "⏎") i--;
+  if (i === stop2 && i !== -1) return false;
+  return LINE_PREFIX_RE.test(text.slice(i + 1, pos));
+}
+var codeIdentifier = (v) => IDENTIFIER_LIKE_RE.test(v) && v.includes(".") || /^[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*$/.test(v) || /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/.test(v) || /^[$_]/.test(v);
+function secretValueOk(k, v, form) {
+  if (v.length < (k.kind === "password" ? 4 : 6)) return false;
+  if (REFERENCE_RE.test(v) || LITERAL_WORD_RE.test(v) || PLACEHOLDER_WORD_RE.test(v)) return false;
+  if (/^(?:x+|\*+|\.+|_+|-+)$/i.test(v) || SLUG_RE.test(v)) return false;
+  if (k.noun.length >= 3 && v.toLowerCase().includes(k.noun)) return false;
+  if (/:\/\//.test(v) || /^(?:\/|\.\.?\/|~)/.test(v)) return false;
+  if (k.kind === "other") {
+    if (!hasDigit(v) || /\s/.test(v) || /^v?\d+(?:\.\d+)+$/.test(v)) return false;
+  }
+  if (form === "line") {
+    const first = v.split(/[\s|]/)[0].toLowerCase();
+    if (TYPE_WORDS.has(first) || /[(){}[\]<>;]|\s=\s|[,;]$/.test(v) || /^["'|>&*!%:]/.test(v)) return false;
+  }
+  if (form !== "quoted" && !(form === "env" || k.upper) && codeIdentifier(v)) return false;
+  if (form !== "quoted" && IDENTIFIER_LIKE_RE.test(v) && v.includes(".")) return false;
+  return true;
+}
+function addSecretKeyValues(text, taken, out) {
+  const runs = new RegExp(SECRET_KEY_RUN_RE.source, "g");
+  for (let m = runs.exec(text); m; m = runs.exec(text)) {
+    const run = m[0];
+    if (!SECRET_KEY_HINT_RE.test(run)) continue;
+    const k = secretKeyKind(run);
+    if (!k) continue;
+    const runEnd = m.index + run.length;
+    let hit;
+    const tryTail = (re, form, trim = false) => {
+      re.lastIndex = runEnd;
+      const t = re.exec(text);
+      if (!t) return false;
+      const g = [1, 2, 3].find((n) => t[n] !== void 0);
+      const idx = g === void 0 ? void 0 : t.indices?.[g];
+      if (!idx) return true;
+      let [start, end] = idx;
+      if (trim) {
+        const raw = text.slice(start, end);
+        const hash2 = raw.search(/[ \t]#/);
+        const cut = hash2 >= 0 ? raw.slice(0, hash2) : raw;
+        start += cut.length - cut.trimStart().length;
+        end = start + cut.trim().length;
+      }
+      const v = text.slice(start, end);
+      if (v && secretValueOk(k, v, form)) hit = { start, end, matchEnd: t.index + t[0].length };
+      return true;
+    };
+    if (!tryTail(QUOTED_TAIL_RE, "quoted")) {
+      const before = m.index > 0 ? text[m.index - 1] : "";
+      const envOk = k.upper && (before === "" || /[\s;&|(⏎]/.test(before)) && tryTail(ENV_TAIL_RE, "env");
+      if (!hit && !envOk && atLineStart(text, m.index) && !tryTail(INI_TAIL_RE, "line")) tryTail(YAML_TAIL_RE, "line", true);
+    }
+    if (!hit || overlaps(taken, hit.start, hit.end)) continue;
+    const span = { start: hit.start, end: hit.end, ruleId: GENERIC_ID };
+    taken.push(span);
+    out.push(span);
+    runs.lastIndex = hit.matchEnd;
+  }
+}
 var PEM_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]{0,16384}?-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|[A-Za-z0-9+/=\s⏎]*)/g;
 var ENTROPY_CANDIDATE_RE = /[A-Za-z0-9+/_\-.=~]{20,}/g;
 var ENV_LINE_RE = /^\s*(?:export\s+)?[A-Z_][A-Z0-9_]{1,}=\S*/;
@@ -24603,6 +24738,7 @@ function findSecretSpans(text, entropy) {
   for (const m of SPECIFIC) addMatcher(text, m, taken, out);
   addMatcher(text, URL_CRED, taken, out);
   addGeneric(text, taken, out);
+  addSecretKeyValues(text, taken, out);
   entropySpans(text, entropy, taken, out);
   return out.sort((a, b) => a.start - b.start);
 }

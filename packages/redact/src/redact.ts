@@ -217,6 +217,166 @@ function addGeneric(text: string, taken: Span[], out: Span[]): void {
   }
 }
 
+/* ---------------------------------------------- secret-named keys (#5) */
+
+/**
+ * Values of keys whose *name* is a secret (`"password": "Summer-sky"`,
+ * `password: hunter two`, `DB_PASSWORD=CorrectHorseBatteryStaple`), whatever
+ * the value's entropy or digits. Reported as `generic_assignment`. Runs after
+ * {@link addGeneric}, so it only adds spans that rule doesn't already cover.
+ *
+ * The key is the last `.`-segment of a `[A-Za-z0-9_.-]` run, split into
+ * words (snake, kebab and camel case); its **last** word decides:
+ * - password family: `password`/`passwd`/`passphrase` (also as a suffix,
+ *   `PGPASSWORD`), `pwd`, `pass`;
+ * - other secrets: `secret`, `token`, `credential(s)`, `auth`, `apikey`, and
+ *   `key` after `api`/`access`/`private`/`secret`/`client`/`auth`/`signing`/
+ *   `encryption`/`master` (plus the one-word forms `accesskey`, `authtoken`…).
+ * So `token_count`, `password_min_length`, `max_tokens`, `authorEmail`,
+ * `passwordField` and `Authorization` are never secret keys.
+ *
+ * Value forms (all on one line):
+ * - a quoted string after `:`, `=`, `:=` or `=>`, anywhere (JSON, YAML,
+ *   code, JSON escaped inside a JSON string);
+ * - a bare token after `=` for an UPPER_SNAKE key at a command or line start
+ *   (`PGPASSWORD=x psql`, `.env` lines);
+ * - a bare value that ends the line after `=` or `: ` when the key starts the
+ *   line (INI, properties, YAML; diff `+ `/`- ` and digest `OK Bash: `
+ *   prefixes allowed).
+ * Other secrets need a digit and no whitespace (tokens are machine strings),
+ * so a quoted phrase on a token key stays. References (`$X`, `${x}`,
+ * `{{x}}`, `process.env.X`), placeholders, values naming the key word
+ * (`tokenFromHeader`), booleans, type names (`password: string`), code
+ * (calls, member expressions, trailing `,`/`;`, camelCase variables at a
+ * line start) and lowercase-kebab slugs (`my-db-creds`) are kept.
+ *
+ * Linear time: one pass over key runs; every per-run match is sticky and
+ * bounded (values ≤ 512 chars, a ≤ 96-char look-back for the line start).
+ */
+const SECRET_KEY_RUN_RE = /[A-Za-z0-9_.-]+/g;
+const SECRET_KEY_HINT_RE = /pass|pwd|secret|token|key|cred|auth/i;
+const PASSWORD_WORDS = new Set(['pwd', 'pass']);
+const PASSWORD_SUFFIX_RE = /(?:password|passwd|passphrase)$/;
+const SECRET_WORDS = new Set(['secret', 'token', 'auth', 'credential', 'credentials', 'apikey']);
+const SECRET_ONE_WORDS = /(?:secret|apikey|accesskey|privatekey|secretkey|signingkey|authtoken|accesstoken|refreshtoken|apitoken|credentials?)$/;
+const KEY_QUALIFIERS = new Set(['api', 'access', 'private', 'secret', 'client', 'auth', 'signing', 'encryption', 'master']);
+const BARE_CHAR = String.raw`[^\s"'` + '`' + String.raw`;&|()<>{}[\],⏎]`;
+/** `"v"`, `'v'` or `\"v\"` (JSON inside a JSON string) after an operator. */
+const QUOTED_TAIL_RE = new RegExp(
+  String.raw`(?:\\?["'])?[ \t]*(?::=|=>|=(?![=~])|:(?!:))[ \t]*(?:"((?:[^"\\\n\r⏎]|\\.){1,512})"|'([^'\n\r⏎]{1,512})'|\\"((?:[^"\\\n\r⏎]|\\(?!")){1,512})\\")`,
+  'dy',
+);
+/** `KEY=value` (UPPER_SNAKE key) ending at whitespace or a shell separator. */
+const ENV_TAIL_RE = new RegExp(String.raw`=(` + BARE_CHAR + String.raw`{1,512})(?=$|[\s;&|)⏎])`, 'dy');
+/** `key = value` ending the line (an optional `# comment` after it). */
+const INI_TAIL_RE = new RegExp(String.raw`[ \t]*=(?![=>~])[ \t]*(` + BARE_CHAR + String.raw`{1,512})[ \t]*(?:#[^\n\r⏎]*)?(?=$|[\r\n⏎])`, 'dy');
+/** `key: value` ending the line (YAML; the value is trimmed and loses a ` # comment`). */
+const YAML_TAIL_RE = /["']?[ \t]*:[ \t]+([^\n\r⏎]{1,512})(?=$|[\r\n⏎])/dy;
+/** Text between a line start and a key that still counts as "the key starts the line". */
+const LINE_PREFIX_RE = /^[ \t]*(?:(?:OK|ERROR|TOOL) [A-Za-z0-9_.:-]{1,64}: )?[ \t+>-]*(?:export[ \t]+)?["']?$/;
+const REFERENCE_RE = /^\$|\$\{|\{\{|^%|^<.*>$|process\.env|^env\.|os\.environ|getenv|^@/;
+const LITERAL_WORD_RE = /^(?:true|false|null|nil|none|undefined|yes|no|on|off)$/i;
+const TYPE_WORDS = new Set([
+  'string', 'number', 'boolean', 'bool', 'any', 'unknown', 'never', 'object', 'str', 'int', 'integer', 'float', 'bytes', 'char',
+  'void', 'text', 'varchar', 'uuid', 'date', 'optional', 'required', 'list', 'dict', 'array', 'secretstr', 'null', 'none', 'undefined',
+]);
+const SLUG_RE = /^[a-z]+(?:-[a-z]+)+$/;
+
+type SecretKey = { kind: 'password' | 'other'; noun: string; upper: boolean };
+
+/** Internal (exported for tests): whether a key run names a secret, and which kind. */
+export function secretKeyKind(run: string): SecretKey | undefined {
+  const segs = run.split('.').filter((s) => /[A-Za-z0-9]/.test(s));
+  const key = segs[segs.length - 1];
+  if (!key) return undefined;
+  const words = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((w) => w.toLowerCase());
+  const last = words[words.length - 1];
+  if (!last) return undefined;
+  const upper = /^[A-Z][A-Z0-9_]*$/.test(key);
+  if (PASSWORD_WORDS.has(last) || PASSWORD_SUFFIX_RE.test(last)) return { kind: 'password', noun: last, upper };
+  if (SECRET_WORDS.has(last) || (words.length === 1 && SECRET_ONE_WORDS.test(last))) return { kind: 'other', noun: last, upper };
+  if (last === 'key' && words.length >= 2 && KEY_QUALIFIERS.has(words[words.length - 2]!)) return { kind: 'other', noun: last, upper };
+  return undefined;
+}
+
+/** Whether `[lineStart, pos)` is only indentation, a diff/list marker, `export` or a digest result prefix. */
+function atLineStart(text: string, pos: number): boolean {
+  let i = pos - 1;
+  const stop = Math.max(-1, pos - 97);
+  while (i > stop && text[i] !== '\n' && text[i] !== '\r' && text[i] !== '⏎') i--;
+  if (i === stop && i !== -1) return false;
+  return LINE_PREFIX_RE.test(text.slice(i + 1, pos));
+}
+
+/** Code-shaped bare values: member expressions and camelCase / snake_case variables. */
+const codeIdentifier = (v: string) =>
+  (IDENTIFIER_LIKE_RE.test(v) && v.includes('.')) || /^[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*$/.test(v) || /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/.test(v) || /^[$_]/.test(v);
+
+function secretValueOk(k: SecretKey, v: string, form: 'quoted' | 'env' | 'line'): boolean {
+  if (v.length < (k.kind === 'password' ? 4 : 6)) return false;
+  if (REFERENCE_RE.test(v) || LITERAL_WORD_RE.test(v) || PLACEHOLDER_WORD_RE.test(v)) return false;
+  if (/^(?:x+|\*+|\.+|_+|-+)$/i.test(v) || SLUG_RE.test(v)) return false;
+  if (k.noun.length >= 3 && v.toLowerCase().includes(k.noun)) return false;
+  if (/:\/\//.test(v) || /^(?:\/|\.\.?\/|~)/.test(v)) return false;
+  if (k.kind === 'other') {
+    if (!hasDigit(v) || /\s/.test(v) || /^v?\d+(?:\.\d+)+$/.test(v)) return false;
+  }
+  if (form === 'line') {
+    const first = v.split(/[\s|]/)[0]!.toLowerCase();
+    if (TYPE_WORDS.has(first) || /[(){}[\]<>;]|\s=\s|[,;]$/.test(v) || /^["'|>&*!%:]/.test(v)) return false;
+  }
+  if (form !== 'quoted' && !(form === 'env' || k.upper) && codeIdentifier(v)) return false;
+  if (form !== 'quoted' && IDENTIFIER_LIKE_RE.test(v) && v.includes('.')) return false;
+  return true;
+}
+
+function addSecretKeyValues(text: string, taken: Span[], out: Span[]): void {
+  const runs = new RegExp(SECRET_KEY_RUN_RE.source, 'g');
+  for (let m = runs.exec(text); m; m = runs.exec(text)) {
+    const run = m[0];
+    if (!SECRET_KEY_HINT_RE.test(run)) continue;
+    const k = secretKeyKind(run);
+    if (!k) continue;
+    const runEnd = m.index + run.length;
+    let hit: { start: number; end: number; matchEnd: number } | undefined;
+    /** Sticky match at the run end; sets `hit` when the value passes. True when the form matched at all. */
+    const tryTail = (re: RegExp, form: 'quoted' | 'env' | 'line', trim = false): boolean => {
+      re.lastIndex = runEnd;
+      const t = re.exec(text) as (RegExpExecArray & { indices?: ([number, number] | undefined)[] }) | null;
+      if (!t) return false;
+      const g = [1, 2, 3].find((n) => t[n] !== undefined);
+      const idx = g === undefined ? undefined : t.indices?.[g];
+      if (!idx) return true;
+      let [start, end] = idx;
+      if (trim) {
+        // YAML: drop a ` # comment`, then surrounding blanks.
+        const raw = text.slice(start, end);
+        const hash = raw.search(/[ \t]#/);
+        const cut = hash >= 0 ? raw.slice(0, hash) : raw;
+        start += cut.length - cut.trimStart().length;
+        end = start + cut.trim().length;
+      }
+      const v = text.slice(start, end);
+      if (v && secretValueOk(k, v, form)) hit = { start, end, matchEnd: t.index + t[0].length };
+      return true;
+    };
+    if (!tryTail(QUOTED_TAIL_RE, 'quoted')) {
+      const before = m.index > 0 ? text[m.index - 1]! : '';
+      const envOk = k.upper && (before === '' || /[\s;&|(⏎]/.test(before)) && tryTail(ENV_TAIL_RE, 'env');
+      if (!hit && !envOk && atLineStart(text, m.index) && !tryTail(INI_TAIL_RE, 'line')) tryTail(YAML_TAIL_RE, 'line', true);
+    }
+    if (!hit || overlaps(taken, hit.start, hit.end)) continue;
+    const span = { start: hit.start, end: hit.end, ruleId: GENERIC_ID };
+    taken.push(span);
+    out.push(span);
+    runs.lastIndex = hit.matchEnd;
+  }
+}
+
 const PEM_RE =
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]{0,16384}?-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|[A-Za-z0-9+/=\s⏎]*)/g;
 
@@ -335,6 +495,7 @@ function findSecretSpans(text: string, entropy?: RedactOptions['entropy']): Span
   for (const m of SPECIFIC) addMatcher(text, m, taken, out);
   addMatcher(text, URL_CRED, taken, out);
   addGeneric(text, taken, out);
+  addSecretKeyValues(text, taken, out);
   entropySpans(text, entropy, taken, out);
   return out.sort((a, b) => a.start - b.start);
 }
