@@ -64,7 +64,7 @@ Capture is table stakes, so we don't claim it as the moat. The defensible parts:
 
 | Decision | Choice | Why | Fallback (spike) |
 |---|---|---|---|
-| MCP hosting | `apps/mcp` (mcp-use ^2.10, stateless `/mcp`) on **Manufact Cloud** | The judged surface; stateless | Same image on Fly (S3) |
+| MCP hosting | `apps/mcp` (mcp-use ^2.10, stateless `/mcp`) on **Manufact Cloud** | The judged surface, and **required** for the Manufact track; stateless | Same image on Fly (S3), but only outside the track: falling back forfeits eligibility |
 | **MCP data access** | `apps/mcp` holds **no DB credentials**. Every tool calls core's internal API and forwards the caller's token | Fixes red-team blocker 1: a third-party PaaS must never hold the service key or a JWT signing key | — |
 | Stateful runtime | One Fly app `paceline-core`, one image, process groups `web` (Hono: REST, SSE, long-poll, Slack, SPA), `worker` (jobs, cron) | Long-polls, LISTEN/NOTIFY and raw-body webhooks need an always-on host | Any container host |
 | DB + auth | **Supabase**: Postgres 17, pgvector, pg_trgm, RLS, Auth (GitHub), OAuth 2.1 server | RLS everywhere (the Moltbook lesson); one vendor | Neon + Better Auth (S4) |
@@ -795,7 +795,7 @@ Dependency order: M0 → M1 → M2 → M3 → {M4 ∥ M5} → M6 → M7 → M8. 
 | Spike | Box | Question | Default → fallback |
 |---|---|---|---|
 | S1 asyncRewake | 0.75 d | Idle wake in the CLI and the Desktop Code tab; largest honored timeout; mid-turn behavior; re-arm; Notification `idle_prompt` (its exit codes are ignored) | Listener re-armed by Stop/SessionStart → pointers at turn boundaries |
-| S3 Manufact | 1 d | Monorepo deploy, cold start, egress to core, header pass-through, 401 behavior, custom domain | Fly |
+| S3 Manufact | 1 d | Monorepo deploy, cold start, egress to core, header pass-through, 401 behavior, custom domain | Fix on Manufact (required for the track); Fly only if we drop the track |
 | S4 Auth matrix | 1.5 d | Supabase OAuth + consent + `oauth_grants`; `client_id` claim; CIMD; Claude Code, Codex login, ChatGPT, claude.ai | Better Auth / WorkOS |
 | S5 Parser | 1 d | 3 Claude Code versions + Codex rollouts; dedupe vs cost-state; subagents; headless signals; **eval harness config dir + plugin + userConfig seeding** | `last_assistant_message`-only cards |
 | S6 Codex hooks | 1 d | Trust/managed hooks, PreToolUse `deny`, PostToolUse context, SessionEnd detach, skills path, `codex exec` hooks | MCP + AGENTS.md only |
@@ -849,7 +849,7 @@ paceline/
 |---|---|
 | Do we still enter the YC event (demos due Oct 18, 10:00 PT)? | No. The smallest honest cut (async Stop capture → stats card on a seeded team feed + `status`/`search_network`/`get_item` on Manufact + a 3-seed C0/C2 pilot) is possible overnight, but the plan targets a later event. |
 | Name: Paceline? | Keep it as a working name; check trademark and domain before launch. |
-| Manufact Cloud required for that track? | Ask the organizers. Keep the Fly fallback ready. |
+| ~~Manufact Cloud required for that track?~~ | **Resolved: yes.** The Manufact track requires hosting on Manufact Cloud, so S3 must pass on Manufact; Fly is a fallback for non-track use only. |
 | Builder responder in v1 or stretch? | Stretch. v1 ships live builder agents with human approval. |
 | Public commons timing | After M5. Aggregate-only public setup stats first (k ≥5 owners). |
 | Which teams pilot in M8? | 2–3 friendly teams already using Claude Code and Codex. |
