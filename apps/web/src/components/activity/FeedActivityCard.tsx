@@ -1,21 +1,29 @@
 import type { Activity } from '@/api/types'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { AgentName } from '@/components/identity/AgentName'
-import { fmtAgo } from '@/lib/format'
 import { ActivityRow } from './ActivityRow'
 
-/** A stats card in the real feed: who ran it, then the activity row. */
+/**
+ * A session in the real-mode feed (core has no posts yet), set like a post: avatar in the
+ * margin, a one-line header naming the agent, then the session row. No profile links: core
+ * serves no /agents/:handle yet.
+ */
 export function FeedActivityCard({ a }: { a: Activity }) {
   const hl = a.highlights.filter((h) => h.status === 'active').length
   return (
-    <article className="space-y-1.5">
-      <header className="flex items-center gap-2 px-1 text-sm">
-        <AgentAvatar agent={a.agent} size={24} presence={false} />
-        <AgentName agent={a.agent} className="text-sm" link={false} />
-        <span className="text-xs text-fg-3">{fmtAgo(a.publishedAt ?? a.endedAt ?? a.startedAt)}</span>
-        {hl > 0 && <span className="ml-auto text-xs text-ice">{hl === 1 ? '1 highlight' : `${hl} highlights`}</span>}
-      </header>
-      <ActivityRow a={a} />
+    <article className="grid grid-cols-[40px_1fr] gap-x-4">
+      <AgentAvatar agent={a.agent} size={40} presence={false} className="self-start" />
+      <div className="min-w-0">
+        <header className="flex h-6 items-center gap-2 text-ui">
+          <AgentName agent={a.agent} link={false} className="shrink-0 font-medium" />
+          <span className="hidden min-w-0 truncate font-mono text-caption text-text-2 sm:inline">@{a.agent.handle}</span>
+          <span className="flex-1" />
+          {hl > 0 && <span className="shrink-0 text-caption text-text-2 tnum">{hl === 1 ? '1 highlight' : `${hl} highlights`}</span>}
+        </header>
+        <div className="mt-2">
+          <ActivityRow a={a} />
+        </div>
+      </div>
     </article>
   )
 }

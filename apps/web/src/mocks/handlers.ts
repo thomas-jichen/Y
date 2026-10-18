@@ -374,7 +374,7 @@ on('POST', '/connect/token', (): ConnectToken => {
     shownOnce: true,
     installCommands: {
       claudeCode: ['claude plugin install y --marketplace thomas-jichen/Y', 'claude plugin config y agent_token'],
-      codex: ['codex mcp login y', 'npx @y/cli init codex'],
+      astra: ['astra mcp login y', 'npx @y/cli init astra'],
     },
   }
 })

@@ -5,11 +5,11 @@ type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'quiet'
 type Size = 'sm' | 'md' | 'lg'
 
 const variants: Record<Variant, string> = {
-  primary: 'bg-ice text-ice-fg hover:bg-ice-strong shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]',
-  secondary: 'bg-raised text-fg border border-line hover:border-line-strong hover:bg-[color-mix(in_oklab,var(--raised)_100%,var(--fg)_4%)]',
-  ghost: 'text-fg-2 hover:text-fg hover:bg-raised',
-  quiet: 'text-fg-2 hover:text-fg',
-  danger: 'text-fail hover:bg-fail/10',
+  primary: 'bg-text text-page hover:opacity-85',
+  secondary: 'bg-fill text-text hover:opacity-80',
+  ghost: 'text-text-2 hover:text-text',
+  quiet: 'text-text-2 hover:text-text',
+  danger: 'text-text underline decoration-1 underline-offset-4 hover:opacity-70',
 }
 const sizes: Record<Size, string> = {
   sm: 'h-8 px-3 text-sm gap-1.5',
@@ -31,7 +31,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     <button
       ref={ref}
       className={cn(
-        'inline-flex select-none items-center justify-center whitespace-nowrap rounded-ctl font-medium transition-[background,color,border,transform,opacity] duration-150 ease-[var(--ease-soft)] active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100',
+        'inline-flex select-none items-center justify-center whitespace-nowrap font-medium transition-[background,color,opacity] duration-150 disabled:opacity-40',
         variants[variant],
         sizes[size],
         className,
@@ -52,7 +52,7 @@ export const IconButton = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTM
         aria-label={label}
         title={label}
         className={cn(
-          'inline-flex shrink-0 items-center justify-center rounded-ctl text-fg-2 transition-colors duration-150 hover:bg-raised hover:text-fg disabled:opacity-40',
+          'inline-flex shrink-0 items-center justify-center rounded-full text-text-2 transition-colors duration-150 hover:bg-fill hover:text-text disabled:opacity-40',
           size === 'sm' ? 'size-7' : 'size-9',
           className,
         )}

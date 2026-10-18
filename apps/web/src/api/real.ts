@@ -5,7 +5,7 @@ import { API_BASE } from '@/lib/env'
 import * as A from './adapt'
 import { auth } from './auth'
 import { HttpError } from './errors'
-import type { ApiError, Me } from './types'
+import type { Activity, AgentRef, ApiError, Me, Team } from './types'
 
 type Method = 'GET' | 'POST' | 'PUT'
 
@@ -47,6 +47,49 @@ async function viewerId(): Promise<string | undefined> {
   if (lastMe) return lastMe.user.id
   const m = await core('GET', '/me').catch(() => null)
   return m?.user?.id ? String(m.user.id) : undefined
+}
+
+const DAY = 86_400_000
+
+/**
+ * Core has no /team yet. Team is the web's home, so it is derived from what core does serve:
+ * the viewer's agents (/me) plus every agent in the team feed, with today's and the last 7 days'
+ * numbers summed from their sessions. No traits or beacons: core doesn't send them.
+ */
+async function teamFromFeed(): Promise<Team> {
+  const me = lastMe ?? ((await realRequest('GET', 'me', undefined, {})) as Me)
+  const page = A.feed(await core('GET', '/feed?tab=all').catch(() => ({ items: [] })))
+  const now = Date.now()
+  const agents = new Map<string, AgentRef>(me.agents.map((a) => [a.id, a]))
+  const runs = new Map<string, Activity[]>()
+  for (const act of page.items) {
+    if (!agents.has(act.agent.id)) agents.set(act.agent.id, act.agent)
+    runs.set(act.agent.id, [...(runs.get(act.agent.id) ?? []), act])
+  }
+  const at = (x: Activity) => Date.parse(x.endedAt ?? x.startedAt)
+  const cards = [...agents.values()].map((agent) => {
+    const list = runs.get(agent.id) ?? []
+    const today = list.filter((x) => now - at(x) < DAY)
+    const spark7d = Array.from({ length: 7 }, (_, i) =>
+      list.filter((x) => Math.floor((now - at(x)) / DAY) === 6 - i).reduce((n, x) => n + x.stats.tokens.total, 0),
+    )
+    return {
+      agent,
+      today: {
+        tokens: today.reduce((n, x) => n + x.stats.tokens.total, 0),
+        sessions: today.length,
+        greenRate: today.length ? today.filter((x) => x.outcome.status === 'green' || x.outcome.status === 'shipped').length / today.length : 0,
+      },
+      spark7d,
+      traits: [],
+    }
+  })
+  return {
+    slug: me.team.slug,
+    name: me.team.name,
+    agents: cards,
+    byPerson: cards.map((c) => ({ agent: c.agent, tokens7d: c.spark7d.reduce((n, v) => n + v, 0) })),
+  }
 }
 
 const FEED_TAB: Record<string, string> = { for_you: 'all', team: 'all', all: 'all', following: 'following', highlights: 'highlights' }
@@ -100,8 +143,9 @@ export async function realRequest(method: Method, path: string, body: unknown, h
 
   // ---- connect
   if (is('POST', 'connect', 'token')) {
+    // The UI's 'astra' is core's 'codex' (see A.toCoreHarness).
     const b = (body ?? {}) as { harness?: string }
-    return A.connectToken(await core('POST', '/connect/token', { harness: b.harness ?? 'claude_code' }, headers))
+    return A.connectToken(await core('POST', '/connect/token', { harness: A.toCoreHarness(b.harness ?? 'claude_code') }, headers))
   }
 
   // ---- auth and settings
@@ -120,7 +164,7 @@ export async function realRequest(method: Method, path: string, body: unknown, h
   if (is('GET', 'posts')) return { items: [] }
   if (is('GET', 'scrolls', 'active')) return null
   if (is('GET', 'trending')) return []
-  if (is('GET', 'team')) return { slug: lastMe?.team.slug ?? '', name: lastMe?.team.name ?? '', agents: [], byPerson: [] }
+  if (is('GET', 'team')) return teamFromFeed()
   if (seg[0] === 'posts' || seg[0] === 'stories' || seg[0] === 'scrolls' || seg[0] === 'usage' || seg[0] === 'agents') throw notImplemented(`/${seg[0]}`)
 
   return core(method, path, method === 'GET' ? undefined : body, headers)

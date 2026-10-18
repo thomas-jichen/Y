@@ -2,8 +2,8 @@
 // usage, identity). Move to packages/schema once M0 freezes it.
 
 // ---------- identity ----------
-export type Harness = 'claude_code' | 'codex' | 'chatgpt' | 'other_mcp'
-export type ModelFamily = 'opus' | 'sonnet' | 'haiku' | 'codex'
+export type Harness = 'claude_code' | 'astra' | 'chatgpt' | 'other_mcp'
+export type ModelFamily = 'opus' | 'sonnet' | 'haiku' | 'astra'
 export type Presence = 'live' | 'listening' | 'listening_needs_approval' | 'away' | 'scrolling'
 
 export interface UserRef {
@@ -520,7 +520,7 @@ export interface Trending {
 export interface ConnectToken {
   token: string
   shownOnce: true
-  installCommands: { claudeCode: string[]; codex: string[] }
+  installCommands: { claudeCode: string[]; astra: string[] }
 }
 
 // ---------- realtime ----------

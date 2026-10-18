@@ -20,16 +20,28 @@ import type {
 
 type Obj = Record<string, any>
 
-const HARNESS_NAME: Record<Harness, string> = { claude_code: 'Claude', codex: 'Codex', chatgpt: 'ChatGPT', other_mcp: 'MCP agent' }
+const HARNESS_NAME: Record<Harness, string> = { claude_code: 'Claude', astra: 'Astra', chatgpt: 'ChatGPT', other_mcp: 'MCP agent' }
+
+/**
+ * Core's harness ids (packages/schema Harness) → the web's. The UI calls the Codex harness "Astra";
+ * the wire contract keeps `codex`. `toCoreHarness` is the reverse, for request bodies.
+ */
+export function harness(h: unknown): Harness {
+  if (h === 'codex' || h === 'astra') return 'astra'
+  if (h === 'claude_code' || h === 'chatgpt' || h === 'other_mcp') return h
+  return 'other_mcp'
+}
+export const toCoreHarness = (h: unknown): 'claude_code' | 'codex' | 'chatgpt' | 'other_mcp' =>
+  h === 'astra' || h === 'codex' ? 'codex' : h === 'chatgpt' || h === 'other_mcp' ? h : 'claude_code'
 
 const stripAt = (h: unknown) => String(h ?? '').replace(/^@/, '')
 
-export function modelFamily(model: string | undefined, harness: Harness): ModelFamily {
+export function modelFamily(model: string | undefined, h: Harness): ModelFamily {
   const m = (model ?? '').toLowerCase()
   if (m.includes('opus')) return 'opus'
   if (m.includes('sonnet')) return 'sonnet'
   if (m.includes('haiku')) return 'haiku'
-  return harness === 'codex' ? 'codex' : 'opus'
+  return h === 'astra' ? 'astra' : 'opus'
 }
 
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
@@ -47,17 +59,17 @@ export function userRef(u: Obj | undefined): UserRef {
 
 /** Core AgentRef {id, handle '@x', harness, owner} → web AgentRef (+ displayName and model family). */
 export function agentRef(a: Obj | undefined, model?: string): AgentRef {
-  const harness = (a?.harness ?? 'other_mcp') as Harness
+  const h = harness(a?.harness)
   const owner = userRef(a?.owner)
-  const fam = modelFamily(model ?? a?.model, harness)
+  const fam = modelFamily(model ?? a?.model, h)
   // displayName stays harness-based so the same agent reads the same everywhere (review items carry no model).
-  const label = model || a?.model ? cap(fam) : HARNESS_NAME[harness]
-  const name = HARNESS_NAME[harness]
+  const label = model || a?.model ? cap(fam) : HARNESS_NAME[h]
+  const name = HARNESS_NAME[h]
   return {
     id: String(a?.id ?? ''),
     handle: stripAt(a?.handle),
     displayName: a?.displayName ?? `${owner.name || owner.login}'s ${name}`,
-    harness,
+    harness: h,
     model: fam,
     modelLabel: a?.modelLabel ?? label,
     owner,
@@ -183,8 +195,8 @@ export function me(m: Obj, pendingReviews: number): Me {
   }
 }
 
-/** Core sends one shell command per harness; the web lists steps. */
+/** Core sends one shell command per harness (`codex` on the wire, `astra` in the UI); the web lists steps. */
 export function connectToken(t: Obj): ConnectToken {
   const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : v ? [String(v)] : [])
-  return { token: String(t.token), shownOnce: true, installCommands: { claudeCode: list(t.installCommands?.claudeCode), codex: list(t.installCommands?.codex) } }
+  return { token: String(t.token), shownOnce: true, installCommands: { claudeCode: list(t.installCommands?.claudeCode), astra: list(t.installCommands?.codex ?? t.installCommands?.astra) } }
 }

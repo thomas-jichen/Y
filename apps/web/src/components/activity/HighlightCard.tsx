@@ -1,37 +1,32 @@
-import { CircleCheck, TriangleAlert, Wrench, BookOpen, Workflow, Lightbulb } from 'lucide-react'
 import type { Highlight } from '@/api/types'
 import { Disclosure } from '@/components/primitives/Disclosure'
 import { fmtPct } from '@/lib/format'
 import { SafeText } from '@/lib/safeText'
 
 const KIND = {
-  fix: { label: 'Fix', icon: Wrench },
-  gotcha: { label: 'Gotcha', icon: TriangleAlert },
-  recipe: { label: 'Recipe', icon: BookOpen },
-  workflow: { label: 'Workflow', icon: Workflow },
-  tool_tip: { label: 'Tool tip', icon: Lightbulb },
+  fix: { label: 'Fix' },
+  gotcha: { label: 'Gotcha' },
+  recipe: { label: 'Recipe' },
+  workflow: { label: 'Workflow' },
+  tool_tip: { label: 'Tool tip' },
 } as const
 
 export function HighlightCard({ h }: { h: Highlight }) {
   const K = KIND[h.kind]
   return (
-    <div className="rounded-[12px] border border-line bg-surface-2 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <span className="inline-flex items-center gap-1.5 text-xs text-warn">
-          <K.icon size={13} strokeWidth={1.9} />
-          {K.label}
-        </span>
-        <span className="text-xs text-fg-3">Quality {fmtPct(h.quality)}</span>
-      </div>
-      <div className="mt-2 text-[15px] font-medium leading-[22px]">
+    <div className="grid grid-cols-[72px_1fr] gap-x-4">
+      <div className="pt-px text-ui font-semibold">{K.label}</div>
+      <div className="min-w-0">
+      <div className="text-ui font-medium">
         <SafeText text={h.title} />
       </div>
-      <div className="mt-1 text-sm text-fg-2">
+      <div className="mt-1 text-ui text-text-2">
         <SafeText text={h.summary} />
       </div>
-      <div className="mt-3 border-t border-line pt-1">
+      <div className="mt-1 text-caption text-text-2">Quality {fmtPct(h.quality)}</div>
+      <div className="mt-2">
         <Disclosure summary="Problem, steps and pitfalls">
-          <div className="space-y-4 text-sm text-fg-2">
+          <div className="space-y-4 text-ui text-text-2">
             <p>
               <SafeText text={h.body.problem} />
             </p>
@@ -44,25 +39,25 @@ export function HighlightCard({ h }: { h: Highlight }) {
             </ol>
             <div className="space-y-2">
               {h.body.pitfalls.map((p, i) => (
-                <div key={i} className="rounded-[10px] bg-raised px-3 py-2">
-                  <div className="text-fg">
+                <div key={i} className="border-l-2 border-rule pl-3">
+                  <div className="text-text">
                     Tried: <SafeText text={p.tried} />
                   </div>
-                  <div className="text-fg-3">
+                  <div>
                     <SafeText text={p.whyFailed} />
                   </div>
                 </div>
               ))}
             </div>
-            <p className="text-fg-3">
+            <p>
               Verified: <SafeText text={h.body.verification} />
             </p>
           </div>
         </Disclosure>
       </div>
-      <div className="mt-1 flex items-center gap-1.5 text-xs text-live">
-        <CircleCheck size={13} strokeWidth={2} />
+      <div className="mt-1 text-ui font-medium">
         Helped {h.measuredHelp} agents, measured. {h.confirmations} confirmations.
+      </div>
       </div>
     </div>
   )

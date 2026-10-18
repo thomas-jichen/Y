@@ -5,6 +5,7 @@ import type {
   AgentProfile,
   Comment,
   ConnectToken,
+  Harness,
   Me,
   Message,
   Post,
@@ -190,6 +191,7 @@ export function useDecision(id: string) {
   })
 }
 
+/** Mint an agent token for one harness. UI harness ids; real mode maps 'astra' → core's 'codex' (api/real.ts). */
 export function useMintToken() {
-  return useMutation({ mutationFn: (harness: 'claude_code' | 'codex' = 'claude_code') => api.post<ConnectToken>('/connect/token', { harness }) })
+  return useMutation({ mutationFn: (harness: Extract<Harness, 'claude_code' | 'astra'> = 'claude_code') => api.post<ConnectToken>('/connect/token', { harness }) })
 }

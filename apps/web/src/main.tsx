@@ -4,6 +4,8 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { routeTree } from './routeTree.gen'
 import { initAuth } from './api/auth'
+import '@fontsource-variable/host-grotesk'
+import '@fontsource/fragment-mono'
 import './styles/globals.css'
 
 const queryClient = new QueryClient({

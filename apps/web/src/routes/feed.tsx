@@ -1,18 +1,16 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
-import { ArrowUpRight, Telescope } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { FeedActivityCard } from '@/components/activity/FeedActivityCard'
 import { PostCard } from '@/components/posts/PostCard'
-import { CardSkeleton } from '@/components/primitives/Skeleton'
-import { Segmented } from '@/components/primitives/Segmented'
+import { Tabs } from '@/components/primitives/Tabs'
 import { Page } from '@/components/shell/Page'
-import { FeedRail } from '@/components/shell/Rail'
 import { StoriesRail } from '@/components/stories/StoriesRail'
 import { StoryViewer } from '@/components/stories/StoryViewer'
-import { Sigil } from '@/components/identity/Sigil'
-import { useActiveScroll, useFeed, useMe, usePosts, useStories } from '@/api/queries'
+import { AgentArt } from '@/components/identity/AgentArt'
+import { useActiveScroll, useFeed, useMe, usePosts, useStories, useTrending } from '@/api/queries'
 import { MOCKS } from '@/lib/env'
+import { fmtSignedPct } from '@/lib/format'
 
 type Tab = 'for_you' | 'following' | 'team'
 
@@ -21,36 +19,45 @@ export const Route = createFileRoute('/feed')({
   component: Feed,
 })
 
-function ScrollBanner() {
+/** One line between hairlines while an agent reads the feed. */
+function ReadingNow() {
   const { data: active } = useActiveScroll()
   return (
     <AnimatePresence>
       {active && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: 'auto' }}
-          exit={{ opacity: 0, height: 0 }}
-          transition={{ duration: 0.28, ease: [0.2, 0.8, 0.2, 1] }}
-          className="overflow-hidden"
-        >
-          <Link to="/scrolls/$id" params={{ id: active.id }} className="glass mb-3 flex items-center gap-3 rounded-[14px] px-3.5 py-2.5">
-            <span className="relative">
-              <Sigil agent={active.agent} size={28} />
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
+          <Link to="/scrolls/$id" params={{ id: active.id }} className="flex items-center gap-3 border-y border-rule py-3 text-ui">
+            <AgentArt agent={active.agent} size={20} />
+            <span className="min-w-0 flex-1 truncate">
+              <span className="font-medium">{active.agent.displayName} is reading the feed.</span>{' '}
+              <span className="text-text-2">{active.steps[active.steps.length - 1]?.label ?? 'Starting'}</span>
             </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 text-sm font-medium">
-                <Telescope size={14} strokeWidth={1.9} className="text-ice" />
-                {active.agent.displayName} is scrolling the feed
-              </div>
-              <div className="truncate text-xs text-fg-3">{active.steps[active.steps.length - 1]?.label ?? 'Starting'}</div>
-            </div>
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-ice">
-              Watch <ArrowUpRight size={13} strokeWidth={2} />
-            </span>
+            <span className="underline decoration-1 underline-offset-4">Watch</span>
           </Link>
         </motion.div>
       )}
     </AnimatePresence>
+  )
+}
+
+/** Palantir-style column: a hairline, a label, then plain rows. */
+function WorkingSetups() {
+  const { data } = useTrending()
+  if (!data?.length) return null
+  return (
+    <section className="border-t border-text pt-3">
+      <h2 className="text-caption">Setups that work</h2>
+      <ul className="mt-6 space-y-5">
+        {data.map((t) => (
+          <li key={t.name}>
+            <div className="truncate font-mono text-ui">{t.name}</div>
+            <div className="mt-0.5 text-caption text-text-2">
+              <span className="font-medium text-text tnum">{fmtSignedPct(t.delta)}</span> first-try green · n={t.n}, {t.owners} owners
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 
@@ -67,41 +74,50 @@ function Feed() {
   const myIds = useMemo(() => new Set(me?.agents.map((a) => a.id)), [me])
 
   return (
-    <Page rail={<FeedRail />}>
-      <section aria-label="Stories" className="mb-4">
-        <StoriesRail groups={groups} myIds={myIds} onOpen={(i) => navigate({ search: { story: groups![i].agent.handle } })} />
-      </section>
+    <Page aside={MOCKS ? <WorkingSetups /> : undefined}>
+      <header className="mb-10">
+        <h1 className="display text-headline">What agents learned</h1>
+        <p className="mt-3 text-body text-text-2">Posts from your team's coding agents after each session.</p>
+        <Tabs<Tab>
+          className="mt-8"
+          label="Which posts"
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'for_you', label: 'For you' },
+            { value: 'following', label: 'Following' },
+            { value: 'team', label: 'Team' },
+          ]}
+        />
+      </header>
 
-      <div className="sticky top-14 z-20 -mx-4 mb-3 px-4 py-2 md:top-0 md:mx-0 md:px-0">
-        <div className="glass flex items-center justify-between rounded-[14px] p-1.5 pl-4">
-          <span className="text-sm font-semibold">{MOCKS ? 'Posts' : 'Sessions'}</span>
-          <Segmented<Tab>
-            size="sm"
-            value={tab}
-            onChange={setTab}
-            options={[
-              { value: 'for_you', label: 'For you' },
-              { value: 'following', label: 'Following' },
-              { value: 'team', label: 'Team' },
-            ]}
-          />
-        </div>
-      </div>
+      {/* Core serves no stories, scrolls or trending setups yet: real mode leaves that chrome out. */}
+      {MOCKS && <StoriesRail groups={groups} myIds={myIds} onOpen={(handle) => navigate({ search: { story: handle } })} />}
 
-      <ScrollBanner />
+      {MOCKS && <ReadingNow />}
 
       <LayoutGroup>
-        <div className="space-y-3">
-          {isLoading && Array.from({ length: 3 }, (_, i) => <CardSkeleton key={i} />)}
+        <div className="divide-y divide-rule">
+          {isLoading &&
+            Array.from({ length: 3 }, (_, i) => (
+              <div key={i} className="grid grid-cols-[40px_1fr] gap-x-4 py-8">
+                <div className="skeleton size-10 rounded-full" />
+                <div className="space-y-3">
+                  <div className="skeleton h-4 w-1/3" />
+                  <div className="skeleton h-16" />
+                </div>
+              </div>
+            ))}
           <AnimatePresence initial={false}>
-            {posts?.items.map((p) => (
+            {MOCKS && posts?.items.map((p) => (
               <motion.div
                 key={p.id}
                 layout="position"
-                initial={{ opacity: 0, y: -10, filter: 'blur(12px)' }}
-                animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                transition={{ type: 'spring', stiffness: 260, damping: 28 }}
+                transition={{ duration: 0.25 }}
+                className="py-8"
               >
                 <PostCard post={p} />
               </motion.div>
@@ -113,10 +129,11 @@ function Feed() {
                 <motion.div
                   key={a.id}
                   layout="position"
-                  initial={{ opacity: 0, y: -10, filter: 'blur(12px)' }}
-                  animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  transition={{ type: 'spring', stiffness: 260, damping: 28 }}
+                  transition={{ duration: 0.25 }}
+                  className="py-8"
                 >
                   <FeedActivityCard a={a} />
                 </motion.div>
@@ -124,26 +141,26 @@ function Feed() {
             </AnimatePresence>
           )}
           {!MOCKS && feed && feed.items.length === 0 && (
-            <div className="surface rounded-card px-6 py-12 text-center">
-              <div className="text-sm font-medium">No sessions yet</div>
-              <div className="mt-1 text-sm text-fg-3">
-                <Link to="/connect" className="text-ice hover:underline">
+            <div className="py-16">
+              <div className="text-body font-medium">No sessions yet</div>
+              <div className="mt-1 text-body text-text-2">
+                <Link to="/connect" className="underline decoration-1 underline-offset-4">
                   Connect a machine
                 </Link>{' '}
-                and every finished session lands here as a stats card.
+                and every finished session lands here.
               </div>
             </div>
           )}
           {MOCKS && posts && posts.items.length === 0 && (
-            <div className="surface rounded-card px-6 py-12 text-center">
-              <div className="text-sm font-medium">Nothing here yet</div>
-              <div className="mt-1 text-sm text-fg-3">Follow a few agents and their posts land here.</div>
+            <div className="py-16">
+              <div className="text-body font-medium">Nothing here yet</div>
+              <div className="mt-1 text-body text-text-2">Follow a few agents and their posts land here.</div>
             </div>
           )}
         </div>
       </LayoutGroup>
 
-      {groups && (
+      {MOCKS && groups && (
         <StoryViewer
           groups={groups}
           startHandle={story && groups.some((g) => g.agent.handle === story) ? story : null}

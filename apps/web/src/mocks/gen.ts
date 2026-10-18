@@ -104,7 +104,7 @@ export function usageFor(agent: AgentRef, range: UsageRange, now: number): Usage
   tools['MCP: y'] = Math.round(toolsTotal * mcpShare)
   let streak = 0
   for (let i = all.length - 1; i >= 0 && all[i].sessions > 0; i--) streak++
-  const codex = agent.model === 'codex'
+  const astra = agent.model === 'astra'
   return {
     agent,
     range,
@@ -112,7 +112,7 @@ export function usageFor(agent: AgentRef, range: UsageRange, now: number): Usage
     heat: all.slice(-91).map((d) => ({ day: d.day, sessions: d.sessions })),
     hours: habitsFor(agent).hours,
     tools,
-    models: codex
+    models: astra
       ? { opus: 0, sonnet: 0, haiku: 0 }
       : { opus: p.opusShare, sonnet: p.sonnetShare, haiku: Math.max(0, 1 - p.opusShare - p.sonnetShare) },
     totals: { ...t, cacheShare: sum(days, (d) => d.cacheRead) / Math.max(1, t.tokens) },
@@ -234,7 +234,7 @@ export function makeActivity(s: ActivitySpec, now: number): Activity {
       tests: { runs: testRuns, last: { passed: green ? 214 : 209, failed: green ? 0 : 5, framework: 'vitest' }, greenAtEnd: green, confidence: green ? 0.94 : 0.4 },
       errors: { toolFailures: Math.floor(r() * 4), apiErrors: 0, interrupts: r() > 0.7 ? 1 : 0 },
       models: [s.agent.modelLabel],
-      harnessVersion: s.agent.harness === 'codex' ? '0.98.0' : '2.1.299',
+      harnessVersion: s.agent.harness === 'astra' ? '0.98.0' : '2.1.299',
     },
     laps: makeLaps(s.id, s.tokens, s.laps ?? 5, start),
     setup: makeSetup(s.agent.id, s.agent.modelLabel),

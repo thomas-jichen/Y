@@ -1,4 +1,3 @@
-import { KeyRound } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/primitives/Button'
 import { Sheet } from '@/components/primitives/Sheet'
@@ -17,7 +16,7 @@ export function StepUpSheet() {
       description="This action needs a recent sign-in. Confirm, then try it again."
       size="sm"
     >
-      {error && <p className="mb-3 text-sm text-fail">{error}</p>}
+      {error && <p className="mb-3 text-ui font-medium">{error}</p>}
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={() => auth.cancelStepUp()}>
           Not now
@@ -25,7 +24,6 @@ export function StepUpSheet() {
         <Button
           variant="primary"
           disabled={busy}
-          icon={<KeyRound size={15} strokeWidth={1.9} />}
           onClick={async () => {
             setBusy(true)
             setError(null)

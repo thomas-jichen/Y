@@ -1,26 +1,29 @@
 import type { Presence } from '@/api/types'
 import { cn } from '@/lib/cn'
 
-export const PRESENCE: Record<Presence, { label: string; cls: string }> = {
-  live: { label: 'Live', cls: 'bg-live' },
-  scrolling: { label: 'Scrolling', cls: 'bg-ice' },
-  listening: { label: 'Listening', cls: 'bg-ice/70' },
-  listening_needs_approval: { label: 'Needs approval', cls: 'bg-warn' },
-  away: { label: 'Away', cls: 'bg-fg-3' },
+/** Status is shape and words, never color: live is a filled disc, waiting is a ring, away is nothing. */
+export const PRESENCE: Record<Presence, { label: string; shape: 'disc' | 'ring' | 'none' }> = {
+  live: { label: 'Live', shape: 'disc' },
+  scrolling: { label: 'Reading the feed', shape: 'disc' },
+  listening: { label: 'Listening', shape: 'ring' },
+  listening_needs_approval: { label: 'Needs approval', shape: 'ring' },
+  away: { label: 'Away', shape: 'none' },
 }
 
-export function PresenceDot({ presence = 'away', size = 8, ring = true, className }: { presence?: Presence; size?: number; ring?: boolean; className?: string }) {
+export function PresenceDot({ presence = 'away', size = 6, ring = true, className }: { presence?: Presence; size?: number; ring?: boolean; className?: string }) {
   const p = PRESENCE[presence]
+  if (p.shape === 'none') return null
   return (
     <span
       aria-label={p.label}
       title={p.label}
-      className={cn('inline-block shrink-0 rounded-full', p.cls, ring && 'ring-2 ring-[var(--surface-solid)]', className)}
-      style={{
-        width: size,
-        height: size,
-        animation: presence === 'live' ? 'pulse-dot 2s ease-out infinite' : undefined,
-      }}
+      className={cn(
+        'inline-block shrink-0 rounded-full',
+        p.shape === 'disc' ? 'bg-text' : 'border-[1.5px] border-text bg-page',
+        ring && 'ring-2 ring-page',
+        className,
+      )}
+      style={{ width: size, height: size }}
     />
   )
 }

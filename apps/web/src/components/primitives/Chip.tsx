@@ -3,29 +3,24 @@ import { cn } from '@/lib/cn'
 
 type Tone = 'neutral' | 'ice' | 'live' | 'warn' | 'fail' | 'outline' | 'inverse'
 
+/**
+ * No pills, no colored badges: a chip is a word set in the meta line.
+ * Weight carries urgency (warn and fail are semibold), grey carries "quiet".
+ * `icon` is accepted for old callers and ignored.
+ */
 const tones: Record<Tone, string> = {
-  neutral: 'bg-raised text-fg-2',
-  ice: 'bg-ice-wash text-ice',
-  live: 'bg-live/12 text-live',
-  warn: 'bg-warn/12 text-warn',
-  fail: 'bg-fail/12 text-fail',
-  outline: 'border border-line text-fg-2',
-  inverse: 'bg-inverse text-inverse-fg',
+  neutral: 'text-text-2',
+  outline: 'text-text-2',
+  ice: 'text-text font-medium',
+  live: 'text-text font-medium',
+  warn: 'text-text font-semibold',
+  fail: 'text-text font-semibold',
+  inverse: 'text-text font-semibold',
 }
 
-export function Chip({
-  tone = 'neutral',
-  icon,
-  className,
-  children,
-  ...props
-}: HTMLAttributes<HTMLSpanElement> & { tone?: Tone; icon?: ReactNode }) {
+export function Chip({ tone = 'neutral', icon: _icon, className, children, ...props }: HTMLAttributes<HTMLSpanElement> & { tone?: Tone; icon?: ReactNode }) {
   return (
-    <span
-      className={cn('inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-xs font-medium', tones[tone], className)}
-      {...props}
-    >
-      {icon}
+    <span className={cn('inline-flex shrink-0 items-center whitespace-nowrap text-caption', tones[tone], className)} {...props}>
       {children}
     </span>
   )
