@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
 /** Session length distribution: 10 minute bins, one series. */
-export function Histogram({ values, bin = 10, max = 90, height = 120 }: { values: number[]; bin?: number; max?: number; height?: number }) {
+export function Histogram({ values, bin = 10, max = 90, height = 120, color }: { values: number[]; bin?: number; max?: number; height?: number; color?: string }) {
   const bins = Array.from({ length: Math.ceil(max / bin) }, (_, i) => values.filter((v) => (i === Math.ceil(max / bin) - 1 ? v >= i * bin : v >= i * bin && v < (i + 1) * bin)).length)
   const top = Math.max(...bins, 1)
   const [hover, setHover] = useState<number | null>(null)
@@ -10,10 +10,10 @@ export function Histogram({ values, bin = 10, max = 90, height = 120 }: { values
       <div className="relative flex items-end justify-between gap-[2px]" style={{ height }}>
         {bins.map((n, i) => (
           <div key={i} className="relative flex h-full max-w-6 flex-1 items-end" onPointerEnter={() => setHover(i)} onPointerLeave={() => setHover(null)}>
-            <div className="w-full rounded-t-[4px] bg-series-you transition-opacity" style={{ height: `${Math.max(3, (n / top) * 100)}%`, opacity: hover === null || hover === i ? 1 : 0.4 }} />
+            <div className="w-full bg-series-you transition-opacity" style={{ height: `${Math.max(3, (n / top) * 100)}%`, opacity: hover === null || hover === i ? 1 : 0.4, background: color }} />
             {hover === i && (
-              <div className="glass-pop absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-[8px] px-2 py-1 text-xs">
-                <span className="font-semibold tnum">{n}</span> <span className="text-fg-3">sessions</span>
+              <div className="glass-pop absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-[10px] px-2 py-1 text-caption">
+                <span className="font-semibold tnum">{n}</span> sessions
               </div>
             )}
           </div>

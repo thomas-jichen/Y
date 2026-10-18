@@ -13,7 +13,9 @@ export function RadialClock({
   size = 260,
   youLabel = 'You',
   peerLabel,
+  color = 'var(--series-you)',
 }: {
+  color?: string
   hours: number[]
   peer?: number[]
   size?: number
@@ -69,7 +71,7 @@ export function RadialClock({
           <path
             key={h}
             d={bar(h, v)}
-            fill="var(--series-you)"
+            fill={color}
             opacity={hover === null || hover === h ? 1 : 0.4}
             className="transition-opacity duration-150"
             onPointerEnter={() => setHover(h)}
@@ -87,7 +89,7 @@ export function RadialClock({
       {peer && (
         <div className="mt-3 flex items-center gap-4 text-xs text-fg-2">
           <span className="flex items-center gap-1.5">
-            <span className="inline-block size-2.5 rounded-[3px] bg-series-you" />
+            <span className="inline-block size-2.5" style={{ background: color }} />
             {youLabel}
           </span>
           <span className="flex items-center gap-1.5">
