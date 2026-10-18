@@ -61,9 +61,28 @@ function isInsecureUrl(raw) {
     return false;
   }
 }
+function isPrivateNetworkUrl(raw) {
+  if (!isInsecureUrl(raw)) return false;
+  try {
+    const host = new URL(raw).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    const v4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+    if (v4) {
+      const a = Number(v4[1]);
+      const b = Number(v4[2]);
+      return a === 10 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a === 169 && b === 254 || a === 100 && b >= 64 && b <= 127;
+    }
+    if (host.includes(":")) return /^f[cd][0-9a-f]{0,2}:/.test(host) || /^fe[89ab][0-9a-f]?:/.test(host);
+    if (!host.includes(".")) return true;
+    return /\.(?:lan|local|internal|home\.arpa|localdomain)$/.test(host);
+  } catch {
+    return false;
+  }
+}
 function loadConfig(env) {
   const apiUrl = (env.CLAUDE_PLUGIN_OPTION_API_URL?.trim() || "http://localhost:8787").replace(/\/+$/, "");
-  const insecureApiUrl = isInsecureUrl(apiUrl) && env.Y_ALLOW_INSECURE_URL !== "1";
+  const optOut = env.Y_ALLOW_INSECURE_URL === "1";
+  const cleartextApiUrl = !optOut && isPrivateNetworkUrl(apiUrl);
+  const insecureApiUrl = isInsecureUrl(apiUrl) && !optOut && !cleartextApiUrl;
   const token = insecureApiUrl ? void 0 : env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
   const dataDir = env.CLAUDE_PLUGIN_DATA || env.Y_DATA_DIR || path.join(os.homedir(), ".y");
   const sm = env.CLAUDE_PLUGIN_OPTION_SHARE_MODE;
@@ -71,7 +90,7 @@ function loadConfig(env) {
   const wk = env.CLAUDE_PLUGIN_OPTION_WAKE_ON_DM;
   const wakeOnDm = wk === "off" || wk === "owner-only" ? wk : "teammates";
   const headless = env.Y_MODE === "ci" || env.CI === "true" || env.CI === "1";
-  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT, ...insecureApiUrl ? { insecureApiUrl } : {} };
+  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT, ...insecureApiUrl ? { insecureApiUrl } : {}, ...cleartextApiUrl ? { cleartextApiUrl } : {} };
 }
 function isChild(env) {
   return env.Y_CHILD === "1";
@@ -131,23 +150,35 @@ function logLine(dataDir, name, msg) {
 function allocSeq(p, sid) {
   const dir = path.join(p.seq, safeSid(sid));
   ensureDir(dir);
-  let n = 0;
+  return claimSeqFrom(dir, maxClaim(dir) + 1);
+}
+function maxClaim(dir) {
+  let max = -1;
   try {
     for (const name of fs.readdirSync(dir)) {
       const v = Number(name);
-      if (Number.isInteger(v) && v >= n) n = v + 1;
+      if (Number.isInteger(v) && v > max) max = v;
     }
   } catch {
   }
+  return max;
+}
+function claimSeqFrom(dir, n) {
   for (; ; ) {
     try {
       fs.mkdirSync(path.join(dir, String(n)));
-      pruneSeq(dir, n);
-      return n;
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
       n++;
+      continue;
     }
+    const max = maxClaim(dir);
+    if (max > n) {
+      n = max + 1;
+      continue;
+    }
+    pruneSeq(dir, n);
+    return n;
   }
 }
 function pruneSeq(dir, keep) {
@@ -23779,6 +23810,44 @@ var CLI_SECRET = "<REDACTED:cli_password>";
 var CONFIG_VALUE = "<REDACTED:config_value>";
 var SECRET_NAME = "(?:[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?)[A-Za-z0-9_]*|(?:[A-Za-z0-9_]*_)?(?:PASS|PW)(?:_[A-Za-z0-9_]*)?)";
 var ENV_ASSIGN_RE = new RegExp(`(^|[\\s;&|(])((?:export\\s+)?${SECRET_NAME})=("[^"]*"|'[^']*'|\\S+)`, "gi");
+var NOT_A_SECRET_NAME_RE = /(?:^|_)(?:MAX|MIN|NUM|COUNT|LIMIT|LEN|LENGTH|SIZE|TTL|EXPIRY|EXPIRES|TIMEOUT)(?:_|$)|TOKENS(?:_|$)|^(?:OLD)?PWD$/i;
+var SHORT_PASS_NAME_RE = /^(?:[A-Za-z0-9_]*_)?(?:PASS|PW)(?:_[A-Za-z0-9_]*)?$/i;
+var LONG_SECRET_NAME_RE = /PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?/i;
+function secretAssignName(name) {
+  const n = name.replace(/^export\s+/, "");
+  if (NOT_A_SECRET_NAME_RE.test(n)) return false;
+  if (LONG_SECRET_NAME_RE.test(n)) return true;
+  return SHORT_PASS_NAME_RE.test(n) && n === n.toUpperCase();
+}
+function shellSegments(cmd) {
+  const out = [];
+  let cur = "";
+  let quote = "";
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i];
+    if (c === "\\" && quote !== "'" && i + 1 < cmd.length) {
+      cur += c + cmd[++i];
+      continue;
+    }
+    if (quote) {
+      if (c === quote) quote = "";
+    } else if (c === '"' || c === "'") quote = c;
+    else if (c === ";" || c === "&" || c === "|" || c === "\n") {
+      if (cur) out.push(cur);
+      let sep2 = c;
+      while (i + 1 < cmd.length && /[;&|\n]/.test(cmd[i + 1])) sep2 += cmd[++i];
+      out.push(sep2);
+      cur = "";
+      continue;
+    }
+    cur += c;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+function perSegment(cmd, when, mask) {
+  return shellSegments(cmd).map((seg) => when.test(seg) ? mask(seg) : seg).join("");
+}
 var MYSQL_RE = /\b(?:mysql\w*|mariadb\w*)\b/;
 var ARG = `("[^"]*"|'[^']*'|\\S+)`;
 function maskHtpasswd(cmd) {
@@ -23791,13 +23860,16 @@ function maskHtpasswd(cmd) {
   });
 }
 function maskCliSecrets(cmd) {
-  let out = cmd.replace(new RegExp(`(\\bsshpass\\s+-p\\s*)${ARG}`, "g"), `$1${CLI_SECRET}`).replace(new RegExp(`(\\s--(?:[a-z]+-)?(?:password|passwd)(?:=|\\s+))(?!-)${ARG}`, "gi"), `$1${CLI_SECRET}`).replace(ENV_ASSIGN_RE, (_m, pre, name) => `${pre}${name}=${CLI_SECRET}`);
-  if (/\b(?:curl|wget|http)\b/.test(out)) out = out.replace(/(\s(?:-u\s*|--user(?:=|\s+))["']?[^\s:"'-][^\s:"']*:)([^\s"']+)/g, `$1${CLI_SECRET}`);
-  if (MYSQL_RE.test(out)) out = out.replace(/(\s-p)(?![\s-])("[^"]*"|'[^']*'|\S+)/g, `$1${CLI_SECRET}`);
-  if (/\b(?:docker|podman|nerdctl|buildah|skopeo|helm\s+registry)\s+login\b/.test(out)) {
-    out = out.replace(new RegExp(`(\\s-p\\s*)(?!-)${ARG}`, "g"), `$1${CLI_SECRET}`);
+  let out = cmd.replace(new RegExp(`(\\bsshpass\\s+-p\\s*)${ARG}`, "g"), `$1${CLI_SECRET}`).replace(new RegExp(`(\\s--(?:[a-z]+-)?(?:password|passwd)(?:=|\\s+))(?!-)${ARG}`, "gi"), `$1${CLI_SECRET}`).replace(ENV_ASSIGN_RE, (m, pre, name) => secretAssignName(name) ? `${pre}${name}=${CLI_SECRET}` : m);
+  if (/\b(?:curl|wget|http)\b/.test(out)) {
+    out = perSegment(out, /\b(?:curl|wget|http)\b/, (seg) => seg.replace(/(\s(?:-u\s*|--user(?:=|\s+))["']?[^\s:"'-][^\s:"']*:)([^\s"']+)/g, `$1${CLI_SECRET}`));
   }
-  if (/\bredis-cli\b/.test(out)) out = out.replace(new RegExp(`(\\s(?:-a\\s*|--pass\\s+))(?!-)${ARG}`, "g"), `$1${CLI_SECRET}`);
+  if (MYSQL_RE.test(out)) out = perSegment(out, MYSQL_RE, (seg) => seg.replace(/(\s-p)(?![\s-])("[^"]*"|'[^']*'|\S+)/g, `$1${CLI_SECRET}`));
+  const LOGIN_RE = /\b(?:docker|podman|nerdctl|buildah|skopeo|helm\s+registry)\s+login\b/;
+  if (LOGIN_RE.test(out)) out = perSegment(out, LOGIN_RE, (seg) => seg.replace(new RegExp(`(\\s-p\\s*)(?!-)${ARG}`, "g"), `$1${CLI_SECRET}`));
+  if (/\bredis-cli\b/.test(out)) {
+    out = perSegment(out, /\bredis-cli\b/, (seg) => seg.replace(new RegExp(`(\\s(?:-a\\s*|--pass\\s+))(?!-)${ARG}`, "g"), `$1${CLI_SECRET}`));
+  }
   if (/\bhtpasswd\b/.test(out)) out = maskHtpasswd(out);
   return out;
 }
@@ -24368,7 +24440,7 @@ var ENV_DUMP_COMMAND_RE = new RegExp(
     // The original `cat … .env` branch: the first `cat|less|… ` at a command start, then `.env` anywhere after it.
     String.raw`^(?=(?<catStart>[\s\S]*?(?:^|[;&|(]\s*)(?:cat|less|more|head|tail|bat)\s))\k<catStart>[\s\S]*\.env`,
     // A bare dump at a command start (also after a newline / ⏎), behind optional prefix commands.
-    ENV_CMD_START + ENV_PREFIX + ENV_CMD_DIR + String.raw`(?:env(?:\s+(?:-0|--null|-u\s*[^\s;&|()\n⏎]+|--unset=[^\s;&|()\n⏎]+))*|printenv(?:\s+-0)?|set|export|(?:declare|typeset)\s+-[A-Za-z]*[xp][A-Za-z]*)(?=\s*(?:$|[|;&>)\n⏎]))`,
+    ENV_CMD_START + ENV_PREFIX + ENV_CMD_DIR + String.raw`(?:env(?:\s+(?:-0|--null|-u\s*[^\s;&|()\n⏎]+|--unset=[^\s;&|()\n⏎]+))*|printenv(?:\s+-0)?|set|export|(?:declare|typeset)\s+-(?=[A-Za-z]*[xp])[A-Za-z]+)(?=\s*(?:$|[|;&>)\n⏎]))`,
     ENV_CMD_START + ENV_PREFIX + ENV_CMD_DIR + String.raw`printenv\b`,
     // Any reader of a `.env*` file operand (after whitespace, `<` or `/`; not quoted).
     ENV_CMD_START + ENV_PREFIX + String.raw`(?:${ENV_READERS})\b` + ENV_READER_ARGS + String.raw`[\s<\/]\.env` + NOT_DOTENV + String.raw`[\w.-]*(?=$|[\s|;&)>⏎])`,
@@ -25302,11 +25374,17 @@ function gitIdentities(dir, home = os2.homedir(), xdgConfigHome = defaultXdg(hom
 var COMMON_NAME_WORDS = new Set(
   "will mark grant bill hope faith rose june april august frank jack earl dean lane chase cash gene hunter king miles page penny rich rusty sandy summer wade ward young brown green white black gray grey long little short small case cook bell hall hill wood stone field ford park price reed rice rock shaw snow storm west north south east love star best fox lamb day may ray max art joy guy win pat sue rob bob don ben dan tom ken roy sam lee kim van von de la le del der bay cole drew nick crystal amber ivy jade pearl ruby dawn eve autumn river sky skye rain clay glen dale hazel heath holly iris lily violet basil sage carter cooper porter mason taylor turner walker baker butler fisher fletcher miller parker potter sawyer shepherd smith tanner thatcher weaver wright archer bishop booth brook brooks burns bush cross dale dick dock duke fair fry gill hart hawk hay hood horn hunt keen knight lake land leach lord lucky major marsh mayor moon more moss nash noble oak pace pike pool pope rush salt sharp shields short silver steel sweet swift thorn trout wall wells wild wise wolf worth bond chance christian joy major victor angel august barley bear blue cloud coin dash echo free gold honey ice jet joy legend link lion lucky lux mars meadow mercy ocean phoenix poppy rebel royal saint scout shadow sonny spring sterling sunny tiger trinity unity wren zen test user admin root build main node".split(/\s+/)
 );
+var TECH_WORDS = new Set(
+  "claude code codex copilot cursor devin agent agents bot bots github gitlab bitbucket actions action workflow workflows docker compose kubernetes server servers client data deploy deployer deployment release releases bump automation auto runner runners pipeline service services system sync merge renovate dependabot ci cd ops devops infra platform cloud web app apps api core lib src test tests main dev local localhost repo project docs packages users home tmp www com org the and node user admin root build builder".split(/\s+/)
+);
 function nameTerms(name) {
   const full = name.trim();
   if (!full) return [];
-  const parts = full.split(/\s+/).filter((t) => t.length >= 4 && !COMMON_NAME_WORDS.has(t.toLowerCase()));
-  return /\s/.test(full) ? [full, ...parts] : parts;
+  const words = full.split(/\s+/);
+  const parts = words.filter((t) => t.length >= 4 && !COMMON_NAME_WORDS.has(t.toLowerCase()) && !TECH_WORDS.has(t.toLowerCase()));
+  if (!/\s/.test(full)) return parts;
+  if (words.every((w) => TECH_WORDS.has(w.toLowerCase()))) return parts;
+  return [full, ...parts];
 }
 function identityTerms(cwd) {
   const key = cwd ?? "";
@@ -26050,6 +26128,9 @@ function humanMessage(ctx, brief) {
   if (ctx.config.insecureApiUrl) {
     lines.push("Y: api_url is plain http:// to another machine, so Y sends nothing (your agent token would travel unencrypted). Set an https:// api_url in the plugin settings; http:// works for localhost only.");
   } else if (!ctx.config.token) lines.push("Y: no agent token configured. Set agent_token in the plugin settings.");
+  else if (ctx.config.cleartextApiUrl) {
+    lines.push("Y: api_url is plain http:// to another machine on your network, so your agent token and digests travel unencrypted on it. Use an https:// api_url, or set Y_ALLOW_INSECURE_URL=1 to accept this.");
+  }
   const mcpUrl = ctx.env.CLAUDE_PLUGIN_OPTION_MCP_URL?.trim();
   if (mcpUrl && isInsecureUrl(mcpUrl) && ctx.env.Y_ALLOW_INSECURE_URL !== "1") {
     lines.push("Y: mcp_url is plain http:// to another machine, so the Y tools send your agent token unencrypted. Set an https:// mcp_url in the plugin settings; http:// works for localhost only.");

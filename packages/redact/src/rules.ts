@@ -137,7 +137,9 @@ const NOT_DOTENV = String.raw`(?!\.(?:example|sample|template|dist|[cm]?[jt]sx?|
  * `set -e`, `export FOO=1`, `grep -rn process.env src`, `grep -rn ".env" .`
  * and `grep x src/.env.ts` do not match.
  *
- * Every alternative runs in linear time: the original `cat … .env` rule is
+ * Every alternative runs in linear time (the `declare|typeset` flag run is
+ * one `[A-Za-z]+` after an `[xp]` lookahead, not `[A-Za-z]*[xp][A-Za-z]*`,
+ * which tried every split of a long run): the original `cat … .env` rule is
  * anchored at the input start and takes the first `cat ` with an atomic
  * lookahead (same commands as `(?:^|[;&|(]\s*)(?:cat|…)\s+(?:\S+\s+)*\S*\.env`,
  * which rescanned the rest of the input from every `(cat `), and no other
@@ -151,7 +153,7 @@ export const ENV_DUMP_COMMAND_RE = new RegExp(
     String.raw`^(?=(?<catStart>[\s\S]*?(?:^|[;&|(]\s*)(?:cat|less|more|head|tail|bat)\s))\k<catStart>[\s\S]*\.env`,
     // A bare dump at a command start (also after a newline / ⏎), behind optional prefix commands.
     ENV_CMD_START + ENV_PREFIX + ENV_CMD_DIR +
-      String.raw`(?:env(?:\s+(?:-0|--null|-u\s*[^\s;&|()\n⏎]+|--unset=[^\s;&|()\n⏎]+))*|printenv(?:\s+-0)?|set|export|(?:declare|typeset)\s+-[A-Za-z]*[xp][A-Za-z]*)(?=\s*(?:$|[|;&>)\n⏎]))`,
+      String.raw`(?:env(?:\s+(?:-0|--null|-u\s*[^\s;&|()\n⏎]+|--unset=[^\s;&|()\n⏎]+))*|printenv(?:\s+-0)?|set|export|(?:declare|typeset)\s+-(?=[A-Za-z]*[xp])[A-Za-z]+)(?=\s*(?:$|[|;&>)\n⏎]))`,
     ENV_CMD_START + ENV_PREFIX + ENV_CMD_DIR + String.raw`printenv\b`,
     // Any reader of a `.env*` file operand (after whitespace, `<` or `/`; not quoted).
     ENV_CMD_START + ENV_PREFIX + String.raw`(?:${ENV_READERS})\b` + ENV_READER_ARGS + String.raw`[\s<\/]\.env` + NOT_DOTENV + String.raw`[\w.-]*(?=$|[\s|;&)>⏎])`,

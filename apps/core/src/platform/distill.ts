@@ -52,7 +52,11 @@ const TLDS =
   'com|net|org|io|dev|app|ai|co|cloud|internal|local|localhost|corp|lan|intranet|gov|edu|us|uk|de|eu|biz|tech|xyz|' +
   'so|me|tv|gg|fm|ly|ca|au|jp|fr|nl|ru|br|ch|se|es|be|dk|fi|ie|nz|za|kr|cn|tw|hk|sg|il|mx|example|invalid';
 /** A dotted host name that ends there (`app.dev.ts` or `index.dev.js` is a file, not a host). */
-const HOST_G = new RegExp(String.raw`\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:${TLDS})\b(?![\w-]|\.[a-z0-9])`, 'gi');
+const HOST_G = new RegExp(String.raw`(?<![.$])\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:${TLDS})\b(?![\w-]|\.[a-z0-9])`, 'gi');
+/** `this.app`, `req.session.me`, `state.ai`: a property access on a common receiver, not a host. */
+const RECEIVER_RE = /^(?:this|self|super|req|res|ctx|props|state|window|document|globalThis|process|module|exports|opts|options|evt|err|vm)\./i;
+/** Well-known library names that are spelled like hosts. */
+const LIBRARY_NAMES = new Set(['socket.io', 'engine.io']);
 const URL_G = /\b[a-z][a-z0-9+.-]*:\/\/([^\s'"`<>)\]/?#]*)[^\s'"`<>)\]]*/gi;
 const EMAIL_G = /[\w.+-]+@[a-z0-9-]*[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b/gi;
 /** `user@host` (only in remote-shell text, where `name@x` is not a package version). */
@@ -75,12 +79,19 @@ const IPV6_G =
   /(?<![\w:.])(?:(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?|::(?:[0-9a-f]{1,4}:)*[0-9a-f]{1,4})(?![\w:.])/gi;
 /** Credential files: `.env*`, ssh keys, `~/.aws` & co, `.npmrc`, `.../credentials`, `*credentials.json`, `secrets.yaml`, key stores. */
 const SECRET_FILE_G =
-  /(?:^|(?<=[^\w.]))\.env(?:\.[\w-]+)?\b|\bid_(?:rsa|ed25519|ecdsa|dsa)(?:\.pub)?\b|\.(?:ssh|aws|gnupg|kube|docker)(?=[\/\s'"`]|$)|\.(?:npmrc|netrc|pgpass|git-credentials)\b|\/(?:[\w.-]*[_-])?credentials(?![.\w-])|\b[\w.-]*credentials\.json\b|\bsecrets?\.(?:ya?ml|json|toml|env|txt)\b|\b[\w.-]+\.(?:pem|p12|pfx|kdbx|keystore|jks)\b/gi;
-const SECRET_VAR_RE = /\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_KEY|PRIVATE_KEY|DATABASE_URL|DSN|CREDENTIALS)[A-Z0-9_]*\b|\b[A-Z0-9_]+_PAT\b/;
+  /(?:^|(?<=[^\w.]))\.env(?!\.(?:example|sample|template|dist)\b)(?:\.[\w-]+)?\b|\bid_(?:rsa|ed25519|ecdsa|dsa)(?:\.pub)?\b|\.(?:ssh|aws|gnupg|kube|docker)(?=[\/\s'"`]|$)|\.(?:npmrc|netrc|pgpass|git-credentials)\b|\/(?:[\w.-]*[_-])?credentials(?![.\w-])|\b[\w.-]*credentials\.json\b|\bsecrets?\.(?:ya?ml|json|toml|env|txt)\b|\b[\w.-]+\.(?:pem|p12|pfx|kdbx|keystore|jks)\b/gi;
+const SECRET_VAR_G = /\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_KEY|PRIVATE_KEY|DATABASE_URL|DSN|CREDENTIALS)[A-Z0-9_]*\b|\b[A-Z0-9_]+_PAT\b/g;
+/** A name that only describes a credential (its lifetime, length, a count): `TOKEN_TTL`, `MAX_TOKENS`, `PASSWORD_MIN_LENGTH`. */
+const SECRET_META_NAME_RE = /(?:^|_)(?:TTL|EXPIRY|EXPIRES|EXPIRATION|TIMEOUT|MAX|MIN|NUM|COUNT|LIMIT|LEN|LENGTH|SIZE)(?:_|$)|TOKENS(?:_|$)/;
+
+function namesSecretVar(text: string): boolean {
+  for (const m of text.matchAll(SECRET_VAR_G)) if (!SECRET_META_NAME_RE.test(m[0])) return true;
+  return false;
+}
 const PKG_MANAGERS = 'npm|pnpm|yarn|bun|npx|pnpx|bunx|deno|go|pip3?|pipx|uv|poetry|cargo|gem|bundle|composer|brew|dotnet|nuget|conda|mamba|apt(?:-get)?';
 const PKG_VERBS = 'add|install|i|get|remove|rm|uninstall|un|upgrade|update|up|dlx|why|info|view|show|outdated|require|link';
 /** The text before a token is a package-manager command that takes package specifiers (`pnpm add socket.io`, `go get github.com/x/y`). */
-const PKG_PREFIX_RE = new RegExp(String.raw`(?:^|[;&|(]\s*)(?:sudo\s+)?(?:${PKG_MANAGERS})\s+(?:[^;&|\n]*\s)?(?:${PKG_VERBS})\s+[^;&|\n]*$`, 'i');
+const PKG_PREFIX_RE = new RegExp(String.raw`(?:^(?:[A-Z][\w-]{0,30}:\s+)?|[;&|(]\s*)(?:sudo\s+)?(?:${PKG_MANAGERS})\s+(?:[^;&|\n]*\s)?(?:${PKG_VERBS})\s+[^;&|\n]*$`, 'i');
 /** `module 'socket.io'`, `package socket.io`: a module name, not a host. */
 const MODULE_PREFIX_RE = /\b(?:module|package)s?\s+['"`]?$/i;
 
@@ -105,10 +116,17 @@ export function maskEnvironment(text: string): string {
   t = t.replace(CLIENT_HOST_G, hostArg).replace(HOST_ARG_G, hostArg);
   t = t.replace(HOME_PATH_G, '$1<path>').replace(ROOT_PATH_G, '$1<path>').replace(WINDOWS_PATH_G, '<path>');
   t = t.replace(IPV4_G, (m) => (LOOPBACK_RE.test(m) ? m : '<ip>')).replace(IPV6_G, (m) => (m === '::1' ? m : '<ip>'));
-  t = t.replace(HOST_G, (m, offset: number, whole: string) =>
-    PUBLIC_HOSTS.has(m.toLowerCase()) || /^lib[\w.+-]*\.so$/i.test(m) || isPackageContext(whole, offset) ? m : '<host>',
+  // Credential files first: `.env.local` is a file, not `.` + a host `env.local`.
+  t = t.replace(SECRET_FILE_G, '<file>');
+  return t.replace(HOST_G, (m, offset: number, whole: string) =>
+    PUBLIC_HOSTS.has(m.toLowerCase()) ||
+    LIBRARY_NAMES.has(m.toLowerCase()) ||
+    RECEIVER_RE.test(m) ||
+    /^lib[\w.+-]*\.so$/i.test(m) ||
+    isPackageContext(whole, offset)
+      ? m
+      : '<host>',
   );
-  return t.replace(SECRET_FILE_G, '<file>');
 }
 
 /**
@@ -116,7 +134,7 @@ export function maskEnvironment(text: string): string {
  * credential file or variable name, or a remote-shell command) if published.
  */
 export function revealsEnvironment(text: string): boolean {
-  return maskEnvironment(text) !== text || REMOTE_CMD_RE.test(text) || SECRET_VAR_RE.test(text);
+  return maskEnvironment(text) !== text || REMOTE_CMD_RE.test(text) || namesSecretVar(text);
 }
 
 /** A client-supplied (local distill) draft with the same masking applied to every published text field. */

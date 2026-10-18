@@ -93,7 +93,17 @@ export function isCodeLine(line: string, lenient = false): boolean {
  * an ASCII character. `normalizeUntrusted` keeps both (emoji, accents), but
  * they would otherwise hide a `;`, a ` ``` ` or a keyword from the line rules.
  */
-const SCAN_DROP_G = /[\uFE00-\uFE0F\u{E0100}-\u{E01EF}]|(?<=[\x00-\x7F][\p{M}\uFE00-\uFE0F\u{E0100}-\u{E01EF}]*)\p{M}/gu;
+const SCAN_DROP_G = /([\x00-\x7F])\p{M}+|[\uFE00-\uFE0F\u{E0100}-\u{E01EF}]/gu;
+
+/**
+ * Drop {@link SCAN_DROP_G} in one linear pass: a whole run of marks after an
+ * ASCII character (variation selectors are marks too), and any other
+ * variation selector. Same result as the old lookbehind form
+ * `(?<=[\x00-\x7F]\p{M}*)\p{M}`, which rescanned the run for every mark.
+ */
+export function dropScanMarks(text: string): string {
+  return text.replace(SCAN_DROP_G, (_m, ascii: string | undefined) => ascii ?? '');
+}
 
 const SINGLE_CODE_LINE_RE = /^\s*(?:import\s|from\s+\S+\s+import|[^\n]*\brequire\(\s*['"])/;
 
@@ -206,7 +216,7 @@ export function dlpScan(body: string, opts?: DlpOptions): DlpResult {
   const text = typeof body === 'string' ? body : '';
   const raw = scanText(text, opts, false);
   if (!raw.ok) return raw;
-  const normalized = normalizeUntrusted(text).text.replace(SCAN_DROP_G, '');
+  const normalized = dropScanMarks(normalizeUntrusted(text).text);
   if (normalized === text) return raw;
   const view = scanText(normalized, opts, true);
   return view.ok ? raw : view;

@@ -80,11 +80,19 @@ export interface Config {
   headless: boolean;
   pluginRoot: string | undefined;
   /**
-   * `api_url` is plain http:// to a host other than this machine. The agent
-   * token is then withheld (`token` is undefined), so neither it nor any
-   * digest crosses the network in cleartext. `Y_ALLOW_INSECURE_URL=1` opts out.
+   * `api_url` is plain http:// to a public host (not this machine and not a
+   * private network, see `cleartextApiUrl`). The agent token is then withheld
+   * (`token` is undefined), so neither it nor any digest crosses the internet
+   * in cleartext. `Y_ALLOW_INSECURE_URL=1` opts out.
    */
   insecureApiUrl?: boolean;
+  /**
+   * `api_url` is plain http:// to a private-network host (RFC 1918 or
+   * link-local address, `host.docker.internal`, a single-label name, `.lan`,
+   * `.local`, `.internal`, `.home.arpa`). The token is kept so LAN, Docker and
+   * devcontainer setups keep working, and SessionStart warns.
+   */
+  cleartextApiUrl?: boolean;
 }
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
@@ -101,9 +109,30 @@ export function isInsecureUrl(raw: string): boolean {
   }
 }
 
+/** True for an http:// URL whose host is on a private network (see {@link Config.cleartextApiUrl}); false for loopback and public hosts. */
+export function isPrivateNetworkUrl(raw: string): boolean {
+  if (!isInsecureUrl(raw)) return false;
+  try {
+    const host = new URL(raw).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    const v4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+    if (v4) {
+      const a = Number(v4[1]);
+      const b = Number(v4[2]);
+      return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
+    }
+    if (host.includes(':')) return /^f[cd][0-9a-f]{0,2}:/.test(host) || /^fe[89ab][0-9a-f]?:/.test(host);
+    if (!host.includes('.')) return true;
+    return /\.(?:lan|local|internal|home\.arpa|localdomain)$/.test(host);
+  } catch {
+    return false;
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const apiUrl = (env.CLAUDE_PLUGIN_OPTION_API_URL?.trim() || 'http://localhost:8787').replace(/\/+$/, '');
-  const insecureApiUrl = isInsecureUrl(apiUrl) && env.Y_ALLOW_INSECURE_URL !== '1';
+  const optOut = env.Y_ALLOW_INSECURE_URL === '1';
+  const cleartextApiUrl = !optOut && isPrivateNetworkUrl(apiUrl);
+  const insecureApiUrl = isInsecureUrl(apiUrl) && !optOut && !cleartextApiUrl;
   const token = insecureApiUrl ? undefined : env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || undefined;
   const dataDir = env.CLAUDE_PLUGIN_DATA || env.Y_DATA_DIR || path.join(os.homedir(), '.y');
   const sm = env.CLAUDE_PLUGIN_OPTION_SHARE_MODE;
@@ -111,7 +140,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const wk = env.CLAUDE_PLUGIN_OPTION_WAKE_ON_DM;
   const wakeOnDm: WakeSetting = wk === 'off' || wk === 'owner-only' ? wk : 'teammates';
   const headless = env.Y_MODE === 'ci' || env.CI === 'true' || env.CI === '1';
-  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT, ...(insecureApiUrl ? { insecureApiUrl } : {}) };
+  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT, ...(insecureApiUrl ? { insecureApiUrl } : {}), ...(cleartextApiUrl ? { cleartextApiUrl } : {}) };
 }
 
 /**
@@ -241,31 +270,55 @@ export function logLine(dataDir: string, name: string, msg: string): void {
 export function allocSeq(p: Paths, sid: string): number {
   const dir = path.join(p.seq, safeSid(sid));
   ensureDir(dir);
-  let n = 0;
+  return claimSeqFrom(dir, maxClaim(dir) + 1);
+}
+
+/** The highest claim in `dir`, or -1. */
+function maxClaim(dir: string): number {
+  let max = -1;
   try {
     for (const name of fs.readdirSync(dir)) {
       const v = Number(name);
-      if (Number.isInteger(v) && v >= n) n = v + 1;
+      if (Number.isInteger(v) && v > max) max = v;
     }
   } catch {
     /* empty */
   }
+  return max;
+}
+
+/**
+ * Claim the first free number ≥ `n` in `dir` (internal; exported for tests).
+ * Claims below the highest are pruned, so a free directory does not prove a
+ * number was never used: a hook that read the directory before two others
+ * claimed n and n+1 (pruning n) could claim n again. The highest claim is
+ * never removed, so a claim that is not the highest after `mkdir` may be a
+ * reused number: it is given up and the claim retried above the highest.
+ */
+export function claimSeqFrom(dir: string, n: number): number {
   for (;;) {
     try {
       fs.mkdirSync(path.join(dir, String(n)));
-      pruneSeq(dir, n);
-      return n;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
       n++;
+      continue;
     }
+    const max = maxClaim(dir);
+    if (max > n) {
+      n = max + 1;
+      continue;
+    }
+    pruneSeq(dir, n);
+    return n;
   }
 }
 
 /**
  * Remove the claim directories below `keep` (best effort). Only the highest
  * one is needed to continue the sequence, and it is never removed, so numbers
- * stay unique and increasing while the directory no longer grows per chunk.
+ * stay unique and increasing (see {@link claimSeqFrom}) while the directory
+ * no longer grows per chunk.
  */
 function pruneSeq(dir: string, keep: number): void {
   try {

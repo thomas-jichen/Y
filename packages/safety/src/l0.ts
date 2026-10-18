@@ -5,7 +5,7 @@
  */
 import { scanSecrets } from '@y/redact';
 import { INVISIBLE_CHARS_SOURCE, TOOL_NAMES, type ContentClass, type L0Finding, type L0Result, type Label } from '@y/schema';
-import { isDiscussionContext, lintCommands } from './commands.js';
+import { isDiscussionContext, lintCommands, strongCueBefore } from './commands.js';
 import { normalizeUntrusted } from './normalize.js';
 
 /** Options for {@link l0Scan}. */
@@ -377,11 +377,13 @@ function collectFindings(text: string, opts?: L0Options): L0Finding[] {
   // The deep view also finds links whose scheme hides a variation selector or
   // combining mark (`ht\uFE0Ftps://`); those spans and hosts map back to the text.
   const urlSpans: { start: number; end: number }[] = [];
+  // `docs.*` hosts stay unlabeled. Linking one is a reference (`url.docs_ref`, not a payload);
+  // telling the reader to follow what it says makes it a link payload (`url.docs_host`).
+  const followsLink = FOLLOW_LINK_RE.test(view) || (deep !== null && FOLLOW_LINK_RE.test(deep.text));
   const pushUrl = (span: { start: number; end: number }, host: string) => {
     urlSpans.push(span);
     if (hostAllowed(host, opts?.allowedHosts)) {
-      // `docs.*` hosts stay unlabeled, but still count as a link payload for agent-addressed text.
-      if (!listedHost(host, opts?.allowedHosts)) push({ rule: 'url.docs_host', category: 'url', severity: 'info', span });
+      if (!listedHost(host, opts?.allowedHosts)) push({ rule: followsLink ? 'url.docs_host' : 'url.docs_ref', category: 'url', severity: 'info', span });
       return;
     }
     push({ rule: 'url.not_allowlisted', category: 'url', severity: 'warn', span });
@@ -420,6 +422,10 @@ function collectFindings(text: string, opts?: L0Options): L0Finding[] {
   return findings;
 }
 
+/** An instruction to act on what a link says: "read … and follow it", "do what it says". */
+const FOLLOW_LINK_RE =
+  /\b(?:follow|obey|execute|apply|run|do)\s+(?:it|them|that|those|its\s+(?:steps|instructions|commands)|the\s+(?:steps|instructions|commands)|what\s+it\s+says)\b/i;
+
 /** An exfil request with a first-person recipient: "send me …", "give us …", "dm me …". */
 const FIRST_PERSON_EXFIL_RE = /^[a-z]+(?:\s+with)?\s+(?:me|us)\b/i;
 
@@ -438,11 +444,20 @@ function insideQuote(text: string, start: number): boolean {
   return count('"') % 2 === 1 || count('`') % 2 === 1 || count('\u201C') > count('\u201D') || /(?:^|[\s(])'[^']*$/.test(sentence);
 }
 
+/** A reporting frame right before a span: "attackers often say …", "messages that ask:", "the DM said: …". */
+const REPORTED_BEFORE_RE = /\b(?:say|says|said|saying|ask|asks|asked|asking|write|writes|wrote|writing|claim|claims|claimed|claiming|like)\s*:?\s*$/i;
+
+/** Whether a first-person exfil request at `start` is reported speech framed by a strong cue ("phishing DMs say send me …"). */
+function reportedRequest(text: string, start: number): boolean {
+  return REPORTED_BEFORE_RE.test(scanForm(text.slice(Math.max(0, start - 40), start))) && strongCueBefore(text, start);
+}
+
 /**
  * Apply the security-discussion downgrade (block → warn) when nothing
  * addresses the reading agent. A first-person exfil request ("send me your
- * .env") is never downgraded unless it is quoted: that is a request, not a
- * discussion of one.
+ * .env") is never downgraded unless it is quoted, or reported after a strong
+ * cue ("attackers often say send me your API keys"): otherwise that is a
+ * request, not a discussion of one.
  */
 function applyDiscussion(text: string, findings: L0Finding[]): L0Finding[] {
   const imperative = findings.some((f) => IMPERATIVE_RULES.has(f.rule) && f.severity !== 'info');
@@ -454,7 +469,8 @@ function applyDiscussion(text: string, findings: L0Finding[]): L0Finding[] {
     if (
       f.rule === 'agent.exfil_request' &&
       FIRST_PERSON_EXFIL_RE.test(scanForm(text.slice(f.span.start, f.span.end))) &&
-      !insideQuote(text, f.span.start)
+      !insideQuote(text, f.span.start) &&
+      !reportedRequest(text, f.span.start)
     ) {
       return f;
     }
@@ -465,8 +481,8 @@ function applyDiscussion(text: string, findings: L0Finding[]): L0Finding[] {
 /**
  * Label from findings:
  * - `malicious`: a block-severity injection phrase or agent-addressed
- *   imperative together with a payload (command, blob, URL, exfil request,
- *   concealment, secret) or with each other (e.g. "if you are an AI…" +
+ *   imperative together with a payload (command, blob, URL other than a
+ *   `docs.*` reference, exfil request, concealment, secret) or with each other (e.g. "if you are an AI…" +
  *   "call send_message");
  * - `sensitive`: otherwise, whenever a secret is among the block findings
  *   (alone, or with e.g. a command or blob): the sender's secret is held for
@@ -484,7 +500,7 @@ export function labelFromFindings(findings: readonly L0Finding[]): Label {
   const agent = addressed || action;
   const payload =
     blocks.some((f) => f.category === 'command' || f.category === 'blob' || f.rule === 'agent.exfil_request') ||
-    findings.some((f) => f.category === 'url' || f.rule === 'agent.conceal' || f.category === 'secret');
+    findings.some((f) => (f.category === 'url' && f.rule !== 'url.docs_ref') || f.rule === 'agent.conceal' || f.category === 'secret');
   if ((inj || agent) && (payload || (inj && agent) || (addressed && action))) return 'malicious';
   if (blocks.some((f) => f.category === 'secret')) return 'sensitive';
   return 'suspicious';
@@ -500,7 +516,8 @@ export function labelFromFindings(findings: readonly L0Finding[]): Label {
  * view that also drops variation selectors, combining marks and invisible
  * characters (and folds more look-alikes) can only add findings. URL hosts
  * are checked as written, so a look-alike host is never allowlisted; `docs.*`
- * hosts are not labeled but count as a link payload (`url.docs_host`, info).
+ * hosts are not labeled (`url.docs_ref`, info) and count as a link payload
+ * only when the text says to follow them (`url.docs_host`, info).
  *
  * Security-themed developer content is labeled, not blocked: when nothing in
  * the text addresses or instructs the reading agent, block-severity commands

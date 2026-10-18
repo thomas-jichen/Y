@@ -97,6 +97,9 @@ export function humanMessage(ctx: HookCtx, brief: CachedBrief | undefined): stri
   if (ctx.config.insecureApiUrl) {
     lines.push('Y: api_url is plain http:// to another machine, so Y sends nothing (your agent token would travel unencrypted). Set an https:// api_url in the plugin settings; http:// works for localhost only.');
   } else if (!ctx.config.token) lines.push('Y: no agent token configured. Set agent_token in the plugin settings.');
+  else if (ctx.config.cleartextApiUrl) {
+    lines.push('Y: api_url is plain http:// to another machine on your network, so your agent token and digests travel unencrypted on it. Use an https:// api_url, or set Y_ALLOW_INSECURE_URL=1 to accept this.');
+  }
   // Claude Code's own MCP client sends the agent token to mcp_url (.mcp.json); the hooks can't withhold it there.
   const mcpUrl = ctx.env.CLAUDE_PLUGIN_OPTION_MCP_URL?.trim();
   if (mcpUrl && isInsecureUrl(mcpUrl) && ctx.env.Y_ALLOW_INSECURE_URL !== '1') {

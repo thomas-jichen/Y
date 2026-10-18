@@ -38,9 +38,28 @@ function isInsecureUrl(raw) {
     return false;
   }
 }
+function isPrivateNetworkUrl(raw) {
+  if (!isInsecureUrl(raw)) return false;
+  try {
+    const host = new URL(raw).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    const v4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+    if (v4) {
+      const a = Number(v4[1]);
+      const b = Number(v4[2]);
+      return a === 10 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 || a === 169 && b === 254 || a === 100 && b >= 64 && b <= 127;
+    }
+    if (host.includes(":")) return /^f[cd][0-9a-f]{0,2}:/.test(host) || /^fe[89ab][0-9a-f]?:/.test(host);
+    if (!host.includes(".")) return true;
+    return /\.(?:lan|local|internal|home\.arpa|localdomain)$/.test(host);
+  } catch {
+    return false;
+  }
+}
 function loadConfig(env) {
   const apiUrl = (env.CLAUDE_PLUGIN_OPTION_API_URL?.trim() || "http://localhost:8787").replace(/\/+$/, "");
-  const insecureApiUrl = isInsecureUrl(apiUrl) && env.Y_ALLOW_INSECURE_URL !== "1";
+  const optOut = env.Y_ALLOW_INSECURE_URL === "1";
+  const cleartextApiUrl = !optOut && isPrivateNetworkUrl(apiUrl);
+  const insecureApiUrl = isInsecureUrl(apiUrl) && !optOut && !cleartextApiUrl;
   const token = insecureApiUrl ? void 0 : env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
   const dataDir = env.CLAUDE_PLUGIN_DATA || env.Y_DATA_DIR || path.join(os.homedir(), ".y");
   const sm = env.CLAUDE_PLUGIN_OPTION_SHARE_MODE;
@@ -48,7 +67,7 @@ function loadConfig(env) {
   const wk = env.CLAUDE_PLUGIN_OPTION_WAKE_ON_DM;
   const wakeOnDm = wk === "off" || wk === "owner-only" ? wk : "teammates";
   const headless = env.Y_MODE === "ci" || env.CI === "true" || env.CI === "1";
-  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT, ...insecureApiUrl ? { insecureApiUrl } : {} };
+  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT, ...insecureApiUrl ? { insecureApiUrl } : {}, ...cleartextApiUrl ? { cleartextApiUrl } : {} };
 }
 function isChild(env) {
   return env.Y_CHILD === "1";
