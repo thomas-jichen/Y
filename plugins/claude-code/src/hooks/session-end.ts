@@ -3,12 +3,14 @@
  * turn and tell the listener to stop (turn.ts), write a close-marker chunk and
  * spawn the detached `uploader --final`. No network.
  */
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { PermissionMode } from '@y/schema/common';
 import { IngestChunk } from '@y/schema/ingest';
 import { emptyStats } from '@y/schema/stats';
 import { failOpen, OK, type HookCtx, type HookResult } from '../context.js';
 import { writeChunk } from '../outbox.js';
-import { allocSeq, PLUGIN_VERSION } from '../runtime.js';
+import { allocSeq, PLUGIN_VERSION, safeSid } from '../runtime.js';
 import { markSessionEnded } from '../turn.js';
 
 export function sessionEnd(ctx: HookCtx): Promise<HookResult> {
@@ -17,6 +19,7 @@ export function sessionEnd(ctx: HookCtx): Promise<HookResult> {
     if (!sid) return OK;
     // Local only: the turn is over and this session's listener should stop (presence).
     markSessionEnded(ctx.paths, sid, ctx.now());
+    fs.rmSync(path.join(ctx.paths.state, `pulse-cursor-${safeSid(sid)}.json`), { force: true }); // the listener's own cursor
     if (ctx.config.shareMode === 'off') return OK;
     const pm = PermissionMode.safeParse(ctx.input.permission_mode);
     const chunk = IngestChunk.safeParse({

@@ -7,7 +7,7 @@ var __export = (target, all) => {
 
 // src/uploader.ts
 import * as fs3 from "node:fs";
-import * as path3 from "node:path";
+import * as path4 from "node:path";
 
 // ../../node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -826,10 +826,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path4) {
-  if (!path4)
+function getElementAtPath(obj, path5) {
+  if (!path5)
     return obj;
-  return path4.reduce((acc, key) => acc?.[key], obj);
+  return path5.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -1169,11 +1169,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path4, issues) {
+function prefixIssues(path5, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path4);
+    iss.path.unshift(path5);
     return iss;
   });
 }
@@ -1635,16 +1635,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path4 = []) => {
+  const processError = (error63, path5 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path4, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path5, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
       } else {
-        const fullpath = [...path4, ...issue2.path];
+        const fullpath = [...path5, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -1683,17 +1683,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path4 = []) => {
+  const processError = (error63, path5 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path4, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path5, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path4, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
       } else {
-        const fullpath = [...path4, ...issue2.path];
+        const fullpath = [...path5, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1732,8 +1732,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path4 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path4) {
+  const path5 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path5) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -18871,13 +18871,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path4 = ref.slice(1).split("/").filter(Boolean);
-  if (path4.length === 0) {
+  const path5 = ref.slice(1).split("/").filter(Boolean);
+  if (path5.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path4[0] === defsKey) {
-    const key = path4[1] === void 0 ? void 0 : decodeJSONPointerSegment(path4[1]);
+  if (path5[0] === defsKey) {
+    const key = path5[1] === void 0 ? void 0 : decodeJSONPointerSegment(path5[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -20493,16 +20493,28 @@ function readPluginVersion(env) {
   }
   return void 0;
 }
+var LOOPBACK_HOSTS = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+function isInsecureUrl(raw) {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:") return false;
+    const host = u.hostname.toLowerCase();
+    return !(LOOPBACK_HOSTS.has(host) || host.endsWith(".localhost") || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host));
+  } catch {
+    return false;
+  }
+}
 function loadConfig(env) {
-  const token = env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
   const apiUrl = (env.CLAUDE_PLUGIN_OPTION_API_URL?.trim() || "http://localhost:8787").replace(/\/+$/, "");
+  const insecureApiUrl = isInsecureUrl(apiUrl) && env.Y_ALLOW_INSECURE_URL !== "1";
+  const token = insecureApiUrl ? void 0 : env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
   const dataDir = env.CLAUDE_PLUGIN_DATA || env.Y_DATA_DIR || path.join(os.homedir(), ".y");
   const sm = env.CLAUDE_PLUGIN_OPTION_SHARE_MODE;
   const shareMode = sm === "off" || sm === "auto-team" ? sm : "stats";
   const wk = env.CLAUDE_PLUGIN_OPTION_WAKE_ON_DM;
   const wakeOnDm = wk === "off" || wk === "owner-only" ? wk : "teammates";
   const headless = env.Y_MODE === "ci" || env.CI === "true" || env.CI === "1";
-  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT };
+  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT, ...insecureApiUrl ? { insecureApiUrl } : {} };
 }
 function storedToken(env) {
   let raw;
@@ -20611,6 +20623,7 @@ function pidAlive(pid) {
 // src/outbox.ts
 import * as fs2 from "node:fs";
 import * as path2 from "node:path";
+var OUTBOX_CAP_BYTES = 50 * 1024 * 1024;
 function listChunks(p) {
   try {
     return fs2.readdirSync(p.outbox).filter((f) => f.endsWith(".json") && !f.startsWith(".")).sort().map((f) => path2.join(p.outbox, f));
@@ -20727,8 +20740,8 @@ var STRIPPED_KEYWORDS = /* @__PURE__ */ new Set([
   "minProperties",
   "maxProperties"
 ]);
-function reduce(node2, path4) {
-  if (Array.isArray(node2)) return node2.map((n, i) => reduce(n, `${path4}[${i}]`));
+function reduce(node2, path5) {
+  if (Array.isArray(node2)) return node2.map((n, i) => reduce(n, `${path5}[${i}]`));
   if (node2 === null || typeof node2 !== "object") return node2;
   const src2 = node2;
   const out = {};
@@ -20739,22 +20752,22 @@ function reduce(node2, path4) {
       continue;
     }
     if (key === "oneOf") {
-      out.anyOf = reduce(value, `${path4}.anyOf`);
+      out.anyOf = reduce(value, `${path5}.anyOf`);
       continue;
     }
     if (key === "properties" && value && typeof value === "object") {
       const props = {};
       for (const [prop, sub] of Object.entries(value)) {
-        props[prop] = reduce(sub, `${path4}.properties.${prop}`);
+        props[prop] = reduce(sub, `${path5}.properties.${prop}`);
       }
       out.properties = props;
       continue;
     }
-    out[key] = reduce(value, `${path4}.${key}`);
+    out[key] = reduce(value, `${path5}.${key}`);
   }
   if (out.type === "object") {
     if (src2.additionalProperties !== void 0 && src2.additionalProperties !== false) {
-      throw new TypeError(`toStructuredOutputSchema: open object (record) at ${path4}; use an array instead`);
+      throw new TypeError(`toStructuredOutputSchema: open object (record) at ${path5}; use an array instead`);
     }
     out.additionalProperties = false;
     const props = Object.keys(out.properties ?? {});
@@ -20762,7 +20775,7 @@ function reduce(node2, path4) {
     const missing = props.filter((p) => !required2.has(p));
     if (missing.length > 0) {
       throw new TypeError(
-        `toStructuredOutputSchema: optional properties at ${path4} (${missing.join(", ")}); make them required and nullable`
+        `toStructuredOutputSchema: optional properties at ${path5} (${missing.join(", ")}); make them required and nullable`
       );
     }
   }
@@ -22949,6 +22962,86 @@ var PLACEHOLDER_PATTERNS = {
 };
 
 // src/state.ts
+import * as path3 from "node:path";
+function parsePolicy(raw) {
+  if (!raw || typeof raw !== "object") return void 0;
+  const r = raw;
+  const capture = BriefPolicy.shape.capture.safeParse(r.capture);
+  if (!capture.success) return void 0;
+  const salt = BriefPolicy.shape.repoKeySalt.safeParse(r.repoKeySalt);
+  const wake = BriefPolicy.shape.wakeOnDm.safeParse(r.wakeOnDm);
+  return {
+    capture: capture.data,
+    ...salt.success && salt.data ? { repoKeySalt: salt.data } : {},
+    ...wake.success ? { wakeOnDm: wake.data } : {}
+  };
+}
+var ALL_ENGAGED = { pushPaths: true, networkContent: true, apply: true, ingest: true };
+function arr(v) {
+  return Array.isArray(v) ? v : [];
+}
+function sanitizeBrief(raw, now) {
+  if (!raw || typeof raw !== "object") return void 0;
+  const r = raw;
+  if (r.v !== 1) return void 0;
+  const tokenState = TokenState.safeParse(r.tokenState);
+  if (!tokenState.success) return void 0;
+  const ks = KillSwitches.safeParse(r.killSwitches);
+  const policy = parsePolicy(r.policy);
+  const pulseToken = PulseToken.safeParse(r.pulseToken);
+  const realtime = RealtimeChannel.safeParse(r.realtime);
+  const pointers = tokenState.data === "ok" ? arr(r.pointers).slice(0, 10).flatMap((p) => {
+    const v = Pointer.safeParse(p);
+    return v.success ? [v.data] : [];
+  }) : [];
+  const humanNotices = arr(r.humanNotices).slice(0, 5).flatMap((n) => {
+    const v = HumanNotice.safeParse(n);
+    return v.success ? [v.data] : [];
+  });
+  return {
+    fetchedAt: now,
+    tokenState: tokenState.data,
+    pointers,
+    killSwitches: ks.success ? ks.data : ALL_ENGAGED,
+    ...policy ? { policy } : {},
+    humanNotices,
+    ...pulseToken.success ? { pulseToken: pulseToken.data } : {},
+    ...realtime.success && tokenState.data === "ok" ? { realtime: realtime.data } : {}
+  };
+}
+function readBrief(p) {
+  const b = readJson(p.brief);
+  if (!b || typeof b.fetchedAt !== "number") return void 0;
+  const again = sanitizeBrief({ ...b, v: 1 }, b.fetchedAt);
+  if (!again) return void 0;
+  const live = readLiveKillSwitches(p);
+  return live && live.at >= again.fetchedAt ? { ...again, killSwitches: live.killSwitches } : again;
+}
+function killSwitchesFile(p) {
+  return path3.join(p.state, "kill-switches.json");
+}
+function readLiveKillSwitches(p) {
+  const raw = readJson(killSwitchesFile(p));
+  if (!raw || typeof raw.at !== "number" || !Number.isFinite(raw.at)) return void 0;
+  const ks = KillSwitches.safeParse(raw.killSwitches);
+  return ks.success ? { killSwitches: ks.data, at: raw.at } : void 0;
+}
+function killSwitchesSeenAt(p) {
+  const b = readJson(p.brief);
+  const fetchedAt = typeof b?.fetchedAt === "number" ? b.fetchedAt : void 0;
+  const live = readLiveKillSwitches(p)?.at;
+  if (fetchedAt === void 0) return void 0;
+  return Math.max(fetchedAt, live ?? 0);
+}
+function mergeKillSwitches(p, ks, now = Date.now()) {
+  const b = readBrief(p);
+  if (!b) return;
+  const next = { pushPaths: ks.pushPaths, networkContent: ks.networkContent, apply: ks.apply, ingest: ks.ingest };
+  writeJsonAtomic(killSwitchesFile(p), { killSwitches: next, at: now });
+}
+function setupSentFile(p) {
+  return path3.join(p.state, "setup-sent.json");
+}
 function readPulse(p) {
   const s = readJson(p.pulse);
   if (!s || typeof s !== "object") return { updatedAt: 0 };
@@ -22967,6 +23060,24 @@ function updatePulse(p, patch, now) {
 
 // src/uploader.ts
 var MAX_ATTEMPTS = 10;
+var MAX_NETWORK_ERRORS_PER_RUN = 6;
+var MAX_NETWORK_ATTEMPTS = 20;
+var MAX_REDRIVES = 3;
+var REDRIVE_AFTER_MS = 10 * 6e4;
+var REDRIVE_MAX_AGE_MS = 7 * 24 * 36e5;
+var KILL_SWITCH_REFRESH_MS = 6e4;
+var DEFINITIVE_REJECTIONS = /* @__PURE__ */ new Set([400, 413, 422]);
+var CONNECTIVITY_CODES = /* @__PURE__ */ new Set([
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ENETUNREACH",
+  "ENETDOWN",
+  "EHOSTUNREACH",
+  "EHOSTDOWN",
+  "EADDRNOTAVAIL",
+  "UND_ERR_CONNECT_TIMEOUT"
+]);
 var LOCK_STALE_MS = 5 * 6e4;
 function acquireLock(p, now) {
   ensureDir(p.outbox);
@@ -22992,18 +23103,107 @@ function acquireLock(p, now) {
   }
 }
 function attemptsFile(chunk) {
-  return path3.join(path3.dirname(chunk), `.${path3.basename(chunk)}.attempts`);
+  return path4.join(path4.dirname(chunk), `.${path4.basename(chunk)}.attempts`);
+}
+function readAttempts(chunk) {
+  const a = readJson(attemptsFile(chunk));
+  return { n: typeof a?.n === "number" ? a.n : 0, ...typeof a?.net === "number" ? { net: a.net } : {} };
 }
 function bumpAttempts(chunk) {
-  const f = attemptsFile(chunk);
-  const n = (readJson(f)?.n ?? 0) + 1;
-  writeJsonAtomic(f, { n });
+  const a = readAttempts(chunk);
+  const n = a.n + 1;
+  writeJsonAtomic(attemptsFile(chunk), { ...a, n });
   return n;
 }
-function moveToDead(p, chunk) {
+function bumpNetworkAttempts(chunk) {
+  const a = readAttempts(chunk);
+  const net = (a.net ?? 0) + 1;
+  writeJsonAtomic(attemptsFile(chunk), { ...a, net });
+  return net;
+}
+function deadMetaFile(p, name) {
+  return path4.join(p.outbox, ".dead-meta", name);
+}
+function readDeadMeta(p, name) {
+  const m = readJson(deadMetaFile(p, name));
+  if (!m || typeof m.deadAt !== "number" || typeof m.redrives !== "number") return void 0;
+  return m;
+}
+function moveToDead(p, chunk, cls, now) {
   ensureDir(p.dead);
-  fs3.renameSync(chunk, path3.join(p.dead, path3.basename(chunk)));
+  const name = path4.basename(chunk);
+  fs3.renameSync(chunk, path4.join(p.dead, name));
   fs3.rmSync(attemptsFile(chunk), { force: true });
+  try {
+    ensureDir(path4.dirname(deadMetaFile(p, name)));
+    writeJsonAtomic(deadMetaFile(p, name), { class: cls, deadAt: now, redrives: readDeadMeta(p, name)?.redrives ?? 0 });
+  } catch {
+  }
+}
+function chunkTime(name) {
+  const m = /^(\d{13})-/.exec(name);
+  return m ? Number(m[1]) : void 0;
+}
+function redriveDead(p, now) {
+  let names;
+  try {
+    names = fs3.readdirSync(p.dead).filter((f) => f.endsWith(".json") && !f.startsWith("."));
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  for (const name of names) {
+    const meta3 = readDeadMeta(p, name);
+    const born = chunkTime(name);
+    if (!meta3 || meta3.class !== "5xx" || meta3.redrives >= MAX_REDRIVES) continue;
+    if (now - meta3.deadAt < REDRIVE_AFTER_MS || born === void 0 || now - born > REDRIVE_MAX_AGE_MS) continue;
+    try {
+      fs3.renameSync(path4.join(p.dead, name), path4.join(p.outbox, name));
+      writeJsonAtomic(deadMetaFile(p, name), { ...meta3, redrives: meta3.redrives + 1 });
+      n++;
+    } catch {
+    }
+  }
+  return n;
+}
+function isConnectivityError(e) {
+  const err = e;
+  if (!err || typeof err !== "object") return false;
+  if (err.name === "AbortError" || err.name === "TimeoutError") return false;
+  const code = typeof err.code === "string" ? err.code : typeof err.cause?.code === "string" ? err.cause.code : void 0;
+  if (code) return CONNECTIVITY_CODES.has(code);
+  return err.name === "TypeError" && err.cause?.name !== "AbortError";
+}
+function dropRejectedSnapshot(p, file2, body) {
+  const b = body;
+  if (!b || typeof b !== "object" || !b.setup || typeof b.setup.hash !== "string" || !b.setup.snapshot) return false;
+  try {
+    writeJsonAtomic(file2, { ...b, setup: { hash: b.setup.hash } });
+    writeJsonAtomic(setupSentFile(p), { hash: b.setup.hash, rejected: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function refreshKillSwitches(o, token, now) {
+  const seen = killSwitchesSeenAt(o.paths);
+  if (seen === void 0 || now - seen < KILL_SWITCH_REFRESH_MS) return;
+  try {
+    const q = new URLSearchParams({ pluginVersion: PLUGIN_VERSION });
+    const res = await httpJson(o.fetch, "GET", `${o.config.apiUrl}/api/v1/agent/brief?${q}`, { token, timeoutMs: 5e3 });
+    if (res.status < 200 || res.status >= 300 || !res.body || typeof res.body !== "object") return;
+    const ks = KillSwitches.safeParse(res.body.killSwitches);
+    if (ks.success) mergeKillSwitches(o.paths, ks.data, now);
+  } catch {
+  }
+}
+function recordSetupSent(p, body) {
+  const setup = body?.setup;
+  if (!setup || typeof setup.hash !== "string" || !setup.snapshot) return;
+  try {
+    writeJsonAtomic(setupSentFile(p), { hash: setup.hash });
+  } catch {
+  }
 }
 async function drainOutbox(o) {
   const now = o.now ?? Date.now;
@@ -23013,10 +23213,14 @@ async function drainOutbox(o) {
   const budget = o.budgetMs ?? 9e4;
   const summary = { sent: 0, dead: 0, remaining: 0, locked: false };
   if (!o.config.token) return { ...summary, remaining: listChunks(o.paths).length };
+  if (listChunks(o.paths).length > 0) await refreshKillSwitches(o, o.config.token, start);
+  if (readBrief(o.paths)?.killSwitches.ingest) return { ...summary, remaining: listChunks(o.paths).length };
   if (!acquireLock(o.paths, start)) return { ...summary, locked: true, remaining: listChunks(o.paths).length };
   let token = o.config.token;
   let refreshed = false;
+  let netErrors = 0;
   try {
+    redriveDead(o.paths, start);
     for (; ; ) {
       const next = listChunks(o.paths)[0];
       if (!next) break;
@@ -23025,13 +23229,14 @@ async function drainOutbox(o) {
       try {
         body = JSON.parse(fs3.readFileSync(next, "utf8"));
       } catch {
-        moveToDead(o.paths, next);
+        moveToDead(o.paths, next, "invalid", now());
         summary.dead++;
         continue;
       }
       let status = 0;
       let retryAfterS;
       let resBody;
+      let networkError;
       try {
         const res = await httpJson(o.fetch, "POST", `${o.config.apiUrl}/api/v1/ingest`, {
           token,
@@ -23042,17 +23247,35 @@ async function drainOutbox(o) {
         retryAfterS = res.retryAfterS;
         resBody = res.body;
       } catch (e) {
-        logLine(o.config.dataDir, "uploader", `network error: ${e?.message ?? e}`.slice(0, 300));
+        networkError = isConnectivityError(e) ? "offline" : "counted";
+        logLine(o.config.dataDir, "uploader", `network error (${networkError}): ${e?.message ?? e}`.slice(0, 300));
       }
+      if (networkError) {
+        if (networkError === "counted" && bumpNetworkAttempts(next) >= MAX_NETWORK_ATTEMPTS) {
+          moveToDead(o.paths, next, "network", now());
+          summary.dead++;
+          netErrors = 0;
+          continue;
+        }
+        netErrors++;
+        if (netErrors >= MAX_NETWORK_ERRORS_PER_RUN) break;
+        const delay2 = Math.min(3e4, backoff * 2 ** (netErrors - 1));
+        if (now() - start + delay2 > budget) break;
+        await wait(delay2);
+        continue;
+      }
+      netErrors = 0;
       if (status >= 200 && status < 300) {
         fs3.rmSync(next, { force: true });
         fs3.rmSync(attemptsFile(next), { force: true });
         summary.sent++;
+        fs3.rmSync(deadMetaFile(o.paths, path4.basename(next)), { force: true });
+        recordSetupSent(o.paths, body);
         const r = IngestResponse.safeParse(resBody);
         if (r.success) updatePulse(o.paths, { cursor: r.data.pulse.cursor, unreadTotal: r.data.pulse.unread }, now());
         continue;
       }
-      if (status) logLine(o.config.dataDir, "uploader", `ingest ${path3.basename(next)} → HTTP ${status}`);
+      if (status) logLine(o.config.dataDir, "uploader", `ingest ${path4.basename(next)} → HTTP ${status}`);
       if (status === 401 && !refreshed) {
         refreshed = true;
         const fresh = (o.currentToken ?? (() => storedToken(process.env)))();
@@ -23068,9 +23291,13 @@ async function drainOutbox(o) {
         await wait(delay2);
         continue;
       }
+      if (DEFINITIVE_REJECTIONS.has(status) && dropRejectedSnapshot(o.paths, next, body)) {
+        logLine(o.config.dataDir, "uploader", `ingest ${path4.basename(next)} rejected with a setup snapshot: retrying without it`);
+        continue;
+      }
       const n = bumpAttempts(next);
       if (n >= MAX_ATTEMPTS) {
-        moveToDead(o.paths, next);
+        moveToDead(o.paths, next, status >= 500 || status === 408 ? "5xx" : "rejected", now());
         summary.dead++;
         continue;
       }

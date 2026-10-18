@@ -13,7 +13,7 @@ import type { HumanNotice } from '@y/schema/brief';
 import type { Pointer } from '@y/schema/pointers';
 import { contextOutput, failOpen, remaining, type HookCtx, type HookResult } from '../context.js';
 import * as path from 'node:path';
-import { autoUpdateOffFor, httpJson, PLUGIN_VERSION, readJson, writeJsonAtomic } from '../runtime.js';
+import { autoUpdateOffFor, httpJson, isInsecureUrl, PLUGIN_VERSION, readJson, writeJsonAtomic } from '../runtime.js';
 import { loadClaims, localDependencies, matchBuilders } from '../builders.js';
 import { readBrief, readPulse, renderBlock, sanitizeBrief, writeBrief, pushPathsAllowed, type CachedBrief } from '../state.js';
 
@@ -94,7 +94,14 @@ export function safeNoticeUrl(raw: string, ctx: HookCtx): string | undefined {
 
 export function humanMessage(ctx: HookCtx, brief: CachedBrief | undefined): string | undefined {
   const lines: string[] = [];
-  if (!ctx.config.token) lines.push('Y: no agent token configured. Set agent_token in the plugin settings.');
+  if (ctx.config.insecureApiUrl) {
+    lines.push('Y: api_url is plain http:// to another machine, so Y sends nothing (your agent token would travel unencrypted). Set an https:// api_url in the plugin settings; http:// works for localhost only.');
+  } else if (!ctx.config.token) lines.push('Y: no agent token configured. Set agent_token in the plugin settings.');
+  // Claude Code's own MCP client sends the agent token to mcp_url (.mcp.json); the hooks can't withhold it there.
+  const mcpUrl = ctx.env.CLAUDE_PLUGIN_OPTION_MCP_URL?.trim();
+  if (mcpUrl && isInsecureUrl(mcpUrl) && ctx.env.Y_ALLOW_INSECURE_URL !== '1') {
+    lines.push('Y: mcp_url is plain http:// to another machine, so the Y tools send your agent token unencrypted. Set an https:// mcp_url in the plugin settings; http:// works for localhost only.');
+  }
   if (brief) {
     for (const n of brief.humanNotices) {
       const url = safeNoticeUrl(n.url, ctx);

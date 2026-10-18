@@ -27,16 +27,28 @@ function readPluginVersion(env) {
   }
   return void 0;
 }
+var LOOPBACK_HOSTS = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+function isInsecureUrl(raw) {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:") return false;
+    const host = u.hostname.toLowerCase();
+    return !(LOOPBACK_HOSTS.has(host) || host.endsWith(".localhost") || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host));
+  } catch {
+    return false;
+  }
+}
 function loadConfig(env) {
-  const token = env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
   const apiUrl = (env.CLAUDE_PLUGIN_OPTION_API_URL?.trim() || "http://localhost:8787").replace(/\/+$/, "");
+  const insecureApiUrl = isInsecureUrl(apiUrl) && env.Y_ALLOW_INSECURE_URL !== "1";
+  const token = insecureApiUrl ? void 0 : env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || void 0;
   const dataDir = env.CLAUDE_PLUGIN_DATA || env.Y_DATA_DIR || path.join(os.homedir(), ".y");
   const sm = env.CLAUDE_PLUGIN_OPTION_SHARE_MODE;
   const shareMode = sm === "off" || sm === "auto-team" ? sm : "stats";
   const wk = env.CLAUDE_PLUGIN_OPTION_WAKE_ON_DM;
   const wakeOnDm = wk === "off" || wk === "owner-only" ? wk : "teammates";
   const headless = env.Y_MODE === "ci" || env.CI === "true" || env.CI === "1";
-  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT };
+  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT, ...insecureApiUrl ? { insecureApiUrl } : {} };
 }
 function isChild(env) {
   return env.Y_CHILD === "1";
@@ -216,8 +228,8 @@ async function failOpen(ctx, name, fn) {
 }
 
 // src/listener.ts
-import * as fs3 from "node:fs";
-import * as path4 from "node:path";
+import * as fs4 from "node:fs";
+import * as path5 from "node:path";
 
 // ../../node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -1036,10 +1048,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path5) {
-  if (!path5)
+function getElementAtPath(obj, path6) {
+  if (!path6)
     return obj;
-  return path5.reduce((acc, key) => acc?.[key], obj);
+  return path6.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -1379,11 +1391,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path5, issues) {
+function prefixIssues(path6, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path5);
+    iss.path.unshift(path6);
     return iss;
   });
 }
@@ -1845,16 +1857,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path5 = []) => {
+  const processError = (error63, path6 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path5, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path6, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
       } else {
-        const fullpath = [...path5, ...issue2.path];
+        const fullpath = [...path6, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -1893,17 +1905,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path5 = []) => {
+  const processError = (error63, path6 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path5, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path6, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path5, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path6, ...issue2.path]);
       } else {
-        const fullpath = [...path5, ...issue2.path];
+        const fullpath = [...path6, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1942,8 +1954,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path5 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path5) {
+  const path6 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path6) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -19081,13 +19093,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path5 = ref.slice(1).split("/").filter(Boolean);
-  if (path5.length === 0) {
+  const path6 = ref.slice(1).split("/").filter(Boolean);
+  if (path6.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path5[0] === defsKey) {
-    const key = path5[1] === void 0 ? void 0 : decodeJSONPointerSegment(path5[1]);
+  if (path6[0] === defsKey) {
+    const key = path6[1] === void 0 ? void 0 : decodeJSONPointerSegment(path6[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -20926,8 +20938,8 @@ var STRIPPED_KEYWORDS = /* @__PURE__ */ new Set([
   "minProperties",
   "maxProperties"
 ]);
-function reduce(node2, path5) {
-  if (Array.isArray(node2)) return node2.map((n, i) => reduce(n, `${path5}[${i}]`));
+function reduce(node2, path6) {
+  if (Array.isArray(node2)) return node2.map((n, i) => reduce(n, `${path6}[${i}]`));
   if (node2 === null || typeof node2 !== "object") return node2;
   const src2 = node2;
   const out = {};
@@ -20938,22 +20950,22 @@ function reduce(node2, path5) {
       continue;
     }
     if (key === "oneOf") {
-      out.anyOf = reduce(value, `${path5}.anyOf`);
+      out.anyOf = reduce(value, `${path6}.anyOf`);
       continue;
     }
     if (key === "properties" && value && typeof value === "object") {
       const props = {};
       for (const [prop, sub] of Object.entries(value)) {
-        props[prop] = reduce(sub, `${path5}.properties.${prop}`);
+        props[prop] = reduce(sub, `${path6}.properties.${prop}`);
       }
       out.properties = props;
       continue;
     }
-    out[key] = reduce(value, `${path5}.${key}`);
+    out[key] = reduce(value, `${path6}.${key}`);
   }
   if (out.type === "object") {
     if (src2.additionalProperties !== void 0 && src2.additionalProperties !== false) {
-      throw new TypeError(`toStructuredOutputSchema: open object (record) at ${path5}; use an array instead`);
+      throw new TypeError(`toStructuredOutputSchema: open object (record) at ${path6}; use an array instead`);
     }
     out.additionalProperties = false;
     const props = Object.keys(out.properties ?? {});
@@ -20961,7 +20973,7 @@ function reduce(node2, path5) {
     const missing = props.filter((p) => !required2.has(p));
     if (missing.length > 0) {
       throw new TypeError(
-        `toStructuredOutputSchema: optional properties at ${path5} (${missing.join(", ")}); make them required and nullable`
+        `toStructuredOutputSchema: optional properties at ${path6} (${missing.join(", ")}); make them required and nullable`
       );
     }
   }
@@ -23270,13 +23282,19 @@ function isRenderedPointer(text) {
 }
 
 // src/state.ts
+import * as path2 from "node:path";
 function parsePolicy(raw) {
   if (!raw || typeof raw !== "object") return void 0;
   const r = raw;
   const capture = BriefPolicy.shape.capture.safeParse(r.capture);
   if (!capture.success) return void 0;
   const salt = BriefPolicy.shape.repoKeySalt.safeParse(r.repoKeySalt);
-  return { capture: capture.data, ...salt.success && salt.data ? { repoKeySalt: salt.data } : {} };
+  const wake = BriefPolicy.shape.wakeOnDm.safeParse(r.wakeOnDm);
+  return {
+    capture: capture.data,
+    ...salt.success && salt.data ? { repoKeySalt: salt.data } : {},
+    ...wake.success ? { wakeOnDm: wake.data } : {}
+  };
 }
 var ALL_ENGAGED = { pushPaths: true, networkContent: true, apply: true, ingest: true };
 function arr(v) {
@@ -23315,7 +23333,24 @@ function readBrief(p) {
   const b = readJson(p.brief);
   if (!b || typeof b.fetchedAt !== "number") return void 0;
   const again = sanitizeBrief({ ...b, v: 1 }, b.fetchedAt);
-  return again;
+  if (!again) return void 0;
+  const live = readLiveKillSwitches(p);
+  return live && live.at >= again.fetchedAt ? { ...again, killSwitches: live.killSwitches } : again;
+}
+function killSwitchesFile(p) {
+  return path2.join(p.state, "kill-switches.json");
+}
+function readLiveKillSwitches(p) {
+  const raw = readJson(killSwitchesFile(p));
+  if (!raw || typeof raw.at !== "number" || !Number.isFinite(raw.at)) return void 0;
+  const ks = KillSwitches.safeParse(raw.killSwitches);
+  return ks.success ? { killSwitches: ks.data, at: raw.at } : void 0;
+}
+function mergeKillSwitches(p, ks, now = Date.now()) {
+  const b = readBrief(p);
+  if (!b) return;
+  const next = { pushPaths: ks.pushPaths, networkContent: ks.networkContent, apply: ks.apply, ingest: ks.ingest };
+  writeJsonAtomic(killSwitchesFile(p), { killSwitches: next, at: now });
 }
 function readPulse(p) {
   const s = readJson(p.pulse);
@@ -23349,13 +23384,13 @@ function fallbackText() {
 
 // src/turn.ts
 import * as fs2 from "node:fs";
-import * as path2 from "node:path";
+import * as path3 from "node:path";
 var TURN_IDLE_MS = 10 * 6e4;
 function turnFile(p, sid) {
-  return path2.join(p.state, `turn-${safeSid(sid)}.json`);
+  return path3.join(p.state, `turn-${safeSid(sid)}.json`);
 }
 function endedFile(p, sid) {
-  return path2.join(p.state, `ended-${safeSid(sid)}.json`);
+  return path3.join(p.state, `ended-${safeSid(sid)}.json`);
 }
 function startTurn(p, sid, now) {
   writeJsonAtomic(turnFile(p, sid), { since: now });
@@ -23385,14 +23420,18 @@ function clearSessionEnded(p, sid) {
 }
 
 // src/wake-budget.ts
-import * as path3 from "node:path";
+import * as path4 from "node:path";
+import * as fs3 from "node:fs";
 var WAKE_MIN_INTERVAL_MS = 6e4;
 var WAKE_MAX_PER_HOUR = 6;
 var WAKE_MAX_PER_DAY = 30;
 var HOUR_MS = 36e5;
 var DAY_MS = 24 * HOUR_MS;
+var WAKE_LOCK_STALE_MS = 5e3;
+var WAKE_LOCK_SPIN_MS = 150;
+var SPIN_STEP_MS = 5;
 function budgetFile(p) {
-  return path3.join(p.state, "wake-budget.json");
+  return path4.join(p.state, "wake-budget.json");
 }
 function readWakes(p, now) {
   const f = readJson(budgetFile(p));
@@ -23407,14 +23446,51 @@ function checkBudget(wakes, now) {
   if (recent.length >= WAKE_MAX_PER_DAY) return { allow: false, reason: "day" };
   return { allow: true };
 }
-function takeWake(p, now) {
-  const wakes = readWakes(p, now);
-  const v = checkBudget(wakes, now);
-  if (v.allow) writeJsonAtomic(budgetFile(p), { wakes: [...wakes, now] });
-  return v;
+function lockDir(p) {
+  return path4.join(p.state, "wake-budget.lock");
+}
+function acquireWakeLock(p) {
+  const dir = lockDir(p);
+  fs3.mkdirSync(p.state, { recursive: true, mode: 448 });
+  try {
+    fs3.mkdirSync(dir);
+    return true;
+  } catch {
+    try {
+      if (Date.now() - fs3.statSync(dir).mtimeMs < WAKE_LOCK_STALE_MS) return false;
+      fs3.rmSync(dir, { recursive: true, force: true });
+      fs3.mkdirSync(dir);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+function sleepSync(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+  }
+}
+function takeWake(p, now, spinMs = WAKE_LOCK_SPIN_MS) {
+  const until = Date.now() + spinMs;
+  let locked = acquireWakeLock(p);
+  while (!locked && Date.now() < until) {
+    sleepSync(SPIN_STEP_MS);
+    locked = acquireWakeLock(p);
+  }
+  if (!locked) return { allow: false, reason: "busy" };
+  try {
+    const wakes = readWakes(p, now);
+    const v = checkBudget(wakes, now);
+    if (v.allow) writeJsonAtomic(budgetFile(p), { wakes: [...wakes, now] });
+    return v;
+  } finally {
+    fs3.rmSync(lockDir(p), { recursive: true, force: true });
+  }
 }
 function pendingFile(p, sid) {
-  return path3.join(p.state, `pending-wake-${safeSid(sid)}.json`);
+  return path4.join(p.state, `pending-wake-${safeSid(sid)}.json`);
 }
 function parkPendingWake(p, sid, pointer, now) {
   const v = Pointer.safeParse(pointer);
@@ -23431,12 +23507,28 @@ var SAFETY_POLL_MS = 3e5;
 var SLOW_POLL_MS = 6e4;
 var ACTIVE_POLL_MS = PULSE_ACTIVE_EVERY_S * 1e3;
 var TURN_CHECK_MS = 15e3;
+var MIN_IDLE_POLL_MS = 2e3;
+var MAX_IDLE_POLL_MS = 3e4;
+var MIN_BUSY_POLL_MS = 250;
+var MAX_BUSY_POLL_MS = 5e3;
+var BUSY_POLLS_FREE = 3;
+var MIN_RING_POLL_MS = 2e3;
+var MAX_RING_POLL_MS = 6e4;
+var CURSOR_RE = /^[A-Za-z0-9_\-.~=]{1,512}$/;
 var SID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 function listenerFile(ctx, sid) {
-  return path4.join(ctx.paths.state, `listener-${safeSid(sid)}.json`);
+  return path5.join(ctx.paths.state, `listener-${safeSid(sid)}.json`);
+}
+function cursorFile(ctx, sid) {
+  return path5.join(ctx.paths.state, `pulse-cursor-${safeSid(sid)}.json`);
+}
+function sessionCursor(ctx, sid) {
+  const own2 = readJson(cursorFile(ctx, sid))?.cursor;
+  if (typeof own2 === "string" && CURSOR_RE.test(own2)) return own2;
+  return readPulse(ctx.paths).cursor;
 }
 function needsListenerFile(ctx, sid) {
-  return path4.join(ctx.paths.state, `needs-listener-${safeSid(sid)}.json`);
+  return path5.join(ctx.paths.state, `needs-listener-${safeSid(sid)}.json`);
 }
 function sessionId(ctx) {
   const sid = typeof ctx.input.session_id === "string" ? ctx.input.session_id : void 0;
@@ -23458,7 +23550,7 @@ function claimListener(ctx, sid) {
 function release(ctx, sid, mine) {
   const file2 = listenerFile(ctx, sid);
   const cur = readJson(file2);
-  if (cur && cur.pid === mine.pid && cur.generation === mine.generation) fs3.rmSync(file2, { force: true });
+  if (cur && cur.pid === mine.pid && cur.generation === mine.generation) fs4.rmSync(file2, { force: true });
 }
 function superseded(ctx, sid, mine) {
   const cur = readJson(listenerFile(ctx, sid));
@@ -23499,7 +23591,7 @@ function markNeedsListener(ctx) {
     if (!listeningEnabled(ctx)) return OK;
     const file2 = needsListenerFile(ctx, sid);
     if (liveListener(ctx, sid)) {
-      fs3.rmSync(file2, { force: true });
+      fs4.rmSync(file2, { force: true });
       return OK;
     }
     if (!readJson(file2)) writeJsonAtomic(file2, { since: ctx.now() });
@@ -23511,6 +23603,10 @@ function isRealNews(pointer, unread) {
   if (pointer?.template_id === "P1") return unread.dm > 0;
   if (pointer?.template_id === "P4") return unread.ownerInstructions > 0;
   return unread.dm + unread.ownerInstructions > 0;
+}
+function localOwnerOnlyParks(ctx, pointer) {
+  if (ctx.config.wakeOnDm !== "owner-only" || pointer?.template_id === "P4") return false;
+  return readBrief(ctx.paths)?.policy?.wakeOnDm !== "owner-only";
 }
 function pickMode(ctx, o) {
   const rt = readBrief(ctx.paths)?.realtime;
@@ -23529,7 +23625,7 @@ function listen(ctx, o = {}) {
       if (isTurnActive(ctx, sid)) await reportTurn(ctx, sid);
       return OK;
     }
-    fs3.rmSync(needsListenerFile(ctx, sid), { force: true });
+    fs4.rmSync(needsListenerFile(ctx, sid), { force: true });
     const wait = o.sleep ?? sleep;
     const endAt = ctx.now() + (o.runMs ?? LISTEN_TIMEOUT_MS - EXIT_MARGIN_MS);
     const backoffMin = o.backoffMinMs ?? BACKOFF_MIN_MS;
@@ -23546,6 +23642,13 @@ function listen(ctx, o = {}) {
     openBell();
     let backoff = backoffMin;
     let bellBackoff = backoffMin;
+    let idleFloor = MIN_IDLE_POLL_MS;
+    let busyFloor = MIN_BUSY_POLL_MS;
+    let busyStreak = 0;
+    let ringFloor = MIN_RING_POLL_MS;
+    let rang = false;
+    let lastPollAt = 0;
+    let ringThrottled = false;
     try {
       while (ctx.now() < endAt) {
         if (superseded(ctx, sid, mine)) return OK;
@@ -23553,13 +23656,28 @@ function listen(ctx, o = {}) {
           clearSessionEnded(ctx.paths, sid);
           return OK;
         }
+        if (rang) {
+          rang = false;
+          const since = ctx.now() - lastPollAt;
+          if (since < ringFloor) {
+            if (ringThrottled) ringFloor = Math.min(MAX_RING_POLL_MS, ringFloor * 2);
+            ringThrottled = true;
+            const gap = ringFloor - since;
+            if (ctx.now() + gap >= endAt) break;
+            await wait(gap);
+            continue;
+          }
+          ringThrottled = false;
+          ringFloor = MIN_RING_POLL_MS;
+        }
         const left = endAt - ctx.now();
         const waitS = mode.kind === "longpoll" ? Math.min(PULSE_MAX_WAIT_S, Math.floor((left - 2e3) / 1e3)) : 0;
         if (mode.kind === "longpoll" && waitS < 1) break;
         const active = isTurnActive(ctx, sid);
         const polledAt = ctx.now();
+        lastPollAt = polledAt;
         const q = new URLSearchParams({ wait: String(waitS), sessionId: sid, active: active ? "1" : "0" });
-        const cursor = readPulse(ctx.paths).cursor;
+        const cursor = sessionCursor(ctx, sid);
         if (cursor) q.set("cursor", cursor);
         let delay = 0;
         let ok = false;
@@ -23575,8 +23693,10 @@ function listen(ctx, o = {}) {
             const r = res.body;
             const unread = UnreadCounts.safeParse(r.unread);
             const ks = KillSwitches.safeParse(r.killSwitches);
-            const newCursor = typeof r.cursor === "string" && /^[A-Za-z0-9_\-.~=]{1,512}$/.test(r.cursor) ? r.cursor : void 0;
+            const newCursor = typeof r.cursor === "string" && CURSOR_RE.test(r.cursor) ? r.cursor : void 0;
             updatePulse(ctx.paths, { ...newCursor ? { cursor: newCursor } : {}, ...unread.success ? { unread: unread.data } : {} }, ctx.now());
+            if (newCursor) writeJsonAtomic(cursorFile(ctx, sid), { cursor: newCursor });
+            if (ks.success) mergeKillSwitches(ctx.paths, ks.data, ctx.now());
             const wake = r.wake;
             const pushOk = ks.success && !ks.data.pushPaths;
             if (superseded(ctx, sid, mine)) return OK;
@@ -23584,25 +23704,48 @@ function listen(ctx, o = {}) {
               const valid = Pointer.safeParse(wake.pointer);
               const pointer = valid.success ? valid.data : void 0;
               if (isRealNews(pointer, unread.success ? unread.data : void 0)) {
-                const budget = takeWake(ctx.paths, ctx.now());
-                if (!budget.allow) {
+                if (localOwnerOnlyParks(ctx, pointer)) {
+                  if (pointer) parkPendingWake(ctx.paths, sid, pointer, ctx.now());
+                  logLine(ctx.config.dataDir, "listen", "wake deferred to next prompt: wake_on_dm=owner-only");
+                } else {
+                  const budget = takeWake(ctx.paths, ctx.now());
+                  if (budget.allow) {
+                    const text = (pointer ? renderOne(pointer) : null) ?? fallbackText();
+                    return { exitCode: 2, stderr: text };
+                  }
                   if (pointer) parkPendingWake(ctx.paths, sid, pointer, ctx.now());
                   logLine(ctx.config.dataDir, "listen", `wake deferred to next prompt: over budget (${budget.reason})`);
-                  return OK;
+                  if (budget.reason !== "busy") return OK;
                 }
-                const text = (pointer ? renderOne(pointer) : null) ?? fallbackText();
-                return { exitCode: 2, stderr: text };
               }
             }
             const ra = typeof r.retryAfterS === "number" && r.retryAfterS > 0 ? Math.min(3600, r.retryAfterS) : 0;
             delay = ra * 1e3;
+            if (mode.kind === "longpoll") {
+              const early = waitS > 0 && ctx.now() - polledAt < Math.min(waitS * 1e3, MIN_IDLE_POLL_MS);
+              if (!early) {
+                idleFloor = MIN_IDLE_POLL_MS;
+                busyFloor = MIN_BUSY_POLL_MS;
+                busyStreak = 0;
+              } else if (newCursor === void 0 || newCursor === cursor) {
+                delay = Math.max(delay, idleFloor);
+                idleFloor = Math.min(MAX_IDLE_POLL_MS, idleFloor * 2);
+                busyStreak = 0;
+              } else if (++busyStreak > BUSY_POLLS_FREE) {
+                delay = Math.max(delay, busyFloor);
+                busyFloor = Math.min(MAX_BUSY_POLL_MS, busyFloor * 2);
+                idleFloor = MIN_IDLE_POLL_MS;
+              }
+            }
           } else if (res.status === 401 || res.status === 403) {
             return OK;
           } else {
             delay = res.retryAfterS ? res.retryAfterS * 1e3 : backoff;
             backoff = Math.min(BACKOFF_MAX_MS, backoff * 2);
+            busyStreak = 0;
           }
         } catch {
+          busyStreak = 0;
           delay = backoff;
           backoff = Math.min(BACKOFF_MAX_MS, backoff * 2);
         }
@@ -23628,7 +23771,10 @@ function listen(ctx, o = {}) {
             r = await bell.wait(Math.max(0, Math.min(turnCheckMs, until - ctx.now())));
             if (r !== "timeout") break;
           }
-          if (r === "ring") bellBackoff = backoffMin;
+          if (r === "ring") {
+            bellBackoff = backoffMin;
+            rang = true;
+          }
           if (r === "timeout" && endAt - ctx.now() <= 2e3) break;
           continue;
         }

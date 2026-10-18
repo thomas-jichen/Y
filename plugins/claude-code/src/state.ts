@@ -10,6 +10,7 @@ import { RealtimeChannel } from '@y/schema/hosting';
 import { Pointer } from '@y/schema/pointers';
 import { UnreadCounts } from '@y/schema/pulse';
 import { FALLBACK_POINTER_TEXT, isRenderedPointer, renderPointer, type PointerLocals } from '@y/pointers';
+import * as path from 'node:path';
 import { readJson, writeJsonAtomic, type Paths } from './runtime.js';
 
 /** The brief as cached in `state/brief.json` (only validated fields). */
@@ -32,6 +33,8 @@ export interface CachedBrief {
 export interface LocalPolicy {
   capture: BriefPolicy['capture'];
   repoKeySalt?: string;
+  /** Core's `agent_settings.wake_on_dm`: the setting core's relationship-aware wake decision used. */
+  wakeOnDm?: BriefPolicy['wakeOnDm'];
 }
 
 function parsePolicy(raw: unknown): LocalPolicy | undefined {
@@ -40,7 +43,12 @@ function parsePolicy(raw: unknown): LocalPolicy | undefined {
   const capture = BriefPolicy.shape.capture.safeParse(r.capture);
   if (!capture.success) return undefined;
   const salt = BriefPolicy.shape.repoKeySalt.safeParse(r.repoKeySalt);
-  return { capture: capture.data, ...(salt.success && salt.data ? { repoKeySalt: salt.data } : {}) };
+  const wake = BriefPolicy.shape.wakeOnDm.safeParse(r.wakeOnDm);
+  return {
+    capture: capture.data,
+    ...(salt.success && salt.data ? { repoKeySalt: salt.data } : {}),
+    ...(wake.success ? { wakeOnDm: wake.data } : {}),
+  };
 }
 
 /** Fail safe: if kill switches can't be read, treat every switch as engaged. */
@@ -93,11 +101,55 @@ export function readBrief(p: Paths): CachedBrief | undefined {
   // Re-sanitize the cache too: the file is local but may be stale or hand-edited.
   if (!b || typeof b.fetchedAt !== 'number') return undefined;
   const again = sanitizeBrief({ ...b, v: 1 }, b.fetchedAt);
-  return again;
+  if (!again) return undefined;
+  // Kill switches seen after this brief was fetched (listener pulses, uploader refresh) win.
+  const live = readLiveKillSwitches(p);
+  return live && live.at >= again.fetchedAt ? { ...again, killSwitches: live.killSwitches } : again;
 }
 
 export function writeBrief(p: Paths, b: CachedBrief): void {
   writeJsonAtomic(p.brief, b);
+}
+
+/** `state/kill-switches.json`: the newest kill switches seen since the brief, with when they were seen. */
+export function killSwitchesFile(p: Paths): string {
+  return path.join(p.state, 'kill-switches.json');
+}
+
+function readLiveKillSwitches(p: Paths): { killSwitches: KillSwitches; at: number } | undefined {
+  const raw = readJson<{ killSwitches?: unknown; at?: unknown }>(killSwitchesFile(p));
+  if (!raw || typeof raw.at !== 'number' || !Number.isFinite(raw.at)) return undefined;
+  const ks = KillSwitches.safeParse(raw.killSwitches);
+  return ks.success ? { killSwitches: ks.data, at: raw.at } : undefined;
+}
+
+/** When the effective kill switches were last confirmed by core (brief fetch or a later pulse). */
+export function killSwitchesSeenAt(p: Paths): number | undefined {
+  const b = readJson<{ fetchedAt?: unknown }>(p.brief);
+  const fetchedAt = typeof b?.fetchedAt === 'number' ? b.fetchedAt : undefined;
+  const live = readLiveKillSwitches(p)?.at;
+  if (fetchedAt === undefined) return undefined;
+  return Math.max(fetchedAt, live ?? 0);
+}
+
+/**
+ * The listener's pulses (and the uploader's refresh) carry the current kill
+ * switches: record them in their own file, which {@link readBrief} overlays
+ * on the cached brief while they are newer than it. So hooks and the uploader
+ * honour a switch within one pulse, not only from the next SessionStart, and
+ * brief.json itself is only ever written by SessionStart (no lost update of a
+ * fresher brief). No brief cached → nothing to record.
+ */
+export function mergeKillSwitches(p: Paths, ks: KillSwitches, now: number = Date.now()): void {
+  const b = readBrief(p);
+  if (!b) return;
+  const next: KillSwitches = { pushPaths: ks.pushPaths, networkContent: ks.networkContent, apply: ks.apply, ingest: ks.ingest };
+  writeJsonAtomic(killSwitchesFile(p), { killSwitches: next, at: now });
+}
+
+/** `state/setup-sent.json`: the hash of the last setup snapshot core accepted (Stop sends only the hash while it matches). */
+export function setupSentFile(p: Paths): string {
+  return path.join(p.state, 'setup-sent.json');
 }
 
 /** Capture is on only when a brief said so (no brief = stats only, nothing else leaves). */

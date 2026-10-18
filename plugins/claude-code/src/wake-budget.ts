@@ -26,7 +26,13 @@ export const WAKE_MAX_PER_DAY = 30;
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 
-export type BudgetVerdict = { allow: true } | { allow: false; reason: 'interval' | 'hour' | 'day' };
+export type BudgetVerdict = { allow: true } | { allow: false; reason: 'interval' | 'hour' | 'day' | 'busy' };
+
+/** A lock older than this is from a crashed listener and is broken. */
+export const WAKE_LOCK_STALE_MS = 5_000;
+/** How long takeWake spins for a lock another listener holds (it is held for a read and a write). */
+export const WAKE_LOCK_SPIN_MS = 150;
+const SPIN_STEP_MS = 5;
 
 interface BudgetFile {
   /** Epoch ms of recent wakes (last 24 h only), ascending. */
@@ -57,16 +63,60 @@ export function checkBudget(wakes: readonly number[], now: number): BudgetVerdic
   return { allow: true };
 }
 
+function lockDir(p: Paths): string {
+  return path.join(p.state, 'wake-budget.lock');
+}
+
+/** `mkdir` is atomic: exactly one listener holds the lock. A stale lock (crash) is broken once. */
+function acquireWakeLock(p: Paths): boolean {
+  const dir = lockDir(p);
+  fs.mkdirSync(p.state, { recursive: true, mode: 0o700 });
+  try {
+    fs.mkdirSync(dir);
+    return true;
+  } catch {
+    try {
+      if (Date.now() - fs.statSync(dir).mtimeMs < WAKE_LOCK_STALE_MS) return false;
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function sleepSync(ms: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    /* no Atomics.wait: retry at once */
+  }
+}
+
 /**
- * Check the budget and, when allowed, record the wake in the same step (so
- * a second listener reading the file right after sees it). Returns the
- * verdict.
+ * Check the budget and, when allowed, record the wake, under a short lock so
+ * two listeners can't both pass the check and overwrite each other's entry.
+ * Another listener holds the lock only for a read and a write, so this spins
+ * up to {@link WAKE_LOCK_SPIN_MS} for it; only if it is still held is the
+ * verdict `busy` (the caller parks the pointer and keeps listening).
  */
-export function takeWake(p: Paths, now: number): BudgetVerdict {
-  const wakes = readWakes(p, now);
-  const v = checkBudget(wakes, now);
-  if (v.allow) writeJsonAtomic(budgetFile(p), { wakes: [...wakes, now] } satisfies BudgetFile);
-  return v;
+export function takeWake(p: Paths, now: number, spinMs: number = WAKE_LOCK_SPIN_MS): BudgetVerdict {
+  const until = Date.now() + spinMs;
+  let locked = acquireWakeLock(p);
+  while (!locked && Date.now() < until) {
+    sleepSync(SPIN_STEP_MS);
+    locked = acquireWakeLock(p);
+  }
+  if (!locked) return { allow: false, reason: 'busy' };
+  try {
+    const wakes = readWakes(p, now);
+    const v = checkBudget(wakes, now);
+    if (v.allow) writeJsonAtomic(budgetFile(p), { wakes: [...wakes, now] } satisfies BudgetFile);
+    return v;
+  } finally {
+    fs.rmSync(lockDir(p), { recursive: true, force: true });
+  }
 }
 
 /* ======================================================= pending wake */

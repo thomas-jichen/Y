@@ -79,18 +79,39 @@ export interface Config {
   wakeOnDm: WakeSetting;
   headless: boolean;
   pluginRoot: string | undefined;
+  /**
+   * `api_url` is plain http:// to a host other than this machine. The agent
+   * token is then withheld (`token` is undefined), so neither it nor any
+   * digest crosses the network in cleartext. `Y_ALLOW_INSECURE_URL=1` opts out.
+   */
+  insecureApiUrl?: boolean;
+}
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/** True for an http:// URL whose host is not loopback (https and loopback http are fine). */
+export function isInsecureUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:') return false;
+    const host = u.hostname.toLowerCase();
+    return !(LOOPBACK_HOSTS.has(host) || host.endsWith('.localhost') || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host));
+  } catch {
+    return false;
+  }
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
-  const token = env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || undefined;
   const apiUrl = (env.CLAUDE_PLUGIN_OPTION_API_URL?.trim() || 'http://localhost:8787').replace(/\/+$/, '');
+  const insecureApiUrl = isInsecureUrl(apiUrl) && env.Y_ALLOW_INSECURE_URL !== '1';
+  const token = insecureApiUrl ? undefined : env.CLAUDE_PLUGIN_OPTION_AGENT_TOKEN?.trim() || undefined;
   const dataDir = env.CLAUDE_PLUGIN_DATA || env.Y_DATA_DIR || path.join(os.homedir(), '.y');
   const sm = env.CLAUDE_PLUGIN_OPTION_SHARE_MODE;
   const shareMode: ShareModeSetting = sm === 'off' || sm === 'auto-team' ? sm : 'stats';
   const wk = env.CLAUDE_PLUGIN_OPTION_WAKE_ON_DM;
   const wakeOnDm: WakeSetting = wk === 'off' || wk === 'owner-only' ? wk : 'teammates';
   const headless = env.Y_MODE === 'ci' || env.CI === 'true' || env.CI === '1';
-  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT };
+  return { token, apiUrl, dataDir, shareMode, wakeOnDm, headless, pluginRoot: env.CLAUDE_PLUGIN_ROOT, ...(insecureApiUrl ? { insecureApiUrl } : {}) };
 }
 
 /**
@@ -232,11 +253,28 @@ export function allocSeq(p: Paths, sid: string): number {
   for (;;) {
     try {
       fs.mkdirSync(path.join(dir, String(n)));
+      pruneSeq(dir, n);
       return n;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
       n++;
     }
+  }
+}
+
+/**
+ * Remove the claim directories below `keep` (best effort). Only the highest
+ * one is needed to continue the sequence, and it is never removed, so numbers
+ * stay unique and increasing while the directory no longer grows per chunk.
+ */
+function pruneSeq(dir: string, keep: number): void {
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      const v = Number(name);
+      if (Number.isInteger(v) && String(v) === name && v < keep) fs.rmSync(path.join(dir, name), { recursive: true, force: true });
+    }
+  } catch {
+    /* best effort */
   }
 }
 
