@@ -1,0 +1,404 @@
+@import "tailwindcss";
+
+@custom-variant light (&:where([data-theme="light"], [data-theme="light"] *));
+
+/* ---------- tokens: dark is the hero ---------- */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #07080a;
+  --surface: rgba(17, 19, 23, 0.86);
+  --surface-solid: #111317;
+  --surface-2: rgba(255, 255, 255, 0.03);
+  --raised: rgba(255, 255, 255, 0.05);
+  --glass: rgba(20, 22, 27, 0.58);
+  --glass-solid: #15171b;
+  --glass-line: rgba(255, 255, 255, 0.08);
+  --line: rgba(255, 255, 255, 0.06);
+  --line-strong: rgba(255, 255, 255, 0.11);
+  --specular: rgba(255, 255, 255, 0.07);
+  --specular-soft: rgba(255, 255, 255, 0.035);
+  --shadow-glass: 0 24px 60px -24px rgba(0, 0, 0, 0.7), 0 2px 8px -2px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 32px 80px -20px rgba(0, 0, 0, 0.8), 0 4px 16px -4px rgba(0, 0, 0, 0.5);
+  --scrim: rgba(3, 4, 6, 0.62);
+
+  --fg: #f2f4f7;
+  --fg-2: rgba(242, 244, 247, 0.64);
+  --fg-3: rgba(242, 244, 247, 0.4);
+
+  --ice: #9ec1ff;
+  --ice-strong: #b9d3ff;
+  --ice-fg: #06101f;
+  --ice-wash: rgba(158, 193, 255, 0.1);
+
+  --live: #5bd6a0;
+  --warn: #f5b85c;
+  --fail: #ff6b6b;
+
+  --inverse: #f2f4f7;
+  --inverse-fg: #0b0d10;
+
+  /* charts, validated with the dataviz checker against #111317 */
+  --series-you: #4f8ef0;
+  --series-peer: #d45a92;
+  --heat-0: rgba(255, 255, 255, 0.05);
+  --heat-1: #2a4f95;
+  --heat-2: #3d6fcc;
+  --heat-3: #5a92f0;
+  --heat-4: #9ec1ff;
+  --tier-1: #2a4f95;
+  --tier-2: #4f8ef0;
+  --tier-3: #a9c8ff;
+  --tier-1-ink: #f2f4f7;
+  --tier-2-ink: #06101f;
+  --tier-3-ink: #06101f;
+
+  --ambient-a: rgba(79, 142, 240, 0.28);
+  --ambient-b: rgba(118, 98, 240, 0.18);
+  --noise-opacity: 0.035;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f4f6;
+  --surface: rgba(255, 255, 255, 0.9);
+  --surface-solid: #ffffff;
+  --surface-2: rgba(0, 0, 0, 0.025);
+  --raised: rgba(0, 0, 0, 0.035);
+  --glass: rgba(255, 255, 255, 0.62);
+  --glass-solid: #ffffff;
+  --glass-line: rgba(0, 0, 0, 0.06);
+  --line: rgba(0, 0, 0, 0.07);
+  --line-strong: rgba(0, 0, 0, 0.12);
+  --specular: rgba(255, 255, 255, 0.9);
+  --specular-soft: rgba(255, 255, 255, 0.6);
+  --shadow-glass: 0 24px 60px -28px rgba(20, 30, 60, 0.22), 0 2px 8px -2px rgba(20, 30, 60, 0.07);
+  --shadow-pop: 0 32px 80px -24px rgba(20, 30, 60, 0.3), 0 4px 16px -4px rgba(20, 30, 60, 0.1);
+  --scrim: rgba(240, 242, 246, 0.6);
+
+  --fg: #0b0d10;
+  --fg-2: rgba(11, 13, 16, 0.62);
+  --fg-3: rgba(11, 13, 16, 0.4);
+
+  --ice: #2f6bea;
+  --ice-strong: #2558c8;
+  --ice-fg: #ffffff;
+  --ice-wash: rgba(47, 107, 234, 0.08);
+
+  --live: #13a26b;
+  --warn: #b7791f;
+  --fail: #d93c3c;
+
+  --inverse: #0b0d10;
+  --inverse-fg: #f2f4f7;
+
+  --series-you: #2f6bea;
+  --series-peer: #d2487f;
+  --heat-0: rgba(0, 0, 0, 0.05);
+  --heat-1: #86a9ee;
+  --heat-2: #5b8be8;
+  --heat-3: #3468d6;
+  --heat-4: #1c45a6;
+  --tier-1: #8cb0f2;
+  --tier-2: #3f78e6;
+  --tier-3: #1d4aa8;
+  --tier-1-ink: #0b0d10;
+  --tier-2-ink: #ffffff;
+  --tier-3-ink: #ffffff;
+
+  --ambient-a: rgba(47, 107, 234, 0.13);
+  --ambient-b: rgba(140, 120, 255, 0.1);
+  --noise-opacity: 0.025;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-solid: var(--surface-solid);
+  --color-surface-2: var(--surface-2);
+  --color-raised: var(--raised);
+  --color-glass: var(--glass);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-ice: var(--ice);
+  --color-ice-strong: var(--ice-strong);
+  --color-ice-fg: var(--ice-fg);
+  --color-ice-wash: var(--ice-wash);
+  --color-live: var(--live);
+  --color-warn: var(--warn);
+  --color-fail: var(--fail);
+  --color-inverse: var(--inverse);
+  --color-inverse-fg: var(--inverse-fg);
+  --color-series-you: var(--series-you);
+  --color-series-peer: var(--series-peer);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --text-2xs: 11px;
+  --text-2xs--line-height: 14px;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 18px;
+  --text-base: 14px;
+  --text-base--line-height: 20px;
+  --text-md: 15px;
+  --text-md--line-height: 22px;
+  --text-lg: 16px;
+  --text-lg--line-height: 24px;
+  --text-xl: 20px;
+  --text-xl--line-height: 26px;
+  --text-2xl: 28px;
+  --text-2xl--line-height: 32px;
+  --text-3xl: 40px;
+  --text-3xl--line-height: 44px;
+  --text-4xl: 56px;
+  --text-4xl--line-height: 58px;
+
+  --radius-glass: 18px;
+  --radius-card: 14px;
+  --radius-ctl: 10px;
+
+  --ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* ---------- base ---------- */
+html,
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+body {
+  min-height: 100dvh;
+  overflow-x: hidden;
+  font-size: 14px;
+  line-height: 20px;
+}
+::selection {
+  background: color-mix(in oklab, var(--ice) 32%, transparent);
+}
+:focus-visible {
+  outline: 2px solid var(--ice);
+  outline-offset: 2px;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* scrollbars stay quiet */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* ---------- materials ---------- */
+@utility glass {
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(28px) saturate(140%);
+  border: 1px solid var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--specular), var(--shadow-glass);
+  @media (prefers-reduced-transparency: reduce) {
+    background: var(--glass-solid);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    background: var(--glass-solid);
+  }
+}
+
+@utility glass-pop {
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(36px) saturate(150%);
+  backdrop-filter: blur(36px) saturate(150%);
+  border: 1px solid var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--specular), var(--shadow-pop);
+  @media (prefers-reduced-transparency: reduce) {
+    background: var(--glass-solid);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@utility surface {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: inset 0 1px 0 var(--specular-soft);
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+@utility display {
+  letter-spacing: -0.025em;
+  font-weight: 600;
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ---------- ambient light behind the glass ---------- */
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.ambient::before,
+.ambient::after {
+  content: "";
+  position: absolute;
+  width: 70vmax;
+  height: 70vmax;
+  border-radius: 50%;
+  filter: blur(80px);
+  will-change: transform;
+}
+.ambient::before {
+  top: -32vmax;
+  left: -18vmax;
+  background: radial-gradient(closest-side, var(--ambient-a), transparent);
+  animation: drift-a 60s var(--ease-soft) infinite alternate;
+}
+.ambient::after {
+  bottom: -38vmax;
+  right: -22vmax;
+  background: radial-gradient(closest-side, var(--ambient-b), transparent);
+  animation: drift-b 72s var(--ease-soft) infinite alternate;
+}
+.noise {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: var(--noise-opacity);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+@keyframes drift-a {
+  to {
+    transform: translate3d(14vmax, 8vmax, 0) scale(1.08);
+  }
+}
+@keyframes drift-b {
+  to {
+    transform: translate3d(-12vmax, -10vmax, 0) scale(1.12);
+  }
+}
+
+/* ---------- motion primitives ---------- */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.08);
+  }
+}
+@keyframes pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--live) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes listen {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 0%, var(--raised) 50%, var(--surface-2) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+  border-radius: 8px;
+}
+
+/* the frosted placeholder behind withheld content: a pattern, never the body */
+.frost-pattern {
+  background-image: repeating-linear-gradient(
+      90deg,
+      var(--fg-3) 0 38%,
+      transparent 38% 42%,
+      var(--fg-3) 42% 71%,
+      transparent 71% 74%,
+      var(--fg-3) 74% 92%,
+      transparent 92% 100%
+    ),
+    repeating-linear-gradient(90deg, var(--fg-3) 0 56%, transparent 56% 60%, var(--fg-3) 60% 82%, transparent 82% 100%);
+  background-size: 100% 9px, 80% 9px;
+  background-position: 0 4px, 0 24px;
+  background-repeat: no-repeat;
+  filter: blur(7px);
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient::before,
+  .ambient::after {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.97);
+    filter: blur(6px);
+  }
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
