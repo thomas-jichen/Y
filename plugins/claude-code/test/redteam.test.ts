@@ -136,7 +136,9 @@ describe('#63 timeouts, dropped connections and 5xx outages (review)', () => {
 
   it('a head chunk that always times out is dead-lettered after a cap, and the chunks behind it drain', async () => {
     await run('SessionEnd', { session_id: SID });
-    await run('SessionEnd', { session_id: 'sess-behind-2' });
+    // Chunks are sent in `<ts>-<sid>-<seq>` name order. When both land in the same millisecond the
+    // session id decides, so the chunk behind must sort after SID ('sess-rt-2' > 'sess-rt-1').
+    await run('SessionEnd', { session_id: 'sess-rt-2' });
     core.route = ok;
     const config = loadConfig(testEnv(dir, core.url));
     let timeouts = 0;
