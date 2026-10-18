@@ -131,3 +131,89 @@ describe('env dump commands (#99)', () => {
     expect(redact(digest).text).not.toContain('hunter');
   });
 });
+
+describe('env dump commands: no false positives, linear time (review)', () => {
+  /** The pre-review rule's `cat … .env` branch (boolean results must be kept). */
+  const OLD_CAT = /(?:^|[;&|(]\s*)(?:cat|less|more|head|tail|bat)\s+(?:\S+\s+)*\S*\.env\S*/;
+
+  it('keeps every command the original cat branch matched (randomized)', () => {
+    const R = rng(11);
+    const pieces = ['cat', 'head', 'bat', ' ', '  ', '\n', ';', '|', '&', '(', ')', '.env', '.en', 'v', 'x', '/', '-n', '"', "'", 'a.txt', '⏎'];
+    for (let i = 0; i < 6000; i++) {
+      const n = 1 + Math.floor(R() * 14);
+      let s = '';
+      for (let j = 0; j < n; j++) s += pieces[Math.floor(R() * pieces.length)];
+      if (OLD_CAT.test(s)) expect(ENV_DUMP_COMMAND_RE.test(s), JSON.stringify(s)).toBe(true);
+    }
+  });
+
+  it('leaves search patterns, test filters and source files named .env.* alone', () => {
+    for (const cmd of [
+      'grep -rn "loadConfig(process.env)" src',
+      'pnpm vitest run -t "parse(process.env)"',
+      'git log --grep="(process.env)"',
+      'echo "(process.env)"',
+      'grep -rn ".env" .',
+      "rg -n '.env' docs",
+      'grep -c x src/.env.ts',
+      'sort -u lib/.env.d.ts',
+      'grep KEY .env.example',
+    ]) {
+      expect(ENV_DUMP_COMMAND_RE.test(cmd), cmd).toBe(false);
+      expect(redactCommandOutput(cmd, 'Tests 3 passed').text, cmd).toBe('Tests 3 passed');
+    }
+  });
+
+  it('still matches dotenv reads with quoted patterns and interpreter dumps', () => {
+    for (const cmd of [
+      "grep 'API_KEY' .env",
+      'grep -n TOKEN apps/web/.env.local',
+      'tail -f .envrc',
+      'node -e "console.log(process.env)"',
+      "python3 -c 'import os; print(dict(os.environ))'",
+    ]) {
+      expect(ENV_DUMP_COMMAND_RE.test(cmd), cmd).toBe(true);
+    }
+  });
+
+  it('runs in linear time on separator and reader runs', () => {
+    // Before: ';' x 48k took ~4.8 s and '(cat ' x 8k ~1.6 s.
+    expect(ms(() => ENV_DUMP_COMMAND_RE.test(';'.repeat(50_000)))).toBeLessThan(200);
+    expect(ms(() => ENV_DUMP_COMMAND_RE.test('(cat '.repeat(10_000)))).toBeLessThan(200);
+    expect(ms(() => ENV_DUMP_COMMAND_RE.test(';cat "x'.repeat(8_000)))).toBeLessThan(200);
+    expect(ms(() => ENV_DUMP_COMMAND_RE.test('(grep '.repeat(10_000)))).toBeLessThan(200);
+    expect(ms(() => ENV_DUMP_COMMAND_RE.test('; ' + '/x'.repeat(25_000)))).toBeLessThan(200);
+    expect(ms(() => redact('TOOL Bash: ' + ';'.repeat(50_000)))).toBeLessThan(400);
+    expect(ms(() => redactCommandOutput('(cat '.repeat(10_000), 'x'))).toBeLessThan(200);
+  });
+});
+
+describe('generic_assignment: quoted digit-free passphrases (#99)', () => {
+  it('redacts a quoted passphrase assigned to a password key', () => {
+    for (const [input, value] of [
+      ['DB_PASSWORD="correct-horse-battery-staple"', 'correct-horse-battery-staple'],
+      ["admin_passwd: 'velvet!orbit!marmalade'", 'velvet!orbit!marmalade'],
+      ['"pwd": "Lantern-Quietly-Oxbow"', 'Lantern-Quietly-Oxbow'],
+    ] as const) {
+      const r = redact(input);
+      expect(r.text, input).not.toContain(value);
+      expect(r.hitsByRule.generic_assignment, input).toBe(1);
+    }
+  });
+
+  it('leaves identifiers, paths, placeholders, unquoted words and other keys alone', () => {
+    for (const input of [
+      'password: passwordField',
+      'DB_PASSWORD="passwordFromVault"',
+      'password: "config.db.password"',
+      'PASSWORD="/run/secrets/db-password"',
+      'password="your-password-here"',
+      'password: "not-a-real-one-example"',
+      'DB_PASSWORD=correct-horse-battery-staple',
+      'api_token="correct-horse-battery-staple"',
+      'password="short-one"',
+    ]) {
+      expect(redact(input).hitsByRule, input).toEqual({});
+    }
+  });
+});

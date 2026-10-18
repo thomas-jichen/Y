@@ -52,21 +52,48 @@ const STRONG_CODE_LINE_RE =
 /** Punctuation-only signals (a trailing `;`/`{`, a lone closing bracket). */
 const WEAK_CODE_LINE_RE = /[;{]\s*$|^\s*[})\]];?\s*$/;
 const BRACEY_RE = /[{};]/g;
-/** CJK scripts: prose in these uses fullwidth punctuation that NFKC folds to `;`, `{`, `(`. */
-const CJK_RE = /[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]/;
+/** CJK scripts and punctuation: prose in these uses fullwidth punctuation that NFKC folds to `;`, `{`, `(`. */
+const CJK_RE = /[\u3001-\u303F\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/;
+const TRAILING_PUNCT_RE = /[;{]\s*$/;
+/** Skipped when looking for the text a punctuation mark follows (closing brackets, quotes, corner brackets). */
+const CLOSER_RE = /[\s)\]}"'\u300D\u300F]/;
+
+/** Whether the punctuation at `idx` follows CJK text (skipping spaces and closing brackets/quotes). */
+function followsCjk(line: string, idx: number): boolean {
+  let j = idx - 1;
+  while (j >= 0 && CLOSER_RE.test(line[j] ?? '')) j--;
+  return j >= 0 && CJK_RE.test(line[j] ?? '');
+}
 
 /**
- * Internal (exported for tests): whether one line looks like code. `lenient` (used only on the NFKC view)
- * ignores the punctuation-only signals on CJK lines, whose fullwidth `；`/`｛`
- * fold to ASCII.
+ * Internal (exported for tests): whether one line looks like code. `lenient`
+ * (used only on the NFKC view) ignores the punctuation-only signals (`;`/`{`
+ * at the end, `{};` counts) where the punctuation follows CJK text: there
+ * they are fullwidth `；`/`｛` folded to ASCII, not code. Punctuation after
+ * Latin text (`a = f(x)；`) still counts.
  */
 export function isCodeLine(line: string, lenient = false): boolean {
   if (line.trim().length === 0) return false;
   if (STRONG_CODE_LINE_RE.test(line)) return true;
-  if (lenient && CJK_RE.test(line)) return false;
-  if (WEAK_CODE_LINE_RE.test(line)) return true;
-  return (line.match(BRACEY_RE)?.length ?? 0) >= 3;
+  if (!lenient || !CJK_RE.test(line)) {
+    if (WEAK_CODE_LINE_RE.test(line)) return true;
+    return (line.match(BRACEY_RE)?.length ?? 0) >= 3;
+  }
+  const trailing = TRAILING_PUNCT_RE.exec(line);
+  if (trailing && !followsCjk(line, trailing.index)) return true;
+  if (/^\s*[})\]];?\s*$/.test(line)) return true;
+  let bracey = 0;
+  for (const m of line.matchAll(BRACEY_RE)) if (!followsCjk(line, m.index ?? 0)) bracey++;
+  return bracey >= 3;
 }
+
+/**
+ * Dropped from the normalized view before scanning (scanning only, never
+ * from the delivered text): variation selectors, and combining marks after
+ * an ASCII character. `normalizeUntrusted` keeps both (emoji, accents), but
+ * they would otherwise hide a `;`, a ` ``` ` or a keyword from the line rules.
+ */
+const SCAN_DROP_G = /[\uFE00-\uFE0F\u{E0100}-\u{E01EF}]|(?<=[\x00-\x7F][\p{M}\uFE00-\uFE0F\u{E0100}-\u{E01EF}]*)\p{M}/gu;
 
 const SINGLE_CODE_LINE_RE = /^\s*(?:import\s|from\s+\S+\s+import|[^\n]*\brequire\(\s*['"])/;
 
@@ -105,7 +132,6 @@ function scanText(text: string, opts: DlpOptions | undefined, lenient: boolean):
 
   // Code-shaped runs outside fences.
   const isCode = lines.map((l, i) => !inFence[i] && isCodeLine(l.text, lenient));
-  const counted = new Array<boolean>(lines.length).fill(false);
   let runStart = -1;
   const flush = (endIdx: number) => {
     if (runStart < 0) return;
@@ -113,7 +139,6 @@ function scanText(text: string, opts: DlpOptions | undefined, lenient: boolean):
     const single = len === 1 && SINGLE_CODE_LINE_RE.test(lines[runStart]?.text ?? '');
     if (len >= 3 || single) {
       codeLines += len;
-      for (let k = runStart; k < endIdx; k++) counted[k] = true;
       findings.push({ kind: 'code_shape', rule: 'dlp.code_shape', start: lines[runStart]?.start ?? 0, end: lineEnd(endIdx - 1) });
     }
     runStart = -1;
@@ -124,38 +149,6 @@ function scanText(text: string, opts: DlpOptions | undefined, lenient: boolean):
     } else flush(i);
   }
   flush(lines.length);
-
-  // Blank lines don't break a run: code split into 1–2 line chunks by blank
-  // lines (`a;\n\nb;\n\nc;`) is still ≥ 3 code lines. Runs the pass above
-  // already counted in full are unchanged; this only adds lines it skipped.
-  {
-    let first = -1;
-    let last = -1;
-    let total = 0;
-    let extra = 0;
-    let pieces = 0;
-    const end = () => {
-      if (first >= 0 && pieces > 1 && total >= 3 && extra > 0) {
-        codeLines += extra;
-        findings.push({ kind: 'code_shape', rule: 'dlp.code_shape', start: lines[first]?.start ?? 0, end: lineEnd(last) });
-      }
-      first = -1;
-      last = -1;
-      total = 0;
-      extra = 0;
-      pieces = 0;
-    };
-    for (let i = 0; i < lines.length; i++) {
-      if (isCode[i]) {
-        if (first < 0) first = i;
-        if (i === 0 || !isCode[i - 1]) pieces++;
-        last = i;
-        total++;
-        if (!counted[i]) extra++;
-      } else if (inFence[i] || (lines[i]?.text.trim().length ?? 0) > 0) end();
-    }
-    end();
-  }
 
   // Known repo paths (exact matches) and path-like strings.
   let knownPaths = 0;
@@ -194,9 +187,9 @@ function scanText(text: string, opts: DlpOptions | undefined, lenient: boolean):
 
 /**
  * Outbound DLP on every agent-authored body (I10): secrets (`scanSecrets`),
- * code fences, code shape (≥ 3 lines that look like code, consecutive or
- * separated only by blank lines: import/require/def/class/function, braces
- * and semicolons; single import/require lines count too), path-like strings
+ * code fences, code shape (≥ 3 consecutive lines that look like code:
+ * import/require/def/class/function, braces and semicolons; single
+ * import/require lines count too), path-like strings
  * (counted as code), and matches of the sender's own repo paths. `ok` is
  * false on any secret, any known repo path, and any code unless
  * `allowShortCode` and the code is ≤ 5 lines.
@@ -205,14 +198,15 @@ function scanText(text: string, opts: DlpOptions | undefined, lenient: boolean):
  * NFKC, lone CR → LF, invisible characters stripped), so when that differs
  * from the raw body it is scanned too and the stricter result wins:
  * fullwidth code (`ｉｍｐｏｒｔ`) or CR-separated lines can't slip past.
- * When only the normalized view fails, the findings' offsets refer to the
- * normalized text.
+ * That view also drops variation selectors and combining marks after ASCII
+ * (`a = f(x);` + U+FE0F). When only the normalized view fails, the
+ * findings' offsets refer to that view.
  */
 export function dlpScan(body: string, opts?: DlpOptions): DlpResult {
   const text = typeof body === 'string' ? body : '';
   const raw = scanText(text, opts, false);
   if (!raw.ok) return raw;
-  const normalized = normalizeUntrusted(text).text;
+  const normalized = normalizeUntrusted(text).text.replace(SCAN_DROP_G, '');
   if (normalized === text) return raw;
   const view = scanText(normalized, opts, true);
   return view.ok ? raw : view;

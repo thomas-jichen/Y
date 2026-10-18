@@ -184,8 +184,12 @@ function foldConfusables(text: string): { text: string; folded: number } {
 const EXTRA_CONFUSABLES: Readonly<Record<string, string>> = {
   ı: 'i', ɩ: 'i', ӏ: 'l', Ӏ: 'I', ϲ: 'c', Ϲ: 'C', ɑ: 'a', օ: 'o', Օ: 'O', ս: 'u', հ: 'h', ԛ: 'q', ԝ: 'w', ѵ: 'v',
 };
-/** Dropped from the deep view: variation selectors (emoji/ideographic variants), combining marks, invisible/bidi and tag characters. */
-const DEEP_DROP_RE = new RegExp(`^(?:[\\uFE00-\\uFE0F\\u{E0100}-\\u{E01EF}\\u{E0000}-\\u{E007F}]|\\p{M}|${INVISIBLE_CHARS_SOURCE})$`, 'u');
+/**
+ * Dropped from the deep view: variation selectors (emoji/ideographic variants), combining marks (CGJ and
+ * Mongolian free variation selectors included), Hangul choseong/jungseong fillers, invisible/bidi and tag characters.
+ * These stay in the delivered text (they are meaningful in Mongolian and Hangul); only the scan ignores them.
+ */
+const DEEP_DROP_RE = new RegExp(`^(?:[\\uFE00-\\uFE0F\\u{E0100}-\\u{E01EF}\\u{E0000}-\\u{E007F}\\u115F\\u1160]|\\p{M}|${INVISIBLE_CHARS_SOURCE})$`, 'u');
 
 /** A second scanning view with a map from each of its code units back to the original text. */
 interface DeepView {
@@ -349,16 +353,15 @@ function collectFindings(text: string, opts?: L0Options): L0Finding[] {
 
   // Deep view (variation selectors, combining marks, more look-alikes): extra hits only.
   const deep = deepView(text, view);
+  const fromDeep = (start: number, end: number): { start: number; end: number } => {
+    const s = deep?.from[start] ?? text.length;
+    const e = end > start ? (deep?.to[end - 1] ?? text.length) : s;
+    return { start: s, end: Math.max(s, e) };
+  };
   if (deep) {
     const key = (f: L0Finding) => `${f.rule}:${f.span?.start ?? -1}:${f.span?.end ?? -1}`;
     const seen = new Set(findings.map(key));
-    const mapSpan = (f: L0Finding): L0Finding => {
-      if (!f.span) return f;
-      const { start, end } = f.span;
-      const s = deep.from[start] ?? text.length;
-      const e = end > start ? (deep.to[end - 1] ?? text.length) : s;
-      return { ...f, span: { start: s, end: Math.max(s, e) } };
-    };
+    const mapSpan = (f: L0Finding): L0Finding => (f.span ? { ...f, span: fromDeep(f.span.start, f.span.end) } : f);
     for (const f of [...viewHits(deep.text), ...commandAndBlobHits(deep.text)].map(mapSpan)) {
       if (seen.has(key(f))) continue;
       seen.add(key(f));
@@ -371,19 +374,34 @@ function collectFindings(text: string, opts?: L0Options): L0Finding[] {
 
   // URLs are found on the folded view, but the host is checked as written:
   // a look-alike host (`gіthub.com` with a Cyrillic і) is a different domain.
+  // The deep view also finds links whose scheme hides a variation selector or
+  // combining mark (`ht\uFE0Ftps://`); those spans and hosts map back to the text.
+  const urlSpans: { start: number; end: number }[] = [];
+  const pushUrl = (span: { start: number; end: number }, host: string) => {
+    urlSpans.push(span);
+    if (hostAllowed(host, opts?.allowedHosts)) {
+      // `docs.*` hosts stay unlabeled, but still count as a link payload for agent-addressed text.
+      if (!listedHost(host, opts?.allowedHosts)) push({ rule: 'url.docs_host', category: 'url', severity: 'info', span });
+      return;
+    }
+    push({ rule: 'url.not_allowlisted', category: 'url', severity: 'warn', span });
+  };
   URL_RE.lastIndex = 0;
   for (const m of view.matchAll(URL_RE)) {
     const start = m.index ?? 0;
     const hostAt = start + m[0].indexOf('//') + 2;
-    const host = text.slice(hostAt, hostAt + (m[1] ?? '').length);
-    if (hostAllowed(host, opts?.allowedHosts)) {
-      // `docs.*` hosts stay unlabeled, but still count as a link payload for agent-addressed text.
-      if (!listedHost(host, opts?.allowedHosts)) {
-        push({ rule: 'url.docs_host', category: 'url', severity: 'info', span: { start, end: start + m[0].length } });
-      }
-      continue;
+    pushUrl({ start, end: start + m[0].length }, text.slice(hostAt, hostAt + (m[1] ?? '').length));
+  }
+  if (deep) {
+    URL_RE.lastIndex = 0;
+    for (const m of deep.text.matchAll(URL_RE)) {
+      const start = m.index ?? 0;
+      const span = fromDeep(start, start + m[0].length);
+      if (urlSpans.some((u) => u.start < span.end && span.start < u.end)) continue;
+      const hostAt = start + m[0].indexOf('//') + 2;
+      const host = fromDeep(hostAt, hostAt + (m[1] ?? '').length);
+      pushUrl(span, text.slice(host.start, host.end));
     }
-    push({ rule: 'url.not_allowlisted', category: 'url', severity: 'warn', span: { start, end: start + m[0].length } });
   }
   for (const s of findSecrets(text)) {
     push({ rule: ruleId('secret', s.ruleId), category: 'secret', severity: 'block', span: { start: s.start, end: s.end } });
@@ -402,7 +420,30 @@ function collectFindings(text: string, opts?: L0Options): L0Finding[] {
   return findings;
 }
 
-/** Apply the security-discussion downgrade (block → warn) when nothing addresses the reading agent. */
+/** An exfil request with a first-person recipient: "send me …", "give us …", "dm me …". */
+const FIRST_PERSON_EXFIL_RE = /^[a-z]+(?:\s+with)?\s+(?:me|us)\b/i;
+
+/** The span's text as the rules read it (marks, variation selectors and invisibles dropped, look-alikes folded). */
+function scanForm(text: string): string {
+  const plain = text.normalize('NFD').replace(/[\p{M}\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u115F\u1160]/gu, '').replace(INVISIBLE_G, '');
+  return foldConfusables([...plain].map((c) => EXTRA_CONFUSABLES[c] ?? c).join('')).text;
+}
+
+/** Whether `start` sits inside a quotation opened earlier in its sentence (`"…`, `“…`, `` `… ``, ` '…`). */
+function insideQuote(text: string, start: number): boolean {
+  const before = text.slice(Math.max(0, start - 200), start);
+  const cut = Math.max(before.lastIndexOf('\n'), ...[...before.matchAll(/[.!?]\s/g)].map((m) => (m.index ?? 0) + 1));
+  const sentence = before.slice(cut + 1);
+  const count = (c: string) => sentence.split(c).length - 1;
+  return count('"') % 2 === 1 || count('`') % 2 === 1 || count('\u201C') > count('\u201D') || /(?:^|[\s(])'[^']*$/.test(sentence);
+}
+
+/**
+ * Apply the security-discussion downgrade (block → warn) when nothing
+ * addresses the reading agent. A first-person exfil request ("send me your
+ * .env") is never downgraded unless it is quoted: that is a request, not a
+ * discussion of one.
+ */
 function applyDiscussion(text: string, findings: L0Finding[]): L0Finding[] {
   const imperative = findings.some((f) => IMPERATIVE_RULES.has(f.rule) && f.severity !== 'info');
   if (imperative) return findings;
@@ -410,6 +451,13 @@ function applyDiscussion(text: string, findings: L0Finding[]): L0Finding[] {
   return findings.map((f) => {
     if (f.severity !== 'block' || !f.span) return f;
     if (!(f.category === 'command' || discussable.has(f.rule))) return f;
+    if (
+      f.rule === 'agent.exfil_request' &&
+      FIRST_PERSON_EXFIL_RE.test(scanForm(text.slice(f.span.start, f.span.end))) &&
+      !insideQuote(text, f.span.start)
+    ) {
+      return f;
+    }
     return isDiscussionContext(text, f.span.start) ? { ...f, severity: 'warn' } : f;
   });
 }

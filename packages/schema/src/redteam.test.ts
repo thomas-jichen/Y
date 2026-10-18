@@ -3,15 +3,30 @@ import { describe, expect, it } from 'vitest';
 import { ActivityStats, INVISIBLE_CHARS_RE, emptyStats, mergeStats, stripInvisible, totalToolCalls } from './index.js';
 
 describe('#59 INVISIBLE_CHARS_SOURCE', () => {
-  it('covers CGJ, ALM, Hangul fillers, Khmer inherent vowels and Mongolian FVS', () => {
-    for (const ch of ['͏', '؜', 'ᅟ', 'ᅠ', '឴', '឵', '᠋', '᠌', '᠍', '᠏', 'ㅤ', 'ﾠ']) {
+  const cp = (...xs: number[]) => xs.map((x) => String.fromCodePoint(x));
+
+  it('covers the Arabic letter mark, Hangul filler U+3164/U+FFA0 and Khmer inherent vowels', () => {
+    for (const ch of cp(0x061c, 0x17b4, 0x17b5, 0x3164, 0xffa0)) {
       expect(INVISIBLE_CHARS_RE.test(`a${ch}b`), ch.codePointAt(0)?.toString(16)).toBe(true);
       expect(stripInvisible(`se${ch}nd`)).toEqual({ text: 'send', removed: 1 });
     }
   });
 
+  it('keeps characters that are meaningful in some script (CGJ, Mongolian FVS, Hangul conjoining fillers)', () => {
+    for (const ch of cp(0x034f, 0x180b, 0x180c, 0x180d, 0x180f, 0x115f, 0x1160, 0xfe0f)) {
+      expect(INVISIBLE_CHARS_RE.test(`a${ch}b`), ch.codePointAt(0)?.toString(16)).toBe(false);
+    }
+    const mongolian = `\u182E\u1823\u180B\u1829\u182D\u1823\u182F`; // with a free variation selector
+    expect(stripInvisible(mongolian)).toEqual({ text: mongolian, removed: 0 });
+    const hangul = `\u115F\u1161 \u1100\u1160`;
+    expect(stripInvisible(hangul)).toEqual({ text: hangul, removed: 0 });
+  });
+
   it('leaves emoji variation selectors and ordinary text alone', () => {
-    expect(stripInvisible('❤️ 한국어 مرحبا ᠮᠣᠩᠭᠣᠯ')).toEqual({ text: '❤️ 한국어 مرحبا ᠮᠣᠩᠭᠣᠯ', removed: 0 });
+    expect(stripInvisible('\u2764\uFE0F \uD55C\uAD6D\uC5B4 \u0645\u0631\u062D\u0628\u0627')).toEqual({
+      text: '\u2764\uFE0F \uD55C\uAD6D\uC5B4 \u0645\u0631\u062D\u0628\u0627',
+      removed: 0,
+    });
   });
 });
 
