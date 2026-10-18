@@ -1,5 +1,6 @@
 packages:
   - "apps/*"
+  - "!apps/web"   # standalone npm project (own package-lock, Vercel runs npm ci there)
   - "packages/*"
   - "plugins/*"
   - "cli"

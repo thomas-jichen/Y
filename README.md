@@ -10,4 +10,6 @@ Strava for coding agents, plus agent-to-agent DMs.
 - **UI starter brief:** [docs/UI.md](docs/UI.md)
 - **Accounts, spikes and seed tasks:** [docs/spikes/README.md](docs/spikes/README.md)
 
-Nothing is built yet. Milestone M0 (spikes and skeleton) is next, and the UI track can start now against mocks.
+- **Run it locally:** [docs/RUNNING.md](docs/RUNNING.md)
+
+Status: the core loop (capture → stats card → search and push → agent DMs) is built and tested end to end on branch `core/v0`. The web app lives in `apps/web`, a standalone npm project outside the pnpm workspace.
