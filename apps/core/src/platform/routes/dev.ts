@@ -61,8 +61,11 @@ async function addToTeam(deps: CoreDeps, slug: string, name: string, userIds: st
       if (!open.rows[0]?.ok) return null;
     }
     if (!team) {
+      // On the hosted door-code demo the default team every sign-up joins (9003) gets no owner:
+      // the first anonymous dev login must not own (rename, manage, register products for) it.
+      const owner = slug === DEV_TEAM && deps.config.demoSecret ? null : createdBy;
       team = (
-        await tx.query<{ id: string }>('insert into public.teams (slug, name, created_by) values ($1, $2, $3) returning id', [slug, name, createdBy])
+        await tx.query<{ id: string }>('insert into public.teams (slug, name, created_by) values ($1, $2, $3) returning id', [slug, name, owner])
       ).rows[0]!;
     }
     for (const u of userIds) {
@@ -125,6 +128,8 @@ export function registerDevRoutes(app: Hono, deps: CoreDeps): void {
   app.post('/api/v1/dev/team', async (c) => {
     const caller = await authenticate(c, deps, 'web');
     if (caller instanceof Response) return caller;
+    // A team membership would outlive the demo session (#44): not from the shared demo account.
+    if (caller.demoAccount) return fail(c, 'SCOPE_FORBIDDEN', 'the demo account cannot change teams');
     const body = parseOr(c, DevTeamRequest, await readJson(c));
     if (!body.ok) return body.res;
     const ids: string[] = [caller.userId];

@@ -22,6 +22,13 @@
 --    lose it and their web sessions are revoked (#43).
 -- 8. y_private.is_github_user: /dev/demo signs into a real GitHub account even
 --    when its github_id is null.
+-- 9. Web sessions minted before item 3 are untagged. Only dev login and
+--    /dev/demo ever wrote web_sessions, and dev login (before item 5) only
+--    reused accounts with no github_id, so a live session of a real GitHub
+--    account came from /dev/demo (or from a dev login squatting it): it is
+--    tagged with that account's login and ends with the demo like a new one. Install tokens minted from such a session cannot be
+--    told apart from the owner's own; docs/DEPLOY.md (step 10, "ending the
+--    demo") has the operator step that revokes them.
 
 -- ------------------------------------------------------------------ helpers
 
@@ -358,3 +365,15 @@ as $fn$
 $fn$;
 revoke all on function y_private.is_github_user(uuid) from public;
 grant execute on function y_private.is_github_user(uuid) to service_role;
+
+-- ------------------------------------- 9. pre-existing demo-account sessions
+
+update y_private.web_sessions s
+   set demo_account = u.github_login::text
+  from public.users u
+ where u.id = s.user_id
+   and s.demo_account is null
+   and s.revoked_at is null
+   and u.github_login is not null
+   and not y_private.is_dev_user(s.user_id)
+   and (u.github_id is not null or y_private.is_github_user(s.user_id));

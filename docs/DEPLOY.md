@@ -65,6 +65,13 @@ select jobname, schedule from cron.job;   -- y-jobs-tick (* * * * *), y-purge-ex
 
 If the list is empty, the extensions weren't available when 0007 ran. Enable them (step 1.8), then run the `do $cron$ … $cron$` block at the end of `supabase/migrations/0007_cron.sql` in the SQL editor.
 
+**Upgrading a live deployment: migrate first.** Serverless core never migrates on cold start, and new core code can depend on new migrations (for example the red-team fixes need `apps/core/migrations/9101`-`9108`: `api.pulse_install`, `y_private.is_dev_user`, `web_sessions.demo_account`). Before you push or promote a core build that adds files to `supabase/migrations` or `apps/core/migrations`:
+
+1. Run `pnpm --filter @y/core migrate` from that commit against the hosted DB (the commands above). Old core keeps working on the new schema.
+2. Then deploy `y-core`, and deploy `apps/mcp` (step 7) from the same commit, so the MCP tool schemas match core's internal API.
+
+If core goes out first anyway, pulse falls back to the pre-9101 install check, but dev login, `/dev/demo` and the new routes return 500 until you migrate.
+
 ## 3. Seed highlights (local, against the hosted DB)
 
 Deploy the embed function first (step 4), so seed vectors are real gte-small embeddings rather than mock ones:
@@ -240,11 +247,31 @@ claude plugin install y --marketplace thomas-jichen/Y --config agent_token=$TOKE
   --config api_url=https://y-core.vercel.app --config mcp_url=https://<slug>.run.mcp-use.com/mcp
 ```
 
-Log in a second demo user the same way to show DMs and wakes between two agents. Dev login refuses a handle that belongs to a GitHub account (409), and dev routes never join a named team that has real members or add real accounts to one. They do not separate the default `dev` team, though: every user, dev or GitHub, joins it when it exists (9003). On an instance with a `dev` team, demo users are therefore teammates of every real user there, so they can DM their agents and see team posts. Don't run the door-code demo on an instance whose real users shouldn't be reachable that way. A dev user that took a GitHub login before its owner signed in loses that login, and its sessions, once the owner signs in with GitHub.
+Log in a second demo user the same way to show DMs and wakes between two agents. Dev login refuses a handle that belongs to a GitHub account (409), and dev routes never join a named team that has real members or add real accounts to one. They do not separate the default `dev` team, though: every user, dev or GitHub (or any other sign-in provider), joins it when it exists (9003, kept by 9102), and dev login joins it by default (`"team": null` keeps a dev user out of it). On an instance with a `dev` team, demo users are therefore teammates of every real user there, so they can DM their agents and see team posts. Don't run the door-code demo on an instance whose real users shouldn't be reachable that way. Keep GitHub as the only sign-in provider (Supabase **Authentication → Sign In / Providers**: turn off Email and every provider but GitHub), since every sign-up joins `dev`. A dev user that took a GitHub login before its owner signed in loses that login, and its sessions, once the owner signs in with GitHub.
+
+Only the server creates the `dev` team (API roles cannot, 9102). With `Y_DEMO_SECRET` set, dev login creates it with no owner, so no anonymous demo user can rename or manage it or register products for it. A `dev` team that an earlier build created from a dev login is owned by that dev user; check and demote it in the SQL editor:
+
+```sql
+select m.user_id, u.handle from public.team_members m join public.teams t on t.id = m.team_id
+  join public.users u on u.id = m.user_id join auth.users a on a.id = m.user_id
+ where t.slug = 'dev' and m.role in ('owner', 'admin') and a.raw_app_meta_data ->> 'provider' = 'dev';
+update public.team_members m set role = 'member' from public.teams t, auth.users a
+ where t.id = m.team_id and t.slug = 'dev' and a.id = m.user_id and m.role in ('owner', 'admin')
+   and a.raw_app_meta_data ->> 'provider' = 'dev';
+```
 
 **Demo account.** Set `Y_DEMO_ACCOUNT=<github login>` on `y-core` and the login screen's "Continue with the demo account" button (`POST /api/v1/dev/demo`, behind the same door code) signs anyone into that real account with **full access**: its chats, its review queue, sending as it, and instructing its agents. That account must have signed in with GitHub once. Use it only for a demo you're watching, and unset it afterwards.
 
-To end the demo, unset `Y_DEMO_ACCOUNT` and `Y_DEMO_SECRET` (and `VITE_DEMO_SECRET`, `VITE_DEV_LOGIN`) and redeploy.
+The demo account cannot link Slack or change teams (`/slack/link` and `/dev/team` return 403 for its sessions): those grants would outlive the demo.
+
+To end the demo, unset `Y_DEMO_ACCOUNT` and `Y_DEMO_SECRET` (and `VITE_DEMO_SECRET`, `VITE_DEV_LOGIN`) and redeploy. Demo-account web sessions, and install, pulse and stream tokens minted from them, stop working then. That includes sessions minted before 9101 (it tags them). Install tokens minted from a demo session before 9101 carry no tag and keep working: revoke the demo account's installs created during the demo in the SQL editor (it also disconnects the owner's own agents connected in that window, which reconnect with `/y connect`):
+
+```sql
+update public.installs i set revoked_at = now()
+  from public.agents a join public.users u on u.id = a.owner_user_id
+ where i.agent_id = a.id and lower(u.github_login::text) = lower('<demo login>')
+   and i.revoked_at is null and i.created_at >= '<demo start, e.g. 2026-10-01>';
+```
 
 ## Free-tier risks to watch
 
