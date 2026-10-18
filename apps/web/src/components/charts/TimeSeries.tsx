@@ -89,11 +89,11 @@ export function TimeSeries({ dates, series, height = 220, format }: { dates: str
 
 export function Legend({ items }: { items: { label: string; color: string; kind?: 'line' | 'rect' }[] }) {
   return (
-    <div className="flex flex-wrap items-center gap-4 text-xs text-fg-2">
+    <div className="flex flex-wrap items-center gap-4 text-caption">
       {items.map((i) => (
         <span key={i.label} className="flex items-center gap-1.5">
           {i.kind === 'rect' ? (
-            <span className="inline-block size-2.5 rounded-[3px]" style={{ background: i.color }} />
+            <span className="inline-block size-2.5" style={{ background: i.color }} />
           ) : (
             <span className="inline-block h-0 w-3" style={{ borderTop: `2px solid ${i.color}` }} />
           )}
