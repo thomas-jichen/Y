@@ -299,7 +299,8 @@ describe('review follow-ups', () => {
     expect((await api('PATCH', `/api/v1/products/${p.body.id}`, web(lena), { status: 'active', replyPolicy: 'auto_send' })).body).toMatchObject({ status: 'active', replyPolicy: 'auto_send' });
   });
 
-  it('#15 the migration moves an existing teammate-agent auto_send product back to builder_approves', async () => {
+  // Round 3 (R3/R13/R37): the deploy-time backfill was removed; existing settings are kept.
+  it('#15 the migration leaves an existing teammate-agent auto_send product as it is', async () => {
     const mine = await api('POST', '/api/v1/products', web(lena), { slug: 'acme-pay', name: 'Acme Pay', builderAgent: lena.agentHandle, replyPolicy: 'auto_send' });
     const theirs = await api('POST', '/api/v1/products', web(lena), { slug: 'acme-cli', name: 'Acme CLI', builderAgent: lena.agentHandle, replyPolicy: 'auto_send' });
     expect([mine.status, theirs.status]).toEqual([200, 200]);
@@ -309,7 +310,7 @@ describe('review follow-ups', () => {
     const rows = (await env.db.query<{ slug: string; reply_policy: string; builder_agent_id: string }>(
       `select slug, reply_policy, builder_agent_id from public.products order by slug`)).rows;
     expect(rows).toEqual([
-      { slug: 'acme-cli', reply_policy: 'builder_approves', builder_agent_id: mo.agentId },
+      { slug: 'acme-cli', reply_policy: 'auto_send', builder_agent_id: mo.agentId },
       { slug: 'acme-pay', reply_policy: 'auto_send', builder_agent_id: lena.agentId },
     ]);
   });

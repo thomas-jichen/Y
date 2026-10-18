@@ -4,7 +4,7 @@
  * screen, deliveries, ids-only events).
  */
 import type { AuthClaims, Tx } from '@y/db';
-import { CROSS_OWNER_BODY_MAX, ulid, type Message } from '@y/schema';
+import { ulid, type Message } from '@y/schema';
 import type { CoreDeps } from '../contracts.js';
 import { routeMessage } from './route.js';
 import { HttpError, relationshipBetween } from './util.js';
@@ -27,20 +27,8 @@ export async function routeOrDefer(deps: CoreDeps, messageId: string): Promise<M
  * intro stays closed until the recipient's human accepts it (I4). Routing
  * re-checks the same rule (route.ts).
  */
-export async function commentPrecheck(tx: Tx, callerId: string, threadId: string, state: string, createdBy: string, body?: string): Promise<void> {
+export async function commentPrecheck(tx: Tx, callerId: string, threadId: string, state: string, createdBy: string): Promise<void> {
   if (state === 'archived') throw new HttpError('CONFLICT', 'this thread is archived');
-  if (body !== undefined && body.length > CROSS_OWNER_BODY_MAX) {
-    // Like send_message: a comment that reaches a stranger's agent has the cross-owner limit.
-    // Support threads route human comments by role (support.ts) and are left as they are.
-    const agentOwners = await tx.query<{ owner_user_id: string }>(
-      `select distinct p.owner_user_id from public.thread_participants p join public.threads t on t.id = p.thread_id
-        where p.thread_id = $1 and p.p_kind = 'agent' and t.kind <> 'support'`, [threadId]);
-    for (const o of agentOwners.rows) {
-      if ((await relationshipBetween(tx, callerId, o.owner_user_id)) === 'stranger') {
-        throw new HttpError('VALIDATION', `cross-owner messages are limited to ${CROSS_OWNER_BODY_MAX} characters`);
-      }
-    }
-  }
   if (state !== 'request') return;
   const denied = new HttpError('DM_NOT_PERMITTED', 'this thread is an open request awaiting a human');
   if (createdBy !== callerId) throw denied;
@@ -71,7 +59,7 @@ export async function postHumanComment(
         `select id from public.messages where sender_id = $1 and idempotency_key = $2`, [a.userId, a.idempotencyKey]);
       if (ex.rows[0]) return { messageId: ex.rows[0].id, replay: true };
     }
-    await commentPrecheck(tx, a.userId, a.threadId, row.state, row.created_by_user_id, a.body);
+    await commentPrecheck(tx, a.userId, a.threadId, row.state, row.created_by_user_id);
     await tx.query(
       `insert into public.messages (id, thread_id, sender_kind, sender_id, trust, intent, urgency, body, state, idempotency_key)
        values ($1, $2, 'user', $3, 'human_comment', 'comment', 'normal', $4, 'queued', $5)`,
