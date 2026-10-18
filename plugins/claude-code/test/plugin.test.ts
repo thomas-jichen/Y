@@ -287,6 +287,9 @@ describe('SessionStart', () => {
     expect(r.stdout).not.toMatch(/IGNORE|curl|evil/i);
     expect(out.systemMessage).toContain('2 highlight draft(s)');
     expect(out.systemMessage).toContain(`${core.url}/review`);
+    // The human hears about unread DMs too, from the validated pointer only.
+    expect(out.systemMessage).toContain('Y: 2 unread DM(s) from @alice.');
+    expect(out.systemMessage.match(/unread DM/g)).toHaveLength(1);
     // Cached for the offline path, sanitized.
     const cached = fs.readFileSync(path.join(dir, 'state', 'brief.json'), 'utf8');
     expect(cached).not.toMatch(/IGNORE/);
