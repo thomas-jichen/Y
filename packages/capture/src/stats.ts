@@ -28,9 +28,20 @@ const ms = (ts: string | undefined): number | undefined => {
   return Number.isFinite(t) ? t : undefined;
 };
 
+/**
+ * Own-property write. Keys are tool, server and extension names, so
+ * `toString`, `constructor` or `__proto__` are valid keys: they must never
+ * resolve to `Object.prototype` members (an assignment to `__proto__` would
+ * set the prototype, and `m.constructor.keys = …` would overwrite a global).
+ */
+function ownSet<T>(m: Record<string, T>, k: string, v: T): void {
+  Object.defineProperty(m, k, { value: v, writable: true, enumerable: true, configurable: true });
+}
+
 const inc = (m: Record<string, number>, k: string, by = 1) => {
-  if (!(k in m) && Object.keys(m).length >= 256) return;
-  m[k] = (m[k] ?? 0) + by;
+  const has = Object.hasOwn(m, k);
+  if (!has && Object.keys(m).length >= 256) return;
+  ownSet(m, k, (has ? m[k]! : 0) + by);
 };
 
 /** Last usage per `messageId` (records without an id count individually), with the model. */
@@ -356,9 +367,13 @@ export function computeStats(
     const mcp = splitMcpName(u.name);
     if (mcp) {
       const server = sanitizeStatKey(mcp.server);
-      if (!s.mcp[server] && Object.keys(s.mcp).length >= 64) continue;
-      s.mcp[server] ??= {};
-      inc(s.mcp[server], sanitizeStatKey(mcp.tool));
+      let tools = Object.hasOwn(s.mcp, server) ? s.mcp[server] : undefined;
+      if (!tools) {
+        if (Object.keys(s.mcp).length >= 64) continue;
+        tools = {};
+        ownSet(s.mcp, server, tools);
+      }
+      inc(tools, sanitizeStatKey(mcp.tool));
       continue;
     }
     inc(s.toolCalls, sanitizeStatKey(u.name));
