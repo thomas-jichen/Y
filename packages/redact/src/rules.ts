@@ -111,11 +111,27 @@ export interface RedactResult {
 /**
  * Matches commands whose output is redacted wholesale: bare `env` / `set`
  * (no command after them), `printenv`, `export -p`, `cat|less|more|head|tail|bat`
- * of a `.env*` file, `docker inspect`, `kubectl get secret(s)`. `env FOO=1 cmd`
- * and `set -e` do not match.
+ * of a `.env*` file, `docker inspect`, `kubectl get secret(s)`. Also: commands
+ * after a newline or ` ⏎ ` (digest form), behind `sudo`/`command`/`exec`/
+ * `builtin`/`nohup`, or with a path (`/usr/bin/env`); `env -0`/`--null`/`-u X`;
+ * bare `export`, `declare -x|-p`, `typeset -x|-p`; other readers of a `.env*`
+ * file (`grep . .env`, `sort .env`, `cat<.env`); printing all of
+ * `process.env` / `os.environ`. `env FOO=1 cmd`, `set -e`, `export FOO=1`
+ * and `grep -rn process.env src` do not match.
  */
-export const ENV_DUMP_COMMAND_RE =
-  /(?:^|[;&|(]\s*)(?:(?:env|set)(?=\s*(?:$|[|;&>)]))|printenv\b|export\s+-p\b|(?:cat|less|more|head|tail|bat)\s+(?:\S+\s+)*\S*\.env\S*|docker\s+inspect\b|kubectl\s+get\s+secrets?\b)/;
+export const ENV_DUMP_COMMAND_RE = new RegExp(
+  [
+    // The original rule (kept verbatim so every command it matched still matches).
+    String.raw`(?:^|[;&|(]\s*)(?:(?:env|set)(?=\s*(?:$|[|;&>)]))|printenv\b|export\s+-p\b|(?:cat|less|more|head|tail|bat)\s+(?:\S+\s+)*\S*\.env\S*|docker\s+inspect\b|kubectl\s+get\s+secrets?\b)`,
+    // Command start (also after a newline / ⏎), optional prefix commands, then a bare dump.
+    String.raw`(?:^|[;&|(\n⏎])\s*(?:(?:sudo|command|exec|builtin|nohup)(?:\s+-\S+)*\s+)*(?:\S*\/)?(?:env(?:\s+(?:-0|--null|-u\s*\S+|--unset=\S+))*|printenv(?:\s+-0)?|set|export|(?:declare|typeset)\s+-[A-Za-z]*[xp][A-Za-z]*)(?=\s*(?:$|[|;&>)\n⏎]))`,
+    String.raw`(?:^|[;&|(\n⏎])\s*(?:(?:sudo|command|exec|builtin|nohup)(?:\s+-\S+)*\s+)*(?:\S*\/)?printenv\b`,
+    // Any reader of a `.env*` file token.
+    String.raw`(?:^|[;&|(\n⏎])\s*(?:(?:sudo|command|exec|builtin|nohup)(?:\s+-\S+)*\s+)*(?:cat|less|more|head|tail|bat|grep|egrep|rg|awk|sed|sort|tac|nl|xxd|od|strings|cut|uniq|base64)\b[^\n⏎|;&]*?[\s<'"=/]\.env[\w.-]*(?=$|[\s'"|;&)>⏎])`,
+    // Printing the whole environment from a script one-liner.
+    String.raw`\(\s*(?:process\.env|os\.environ)\s*[,)]`,
+  ].join('|'),
+);
 
 /** A secret found by {@link scanSecrets} (never includes the matched text). */
 export interface SecretHit {

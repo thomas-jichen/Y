@@ -89,6 +89,19 @@ const LINE_RULES: readonly LineRule[] = [
 
 const INVISIBLE_RE = new RegExp(INVISIBLE_CHARS_SOURCE);
 
+/**
+ * Whether some whitespace-free token in `line` has at least 3 characters and
+ * contains both a Latin letter and a Cyrillic/Greek one. Same test as
+ * `/(?=[^\s]*[A-Za-z])(?=[^\s]*[Ѐ-ӿͰ-Ͽ])[^\s]{3,}/`, but each token is looked
+ * at once (the regex rescans the rest of the token from every position).
+ */
+function hasMixedScriptToken(line: string): boolean {
+  for (const m of line.matchAll(/[^\s]{3,}/g)) {
+    if (/[A-Za-z]/.test(m[0]) && /[Ѐ-ӿͰ-Ͽ]/.test(m[0])) return true;
+  }
+  return false;
+}
+
 function finding(rule: StaticRuleId, line: number, message: string): StaticFinding {
   return { rule, severity: STATIC_RULES[rule].severity, line, message: message.slice(0, 300) };
 }
@@ -139,6 +152,15 @@ export function staticCheckSkill(content: string, kind: 'skill' | 'claude_md_blo
   const lines = text.split('\n');
   if (bytes > STATIC_LIMITS.maxBytes) add(finding('SC015', 0, `Exceeds ${STATIC_LIMITS.maxBytes} bytes.`));
   if (lines.length > STATIC_LIMITS.maxLines) add(finding('SC015', 0, `Exceeds ${STATIC_LIMITS.maxLines} lines.`));
+  lines.forEach((l, i) => {
+    if (l.length > STATIC_LIMITS.maxLineLength) add(finding('SC015', i + 1, `Line exceeds ${STATIC_LIMITS.maxLineLength} chars.`));
+  });
+  // Oversized content fails on size alone: the pattern passes below are not
+  // linear in line length, so they never run on it.
+  if (findings.some((f) => f.rule === 'SC015')) {
+    findings.sort((a, b) => a.line - b.line || a.rule.localeCompare(b.rule));
+    return { outcome: 'fail', findings, sanitized: null };
+  }
 
   // Fence map and line offsets.
   const inFence: boolean[] = [];
@@ -165,10 +187,6 @@ export function staticCheckSkill(content: string, kind: 'skill' | 'claude_md_blo
     return lo;
   };
 
-  lines.forEach((l, i) => {
-    if (l.length > STATIC_LIMITS.maxLineLength) add(finding('SC015', i + 1, `Line exceeds ${STATIC_LIMITS.maxLineLength} chars.`));
-  });
-
   // Commands (SC001–SC006, SC013 …)
   for (const c of lintCommands(text)) {
     const sc = CMD_TO_SC[c.rule];
@@ -191,7 +209,7 @@ export function staticCheckSkill(content: string, kind: 'skill' | 'claude_md_blo
   // SC008 obfuscation: long blobs, mixed-script words, string splitting of commands.
   lines.forEach((l, i) => {
     if (/[A-Za-z0-9+/_-]{200,}={0,2}/.test(l) || /\b[0-9a-fA-F]{200,}\b/.test(l)) add(finding('SC008', i + 1, 'Long encoded blob.'));
-    if (/(?=[^\s]*[A-Za-z])(?=[^\s]*[Ѐ-ӿͰ-Ͽ])[^\s]{3,}/.test(l) && /\b[A-Za-z]*[Ѐ-ӿͰ-Ͽ]+[A-Za-z]+|[A-Za-z]+[Ѐ-ӿͰ-Ͽ]+/.test(l)) {
+    if (hasMixedScriptToken(l) && /\b[A-Za-z]*[Ѐ-ӿͰ-Ͽ]+[A-Za-z]+|[A-Za-z]+[Ѐ-ӿͰ-Ͽ]+/.test(l)) {
       add(finding('SC008', i + 1, 'Mixed-script (homoglyph) word.'));
     }
     if (/["'](?:c|cu|cur)["']\s*\+\s*["'](?:rl|url|l)["']|["'](?:ev|e)["']\s*\+\s*["'](?:al|val)["']|\$\{?IFS\}?/.test(l)) {

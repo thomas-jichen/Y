@@ -132,21 +132,66 @@ const SPECIFIC: Matcher[] = [
 
 const URL_CRED: Matcher = {
   id: 'url_credentials',
-  re: /\b[a-zA-Z][a-zA-Z0-9+.-]{1,20}:\/\/([^\s:/@<>"'`]+:[^\s@/<>"'`]+)@/dg,
+  // The password may contain `/` (`postgres://admin:s3cr/etP4ss@db`) unless it
+  // starts like a port and path (`https://host:443/@scope/pkg`, `http://localhost:3000/u/a@b.c`).
+  re: /\b[a-zA-Z][a-zA-Z0-9+.-]{1,20}:\/\/([^\s:/@<>"'`]+:(?:[^\s@/<>"'`]+|(?!\d{1,5}\/)[^\s@<>"'`]+))@/dg,
   group: 1,
 };
 
-const GENERIC: Matcher = {
-  id: 'generic_assignment',
-  re: /\b[A-Za-z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|auth[_-]?key|private[_-]?key|client[_-]?secret|credentials?)[A-Za-z0-9_.-]*["']?\s*(?::=|=>|=|:)\s*(["']?)([^\s"'`,;()[\]{}<>]{8,})\1/dgi,
-  group: 2,
-  validate: (v) => {
-    if (!hasDigit(v)) return false; // identifiers / member expressions / types
-    if (/^\$|^process\.env\b|^env\./.test(v)) return false;
-    if (/^(?:x+|\*+|changeme|example\w*|placeholder\w*)$/i.test(v)) return false;
-    return shannonEntropy(v) > 3.5;
-  },
-};
+/**
+ * `generic_assignment`: `<key containing a keyword>["']? <op> ["']?<value ≥ 8>["']?`.
+ *
+ * Same matches as the regex
+ * `\b[A-Za-z0-9_.-]*(?:KEYWORDS)[A-Za-z0-9_.-]*["']?\s*(?::=|=>|=|:)\s*(["']?)([^\s"'`,;()[\]{}<>]{8,})\1`
+ * (flags `gi`, value = group 2), in linear time. That regex backtracks
+ * cubically on runs like `token-token-token-…`, because its prefix and suffix
+ * classes both contain the keyword. Here the key is always the whole
+ * `[A-Za-z0-9_.-]` run (an operator can't start inside one), the match starts
+ * at the run's first word character (its only usable `\b`), and the tail is
+ * matched once per run.
+ */
+const GENERIC_ID = 'generic_assignment';
+const GENERIC_KEYWORD_RE =
+  /password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|auth[_-]?key|private[_-]?key|client[_-]?secret|credentials?/i;
+const GENERIC_KEY_RUN_SRC = '[A-Za-z0-9_.-]+';
+const GENERIC_TAIL_SRC = String.raw`["']?\s*(?::=|=>|=|:)\s*(["']?)([^\s"'` + '`' + String.raw`,;()[\]{}<>]{8,})\1`;
+
+function genericValueOk(v: string): boolean {
+  if (!hasDigit(v)) return false; // identifiers / member expressions / types
+  if (/^\$|^process\.env\b|^env\./.test(v)) return false;
+  if (/^(?:x+|\*+|changeme|example\w*|placeholder\w*)$/i.test(v)) return false;
+  return shannonEntropy(v) > 3.5;
+}
+
+/** Internal (exported for tests): value spans of generic assignments, in text order. */
+export function genericAssignmentMatches(text: string): { start: number; end: number; value: string }[] {
+  const out: { start: number; end: number; value: string }[] = [];
+  const runs = new RegExp(GENERIC_KEY_RUN_SRC, 'g');
+  const tailRe = new RegExp(GENERIC_TAIL_SRC, 'dy');
+  for (let m = runs.exec(text); m; m = runs.exec(text)) {
+    const run = m[0];
+    if (!GENERIC_KEYWORD_RE.test(run)) continue;
+    const runEnd = m.index + run.length;
+    tailRe.lastIndex = runEnd;
+    const tail = tailRe.exec(text) as (RegExpExecArray & { indices?: ([number, number] | undefined)[] }) | null;
+    const idx = tail?.indices?.[2];
+    if (!tail || !idx || tail[2] === undefined) continue;
+    out.push({ start: idx[0], end: idx[1], value: tail[2] });
+    // Like matchAll: continue after the whole match (it never ends inside a key run).
+    runs.lastIndex = runEnd + tail[0].length;
+  }
+  return out;
+}
+
+function addGeneric(text: string, taken: Span[], out: Span[]): void {
+  for (const { start, end, value } of genericAssignmentMatches(text)) {
+    if (!genericValueOk(value)) continue;
+    if (overlaps(taken, start, end)) continue;
+    const span = { start, end, ruleId: GENERIC_ID };
+    taken.push(span);
+    out.push(span);
+  }
+}
 
 const PEM_RE =
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]{0,16384}?-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|[A-Za-z0-9+/=\s⏎]*)/g;
@@ -265,7 +310,7 @@ function findSecretSpans(text: string, entropy?: RedactOptions['entropy']): Span
   addMatcher(text, { id: 'pem_private_key', re: PEM_RE }, taken, out);
   for (const m of SPECIFIC) addMatcher(text, m, taken, out);
   addMatcher(text, URL_CRED, taken, out);
-  addMatcher(text, GENERIC, taken, out);
+  addGeneric(text, taken, out);
   entropySpans(text, entropy, taken, out);
   return out.sort((a, b) => a.start - b.start);
 }

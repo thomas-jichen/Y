@@ -65,7 +65,13 @@ export interface ScreenOutcome {
 /** Classes whose failed L2 floors the label at `suspicious`. */
 const STRICT_ON_L2_FAILURE = new Set<ContentClass>(['dm_stranger', 'builder_answer', 'shared_component', 'card', 'highlight']);
 
-const moreSevere = (a: Label, b: Label): Label => (LABEL_SEVERITY[b] > LABEL_SEVERITY[a] ? b : a);
+/**
+ * The more severe label; on a tie `sensitive` wins over `suspicious`, so a
+ * secret is held for its sender (not quarantined at the recipient) whichever
+ * layer found it.
+ */
+const moreSevere = (a: Label, b: Label): Label =>
+  LABEL_SEVERITY[b] > LABEL_SEVERITY[a] || (LABEL_SEVERITY[b] === LABEL_SEVERITY[a] && b === 'sensitive') ? b : a;
 
 /** L0 over the normalized text plus everything normalization hid from a human reader. */
 function l0WithHidden(det: ReturnType<typeof normalizeDetailed>, contentClass: ContentClass, opts?: L0Options): L0Result {

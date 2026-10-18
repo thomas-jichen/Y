@@ -36,6 +36,8 @@ const CONTROLS_G = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
 const HTML_COMMENT_G = /<!--([\s\S]*?)(?:-->|$)/g;
 const MD_IMAGE_G = /!\[([^\]\n]*)\]\(([^)\n]*)\)/g;
 const HTML_IMG_G = /<img\b[^>]*>/gi;
+/** Max removal passes for nested hidden constructs (each pass removes at least one). */
+const HIDDEN_PASSES_MAX = 32;
 const DELIMITER_G = /<(\/?)(\s*)(untrusted|y)/gi;
 /** U+2039 SINGLE LEFT-POINTING ANGLE QUOTATION MARK: NFKC-stable look-alike for `<`. */
 const ESCAPED_LT = '‹';
@@ -76,22 +78,38 @@ export function normalizeDetailed(input: string): NormalizedDetail {
   // 3. Line endings and control characters.
   text = text.replace(/\r\n?/g, '\n').replace(CONTROLS_G, '');
 
-  // 4. Hidden constructs: HTML comments, markdown images, <img> tags.
-  text = text.replace(HTML_COMMENT_G, (_m, body: string) => {
-    removedHidden += 1;
-    if (body.trim()) hidden.push(body);
-    return '';
-  });
-  text = text.replace(MD_IMAGE_G, (_m, alt: string, url: string) => {
-    removedHidden += 1;
-    hidden.push(`${alt} ${url}`.trim());
-    return '';
-  });
-  text = text.replace(HTML_IMG_G, (m) => {
-    removedHidden += 1;
-    hidden.push(m);
-    return '';
-  });
+  // 4. Hidden constructs: HTML comments, markdown images, <img> tags. Removing
+  //    one can join its neighbours into another (`<!![](x)-- … -->`), so repeat
+  //    until nothing is removed; past the cap, whatever is left is also
+  //    treated as hidden (scanned with the never-downgraded hidden rules).
+  for (let pass = 0; ; pass++) {
+    const before = text;
+    text = text.replace(HTML_COMMENT_G, (_m, body: string) => {
+      removedHidden += 1;
+      if (body.trim()) hidden.push(body);
+      return '';
+    });
+    text = text.replace(MD_IMAGE_G, (_m, alt: string, url: string) => {
+      removedHidden += 1;
+      hidden.push(`${alt} ${url}`.trim());
+      return '';
+    });
+    text = text.replace(HTML_IMG_G, (m) => {
+      removedHidden += 1;
+      hidden.push(m);
+      return '';
+    });
+    if (text === before) break;
+    // Joining text can also join a base letter and a combining mark.
+    text = text.normalize('NFKC');
+    if (pass + 1 >= HIDDEN_PASSES_MAX) {
+      if (HTML_COMMENT_G.test(text) || MD_IMAGE_G.test(text) || HTML_IMG_G.test(text)) hidden.push(text);
+      HTML_COMMENT_G.lastIndex = 0;
+      MD_IMAGE_G.lastIndex = 0;
+      HTML_IMG_G.lastIndex = 0;
+      break;
+    }
+  }
 
   // 5. Escape delimiter look-alikes so content can't close or open an envelope/pointer frame.
   text = text.replace(DELIMITER_G, (_m, slash: string, ws: string, word: string) => {

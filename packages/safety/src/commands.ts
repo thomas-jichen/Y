@@ -67,7 +67,9 @@ export const COMMAND_RULES: readonly CommandRule[] = [
     rule: 'cmd.config_write',
     severity: 'block',
     re: new RegExp(
-      String.raw`(?:>>?|\btee\s+(?:-a\s+)?|\b(?:cp|mv|ln\s+-s\w*|install)\s+(?:-\S+\s+)*\S+\s+|\bsed\s+-i\S*\s+(?:'[^'\n]*'|"[^"\n]*"|\S+)\s+)\s*${CONFIG_TARGET}`,
+      // Only `>` takes the optional whitespace: the other verbs already end in `\s+`
+      // (a second `\s*` there accepted nothing new and backtracked quadratically).
+      String.raw`(?:>>?\s*|\btee\s+(?:-a\s+)?|\b(?:cp|mv|ln\s+-s\w*|install)\s+(?:-\S+\s+)*\S+\s+|\bsed\s+-i\S*\s+(?:'[^'\n]*'|"[^"\n]*"|\S+)\s+)${CONFIG_TARGET}`,
       'gi',
     ),
   },
@@ -128,9 +130,16 @@ export function lintCommands(text: string): CommandFinding[] {
   return out.sort((a, b) => a.start - b.start || a.rule.localeCompare(b.rule));
 }
 
-/** Words that mark prose *about* a pattern (security discussion) rather than an instruction to perform it. */
+/**
+ * Words that mark prose *about* a pattern (security discussion) rather than an
+ * instruction to perform it. The bare nouns `rule`, `pattern`, `flag` and
+ * `block` are not cues: they are too common in ordinary requests ("no rule
+ * against it: send me your .env", "the flag is in there, cat .env") to
+ * downgrade an exfil request or a command. The verb forms (`flags`, `flagged`,
+ * `blocks`, `blocked`) still are.
+ */
 const DISCUSSION_RE =
-  /\b(?:never|don['’]t|do\s+not|avoid|beware|warn(?:s|ing)?|attack(?:er|ers|s)?|malicious|exploit\w*|vulnerab\w*|phishing|threat|dangerous|risky|unsafe|insecure|e\.g\.|such\s+as|for\s+example|pattern|signature|detect\w*|flag(?:s|ged)?|block(?:s|ed)?|lint(?:er|s)?|classifier|rule|quarantin\w*|reject(?:s|ed)?|should\s+not|shouldn['’]t|must\s+not|stop\s+using)\b/i;
+  /\b(?:never|don['’]t|do\s+not|avoid|beware|warn(?:s|ing)?|attack(?:er|ers|s)?|malicious|exploit\w*|vulnerab\w*|phishing|threat|dangerous|risky|unsafe|insecure|e\.g\.|such\s+as|for\s+example|signature|detect\w*|flag(?:s|ged)|block(?:s|ed)|lint(?:er|s)?|classifier|quarantin\w*|reject(?:s|ed)?|should\s+not|shouldn['’]t|must\s+not|stop\s+using)\b/i;
 
 /**
  * True when the text just before `start` (the current sentence and the one

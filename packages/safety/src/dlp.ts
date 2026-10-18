@@ -4,6 +4,7 @@
  * @module dlp
  */
 import { findSecrets, ruleId } from './l0.js';
+import { normalizeUntrusted } from './normalize.js';
 
 /** One DLP hit (never includes the matched text). */
 export interface DlpFinding {
@@ -37,29 +38,42 @@ export interface DlpResult {
 /** Max code lines a same-team body may carry with `allowShortCode`. */
 export const DLP_SHORT_CODE_MAX_LINES = 5;
 
-const CODE_LINE_RE =
-  /^\s*(?:import\s+(?:[\w*{}\s,]+\s+from\s+)?['"]|export\s+(?:default|const|function|class|interface|type|async)\b|(?:const|let|var)\s+[\w{}[\],\s]+\s*=|(?:async\s+)?function\s*\w*\s*\(|class\s+\w+|def\s+\w+\s*\(|from\s+[\w.]+\s+import\s|#include\s*[<"]|package\s+[\w.]+;|public\s+(?:static\s+)?(?:class|void|int|final)|return\b[^\n]*;\s*$|(?:if|for|while|switch)\s*\(.*\)\s*\{?\s*$|\}\s*(?:else\b[^\n]*)?\{?\s*$|[^\n]*\brequire\(\s*['"]|@\w+\([^)]*\)\s*$)|[;{]\s*$|^\s*[})\]];?\s*$/;
+/*
+ * Code-shaped line rules, for single lines (no `\n`). The patterns accept
+ * exactly the lines the original single regex accepted, rewritten so that no
+ * two adjacent quantifiers can match the same whitespace (that regex
+ * backtracked cubically on `const` or `import` followed by a long run of
+ * spaces). For example `(?:const|let|var)\s+[\w{}[\],\s]+\s*=` became
+ * `(?:const|let|var)\s[\w{}[\],\s]+=`, and `\s*\{?\s*$` became `\s*(?:\{\s*)?$`.
+ */
+/** Statement-shaped lines (imports, declarations, control flow …). */
+const STRONG_CODE_LINE_RE =
+  /^(?:\s*(?:import(?:\s[\w*{}\s,]+\sfrom\s+|\s+)['"]|export\s+(?:default|const|function|class|interface|type|async)\b|(?:const|let|var)\s[\w{}[\],\s]+=|(?:async\s+)?function(?:\s*\w+)?\s*\(|class\s+\w+|def\s+\w+\s*\(|from\s+[\w.]+\s+import\s|#include\s*[<"]|package\s+[\w.]+;|public\s+(?:static\s+)?(?:class|void|int|final)|return\b[^\n]*;\s*$|(?:if|for|while|switch)\s*\(.*\)\s*(?:\{\s*)?$|\}\s*(?:else\b[^\n]*\s*$|(?:\{\s*)?$)|@\w+\([^)]*\)\s*$)|[^\n]*\brequire\(\s*['"])/;
+/** Punctuation-only signals (a trailing `;`/`{`, a lone closing bracket). */
+const WEAK_CODE_LINE_RE = /[;{]\s*$|^\s*[})\]];?\s*$/;
 const BRACEY_RE = /[{};]/g;
+/** CJK scripts: prose in these uses fullwidth punctuation that NFKC folds to `;`, `{`, `(`. */
+const CJK_RE = /[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]/;
 
-function isCodeLine(line: string): boolean {
+/**
+ * Internal (exported for tests): whether one line looks like code. `lenient` (used only on the NFKC view)
+ * ignores the punctuation-only signals on CJK lines, whose fullwidth `；`/`｛`
+ * fold to ASCII.
+ */
+export function isCodeLine(line: string, lenient = false): boolean {
   if (line.trim().length === 0) return false;
-  if (CODE_LINE_RE.test(line)) return true;
+  if (STRONG_CODE_LINE_RE.test(line)) return true;
+  if (lenient && CJK_RE.test(line)) return false;
+  if (WEAK_CODE_LINE_RE.test(line)) return true;
   return (line.match(BRACEY_RE)?.length ?? 0) >= 3;
 }
 
+const SINGLE_CODE_LINE_RE = /^\s*(?:import\s|from\s+\S+\s+import|[^\n]*\brequire\(\s*['"])/;
+
 const PATH_LIKE_RE = /(?:^|[\s(`'"])((?:\.{0,2}\/)?(?:[\w.@-]+\/){2,}[\w.-]+\.[a-z0-9]{1,6})\b/gi;
 
-/**
- * Outbound DLP on every agent-authored body (I10): secrets (`scanSecrets`),
- * code fences, code shape (≥ 3 consecutive lines that look like code:
- * import/require/def/class/function, braces and semicolons; single
- * import/require lines count too), path-like strings (counted as code), and
- * matches of the sender's own repo paths. `ok` is false on any secret, any
- * known repo path, and any code unless `allowShortCode` and the code is
- * ≤ 5 lines.
- */
-export function dlpScan(body: string, opts?: DlpOptions): DlpResult {
-  const text = typeof body === 'string' ? body : '';
+/** One DLP pass over `text` (raw, or the normalized view with `lenient`). */
+function scanText(text: string, opts: DlpOptions | undefined, lenient: boolean): DlpResult {
   const findings: DlpFinding[] = [];
 
   const secrets = findSecrets(text);
@@ -90,23 +104,58 @@ export function dlpScan(body: string, opts?: DlpOptions): DlpResult {
   }
 
   // Code-shaped runs outside fences.
+  const isCode = lines.map((l, i) => !inFence[i] && isCodeLine(l.text, lenient));
+  const counted = new Array<boolean>(lines.length).fill(false);
   let runStart = -1;
   const flush = (endIdx: number) => {
     if (runStart < 0) return;
     const len = endIdx - runStart;
-    const single = len === 1 && /^\s*(?:import\s|from\s+\S+\s+import|[^\n]*\brequire\(\s*['"])/.test(lines[runStart]?.text ?? '');
+    const single = len === 1 && SINGLE_CODE_LINE_RE.test(lines[runStart]?.text ?? '');
     if (len >= 3 || single) {
       codeLines += len;
+      for (let k = runStart; k < endIdx; k++) counted[k] = true;
       findings.push({ kind: 'code_shape', rule: 'dlp.code_shape', start: lines[runStart]?.start ?? 0, end: lineEnd(endIdx - 1) });
     }
     runStart = -1;
   };
   for (let i = 0; i < lines.length; i++) {
-    if (!inFence[i] && isCodeLine(lines[i]?.text ?? '')) {
+    if (isCode[i]) {
       if (runStart < 0) runStart = i;
     } else flush(i);
   }
   flush(lines.length);
+
+  // Blank lines don't break a run: code split into 1–2 line chunks by blank
+  // lines (`a;\n\nb;\n\nc;`) is still ≥ 3 code lines. Runs the pass above
+  // already counted in full are unchanged; this only adds lines it skipped.
+  {
+    let first = -1;
+    let last = -1;
+    let total = 0;
+    let extra = 0;
+    let pieces = 0;
+    const end = () => {
+      if (first >= 0 && pieces > 1 && total >= 3 && extra > 0) {
+        codeLines += extra;
+        findings.push({ kind: 'code_shape', rule: 'dlp.code_shape', start: lines[first]?.start ?? 0, end: lineEnd(last) });
+      }
+      first = -1;
+      last = -1;
+      total = 0;
+      extra = 0;
+      pieces = 0;
+    };
+    for (let i = 0; i < lines.length; i++) {
+      if (isCode[i]) {
+        if (first < 0) first = i;
+        if (i === 0 || !isCode[i - 1]) pieces++;
+        last = i;
+        total++;
+        if (!counted[i]) extra++;
+      } else if (inFence[i] || (lines[i]?.text.trim().length ?? 0) > 0) end();
+    }
+    end();
+  }
 
   // Known repo paths (exact matches) and path-like strings.
   let knownPaths = 0;
@@ -141,4 +190,30 @@ export function dlpScan(body: string, opts?: DlpOptions): DlpResult {
     codeShape,
     codeLines,
   };
+}
+
+/**
+ * Outbound DLP on every agent-authored body (I10): secrets (`scanSecrets`),
+ * code fences, code shape (≥ 3 lines that look like code, consecutive or
+ * separated only by blank lines: import/require/def/class/function, braces
+ * and semicolons; single import/require lines count too), path-like strings
+ * (counted as code), and matches of the sender's own repo paths. `ok` is
+ * false on any secret, any known repo path, and any code unless
+ * `allowShortCode` and the code is ≤ 5 lines.
+ *
+ * Recipients and storage see the **normalized** text (`normalizeUntrusted`:
+ * NFKC, lone CR → LF, invisible characters stripped), so when that differs
+ * from the raw body it is scanned too and the stricter result wins:
+ * fullwidth code (`ｉｍｐｏｒｔ`) or CR-separated lines can't slip past.
+ * When only the normalized view fails, the findings' offsets refer to the
+ * normalized text.
+ */
+export function dlpScan(body: string, opts?: DlpOptions): DlpResult {
+  const text = typeof body === 'string' ? body : '';
+  const raw = scanText(text, opts, false);
+  if (!raw.ok) return raw;
+  const normalized = normalizeUntrusted(text).text;
+  if (normalized === text) return raw;
+  const view = scanText(normalized, opts, true);
+  return view.ok ? raw : view;
 }
