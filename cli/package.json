@@ -8,9 +8,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests",
-    "build": "tsx build.ts",
-    "dev": "tsx src/main.ts"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@y/schema": "workspace:*",

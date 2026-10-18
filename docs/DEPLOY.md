@@ -55,7 +55,7 @@ pnpm --filter @y/core migrate     # supabase/migrations + apps/core/migrations, 
 pnpm db:migrate                          # equivalent for supabase/migrations only; a no-op after the line above
 ```
 
-Expect `[migrate] ok (supabase; applied N supabase migration(s))`. Re-running is safe. Don't also run `supabase db push`: it keeps a separate history and would re-apply the files. 0006 may warn that it couldn't grant the optional `y_core`/`y_worker` roles; that's expected on Supabase.
+Expect `[migrate] ok (supabase; applied N supabase migration(s))`. Re-running is safe. Don't also run `supabase db push`: it keeps a separate history and would re-apply the files. For the same reason, keep the Supabase GitHub integration's branching and deploy-on-push off; it fails with `type "ulid" already exists` when it replays 0002. 0006 may warn that it couldn't grant the optional `y_core`/`y_worker` roles; that's expected on Supabase.
 
 Check in the SQL editor:
 
