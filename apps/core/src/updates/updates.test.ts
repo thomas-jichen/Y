@@ -208,6 +208,9 @@ describe('turn summaries from ingest', () => {
     await share(fay, true);
     const other = (await db.query<{ id: string }>(`select id from public.teams where slug = 'upd-elsewhere'`)).rows[0]!.id;
     await db.query(`insert into public.team_members (team_id, user_id, role) values ($1, $2, 'member')`, [other, fay.userId]);
+    // Joining a second team pins the first as the posting team (9110); with no choice left (she
+    // left the team she had chosen), nothing is shared.
+    await db.query(`delete from public.user_posting_team where user_id = $1`, [fay.userId]);
     const ch = chunk();
     await ingest(fay, ch);
     await drainAll();
