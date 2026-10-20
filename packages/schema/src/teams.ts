@@ -10,6 +10,7 @@
  * | `GET /teams/:slug` | | {@link TeamDetail} |
  * | `POST /teams/:slug/repos` | {@link AddTeamRepoRequest} | {@link TeamDetail} |
  * | `POST /teams/:slug/repos/:id/remove` · `DELETE /teams/:slug/repos/:id` | | {@link TeamDetail} |
+ * | `GET /teams/:slug/repos/status` | | {@link TeamReposStatus} |
  * | `GET /teams/:slug/invites` | | {@link TeamInviteList} |
  * | `POST /teams/:slug/invites` | {@link CreateInviteRequest} | {@link CreateInviteResponse} |
  * | `POST /teams/:slug/invites/:id/revoke` · `DELETE /teams/:slug/invites/:id` | | {@link TeamInviteList} |
@@ -93,6 +94,33 @@ export const TeamDetail = z.object({
   postsHere: z.boolean().optional(),
 });
 export type TeamDetail = z.infer<typeof TeamDetail>;
+
+/**
+ * What is happening in one linked repo now: agents working in it (an open
+ * session in the repo whose agent is live or listening) and when the last
+ * update or activity in it was. Repos are matched to sessions by the team's
+ * salted repo key, computed server-side; neither the key nor the salt is sent.
+ * Teammates who turned off sharing their updates are not counted, except the
+ * viewer's own agents.
+ */
+export const TeamRepoStatus = z.object({
+  repo: GithubRepoName,
+  activeAgents: Count,
+  lastActivityAt: IsoTimestamp.optional(),
+});
+export type TeamRepoStatus = z.infer<typeof TeamRepoStatus>;
+
+/**
+ * `GET /teams/:slug/repos/status` (members only): every linked repo's status,
+ * plus `all` across them (distinct agents; the latest activity in any).
+ */
+export const TeamReposStatus = z.object({
+  team: TeamRef,
+  viewerRole: TeamRole,
+  repos: z.array(TeamRepoStatus).max(TEAM_REPOS_MAX),
+  all: TeamRepoStatus.omit({ repo: true }),
+});
+export type TeamReposStatus = z.infer<typeof TeamReposStatus>;
 
 /** `POST /teams/:slug/repos` (team owners and admins). */
 export const AddTeamRepoRequest = z.object({ repo: GithubRepoName });

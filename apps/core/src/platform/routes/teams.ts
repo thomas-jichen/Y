@@ -10,7 +10,9 @@
  *   token is shown once; only its sha256 is stored. Opening a link previews
  *   it; joining is a separate POST behind the Join button (no auto-join, I5).
  * - Repos: linked by name (owner/repo, GitHub naming rules), no proof.
- *   Members read; owners and admins add and remove.
+ *   Members read; owners and admins add and remove. GET .../repos/status
+ *   matches them to sessions by salted repo key (repo-keys.ts) and returns
+ *   names and counts only.
  * - Posting team (9110): the one team a person's agents publish to. Creating
  *   a team moves it there unless `postHere: false`; accepting an invite moves
  *   it only with `postHere: true`; POST /me/posting-team changes it. A second
@@ -35,6 +37,7 @@ import {
   SetPostingTeamRequest,
   Slug,
   TEAM_REPOS_MAX,
+  TeamReposStatus,
   type AcceptInviteResponse,
   type PostingTeamResponse,
   type CreateInviteResponse,
@@ -45,8 +48,11 @@ import {
   type TeamRole,
 } from '@y/schema';
 import type { Caller, CoreDeps } from '../../contracts.js';
+import { presenceWindows } from '@y/domain';
 import { cleanAsciiLabel, repoLabel } from '../../builders/labels.js';
 import { authenticate } from '../http.js';
+import { usesRealtimeDoorbell } from '../realtime-channel.js';
+import { keyedTeamRepos } from '../repo-keys.js';
 import { takeToken, type BucketSpec } from '../rate-limit.js';
 import { HttpError, postingTeamId, userRef, wire } from '../../messaging/util.js';
 import { fail, iso, parseOr, readJson, sha256Hex } from '../util.js';
@@ -157,6 +163,53 @@ async function teamDetail(tx: Tx, caller: Caller, t: TeamRow): Promise<TeamDetai
       addedBy: r.added_by && r.handle ? userRef({ id: r.added_by, handle: r.handle, login: r.github_login, avatar: r.avatar_url }) : null,
       createdAt: iso(r.created_at),
     })),
+  };
+}
+
+/**
+ * Per linked repo: distinct agents working in it now (api.team_repo_agents, which
+ * sees teammates' sessions as counts only) and the latest turn summary or
+ * activity in it that the caller can read (RLS). Repo keys never leave core.
+ */
+async function repoStatus(tx: Tx, deps: CoreDeps, t: TeamRow): Promise<TeamReposStatus> {
+  const repos = await keyedTeamRepos(tx, t.id, TEAM_REPOS_MAX);
+  const keys = repos.map((r) => r.key);
+  const agents = new Map<string, number>();
+  const latest = new Map<string, string>();
+  let allAgents = 0;
+  if (keys.length) {
+    const { liveMs, listeningMs, ingestLiveMs } = presenceWindows({ doorbell: usesRealtimeDoorbell(deps.config) });
+    const per = await tx.query<{ repo_key: string | null; active_agents: number }>(
+      `select repo_key, active_agents
+         from api.team_repo_agents($1::uuid, $2::text[], $3::int * interval '1 millisecond',
+                                   $4::int * interval '1 millisecond', $5::int * interval '1 millisecond')`,
+      [t.id, keys, liveMs, listeningMs, ingestLiveMs],
+    );
+    for (const r of per.rows) {
+      if (r.repo_key === null) allAgents = Number(r.active_agents);
+      else agents.set(r.repo_key, Number(r.active_agents));
+    }
+    const last = await tx.query<{ repo_key: string; at: Date | string | null }>(
+      `select k.repo_key, greatest(
+                (select max(s.created_at) from public.turn_summaries s where s.team_id = $1 and s.repo_key = k.repo_key),
+                (select max(coalesce(a.ended_at, a.started_at)) from public.activities a where a.team_id = $1 and a.repo_key = k.repo_key)
+              ) as at
+         from unnest($2::text[]) as k(repo_key)`,
+      [t.id, keys],
+    );
+    for (const r of last.rows) if (r.at) latest.set(r.repo_key, iso(r.at));
+  }
+  const items = repos.map((r) => ({
+    repo: r.repo,
+    activeAgents: agents.get(r.key) ?? 0,
+    ...(latest.has(r.key) ? { lastActivityAt: latest.get(r.key)! } : {}),
+  }));
+  const newest = items.reduce<string | undefined>((m, x) => (x.lastActivityAt && (!m || x.lastActivityAt > m) ? x.lastActivityAt : m), undefined);
+  return {
+    team: { id: t.id, slug: t.slug, name: t.name },
+    viewerRole: t.role,
+    repos: items,
+    all: { activeAgents: allAgents, ...(newest ? { lastActivityAt: newest } : {}) },
   };
 }
 
@@ -302,6 +355,19 @@ export function registerTeamRoutes(app: Hono, deps: CoreDeps): void {
   };
   app.post('/api/v1/teams/:slug/repos/:id/remove', removeRepo);
   app.delete('/api/v1/teams/:slug/repos/:id', removeRepo);
+
+  // The web's repo bar: agents working in each linked repo now and its latest update (members only).
+  app.get('/api/v1/teams/:slug/repos/status', async (c) => {
+    const caller = await authenticate(c, deps, 'web');
+    if (caller instanceof Response) return caller;
+    return run(c, deps, async () =>
+      c.json(
+        TeamReposStatus.parse(
+          await deps.db.asUser(caller.claims, async (tx) => repoStatus(tx, deps, await memberTeam(tx, caller, c.req.param('slug')))),
+        ),
+      ),
+    );
+  });
 
   /* -------------------------------------------------------------- invites */
   app.get('/api/v1/teams/:slug/invites', async (c) => {

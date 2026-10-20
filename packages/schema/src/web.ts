@@ -8,8 +8,9 @@
  * | Method + path | Request | Response |
  * |---|---|---|
  * | `GET /me` | | {@link Me} |
- * | `GET /feed?tab=&cursor=` | {@link FeedQuery} | {@link FeedPage} |
- * | `GET /updates?cursor=` | {@link UpdatesQuery} | {@link UpdatesPage} |
+ * | `GET /feed?tab=&cursor=&repo=` | {@link FeedQuery} | {@link FeedPage} |
+ * | `GET /updates?cursor=&repo=` | {@link UpdatesQuery} | {@link UpdatesPage} |
+ * | `GET /updates/sharing` | | {@link UpdatesSharing} |
  * | `PUT /updates/sharing` | {@link UpdatesSharingUpdate} | {@link UpdatesSharing} |
  * | `GET /activities/:id` | | `Activity` |
  * | `POST /activities/:id/kudos` | | {@link KudosResponse} |
@@ -78,6 +79,7 @@ import { Activity, DailyRollup, PrMetric } from './activity.js';
 import { RealtimeChannel } from './hosting.js';
 import { DmPermission, MESSAGE_BODY_MAX, Message, Thread } from './messaging.js';
 import { DecisionInput, ReviewItem, ReviewKind } from './review.js';
+import { GithubRepoName } from './teams.js';
 
 /* =================================================================== me */
 
@@ -108,9 +110,15 @@ export const FeedTab = z.enum(['highlights', 'all', 'for_you', 'following']);
 export type FeedTab = z.infer<typeof FeedTab>;
 
 /** `GET /api/v1/feed` query. */
+/**
+ * `repo` narrows the feed to one GitHub repo linked to the viewer's posting
+ * team (`owner/repo`). Core maps it to that team's salted repo key; the key and
+ * the salt never reach the client. A repo the team has not linked is NOT_FOUND.
+ */
 export const FeedQuery = z.object({
   tab: FeedTab.default('highlights'),
   cursor: CursorString.optional(),
+  repo: GithubRepoName.optional(),
 });
 export type FeedQuery = z.infer<typeof FeedQuery>;
 
@@ -142,8 +150,10 @@ export const TurnSummaryId = z.string().regex(/^tu_[0-9A-HJKMNP-TV-Z]{26}$/, { e
 export type TurnSummaryId = z.infer<typeof TurnSummaryId>;
 
 /** `GET /api/v1/updates` query: newest first, keyset cursor. */
+/** `repo`: only updates from sessions in this repo linked to the viewer's posting team (as {@link FeedQuery}). */
 export const UpdatesQuery = z.object({
   cursor: CursorString.optional(),
+  repo: GithubRepoName.optional(),
 });
 export type UpdatesQuery = z.infer<typeof UpdatesQuery>;
 

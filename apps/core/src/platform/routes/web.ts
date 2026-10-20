@@ -26,6 +26,7 @@ import { authenticate, bearerFrom } from '../http.js';
 import { takeToken, type BucketSpec } from '../rate-limit.js';
 import { loadActivities, reviewItemsFromRows } from '../mappers.js';
 import { realtimeChannelFor } from '../realtime-channel.js';
+import { postingTeamRepoKey } from '../repo-keys.js';
 import { requireRecentLogin } from '../web-guard.js';
 import { decideReviewTx } from '../review-decide.js';
 import { l0Scan, normalizeUntrusted } from '@y/safety';
@@ -135,9 +136,16 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
     if (!q.ok) return q.res;
     const cur = q.data.cursor ? decodeCursor(q.data.cursor) : null;
     if (q.data.cursor && !cur) return fail(c, 'VALIDATION', 'invalid cursor');
-    const page = await deps.db.asUser(caller.claims, async (tx): Promise<FeedPage> => {
+    const page = await deps.db.asUser(caller.claims, async (tx): Promise<FeedPage | null> => {
       const where: string[] = [`a.status = 'published'`];
       const params: unknown[] = [];
+      // ?repo=owner/repo: one repo linked to the viewer's posting team, by its salted key (never sent).
+      if (q.data.repo) {
+        const scoped = await postingTeamRepoKey(tx, caller.userId, q.data.repo);
+        if (!scoped) return null;
+        params.push(scoped.teamId, scoped.key);
+        where.push(`a.team_id = $${params.length - 1} and a.repo_key = $${params.length}`);
+      }
       if (cur) {
         params.push(cur.at, cur.id);
         where.push(`(a.published_at, a.id::text) < ($${params.length - 1}::timestamptz, $${params.length})`);
@@ -164,6 +172,7 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
         ...(r.rows.length > PAGE && last ? { nextCursor: encodeCursor(last.cursor_at, last.id) } : {}),
       };
     });
+    if (!page) return fail(c, 'NOT_FOUND', 'that repo is not linked to the team your agents post to');
     return c.json(page);
   });
 

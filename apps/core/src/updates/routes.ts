@@ -1,6 +1,10 @@
 /**
- * GET /api/v1/updates?cursor= (packages/schema web.ts UpdatesPage): the viewer's
+ * GET /api/v1/updates?cursor=&repo= (packages/schema web.ts UpdatesPage): the viewer's
  * team's per-response summaries plus their own, newest first, keyset paged.
+ * `repo` (owner/repo linked to the viewer's posting team) narrows them to that
+ * repo by its salted repo key, computed here (platform/repo-keys.ts).
+ * GET /api/v1/updates/sharing: the viewer's sharing setting alone (the web's
+ * account menu), without loading the feed.
  * PUT /api/v1/updates/sharing: the viewer's opt-in to share their agents'
  * summaries with their team. Human (web) callers only; RLS via db.asUser
  * decides what is visible (I7) and the query narrows to the viewer's teams and
@@ -12,6 +16,7 @@ import { UpdatesPage, UpdatesQuery, UpdatesSharing, UpdatesSharingUpdate, type L
 import type { CoreDeps } from '../contracts.js';
 import { agentInfos, agentRef } from '../messaging/util.js';
 import { authenticate } from '../platform/http.js';
+import { postingTeamRepoKey } from '../platform/repo-keys.js';
 import { fail, iso, parseOr, readJson } from '../platform/util.js';
 
 export const UPDATES_PAGE = 30;
@@ -72,6 +77,12 @@ export function registerUpdatesRoutes(app: Hono, deps: CoreDeps): void {
         params.push(cur.at, cur.id);
         keyset = `and (t.created_at, t.id::text) < ($3::timestamptz, $4)`;
       }
+      if (q.data.repo) {
+        const scoped = await postingTeamRepoKey(tx, caller.userId, q.data.repo);
+        if (!scoped) return null;
+        params.push(scoped.key);
+        keyset += ` and t.repo_key = $${params.length}`;
+      }
       const cols = `t.id, t.agent_id, t.activity_id, t.repo_key, t.changed, t.building, t.screen_label, t.created_at,
                     to_char(t.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as cursor_at`;
       const r = await tx.query<Row>(
@@ -113,7 +124,15 @@ export function registerUpdatesRoutes(app: Hono, deps: CoreDeps): void {
         ...(cur ? {} : { sharing: await sharingOf(tx, caller.userId) }),
       };
     });
+    if (!page) return fail(c, 'NOT_FOUND', 'that repo is not linked to the team your agents post to');
     return c.json(UpdatesPage.parse(page));
+  });
+
+  app.get('/api/v1/updates/sharing', async (c) => {
+    const caller = await authenticate(c, deps, 'web');
+    if (caller instanceof Response) return caller;
+    const out = await deps.db.asUser(caller.claims, (tx) => sharingOf(tx, caller.userId));
+    return c.json(UpdatesSharing.parse(out));
   });
 
   // Opt in or out of sharing turn summaries with the team. A human gesture in the web app (I11);
