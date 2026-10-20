@@ -3,8 +3,13 @@ import { useMemo } from 'react'
 import { gestureKeys } from '@/lib/idempotency'
 import { api } from './client'
 import type {
+  AcceptedInvite,
   Activity,
   AgentProfile,
+  CreatedInvite,
+  InvitePreview,
+  TeamDetail,
+  TeamInvite,
   ClaimKind,
   Comment,
   ConnectToken,
@@ -293,5 +298,77 @@ export function useVerifyClaim(id: string) {
   return useMutation({
     mutationFn: (v: { kind: ClaimKind; value: string }) => api.post<VerifyClaimResult>(`/products/${id}/claims/verify`, v),
     onSuccess: (r) => qc.setQueryData<Product[]>(['products'], (list) => list?.map((x) => (x.id === r.product.id ? r.product : x))),
+  })
+}
+
+// ---------- teams: create, invite links, linked repos (packages/schema teams.ts) ----------
+export const useTeamDetail = (slug: string | undefined) =>
+  useQuery({ queryKey: ['team-detail', slug], queryFn: () => api.get<TeamDetail>(`/teams/${slug}`), enabled: !!slug })
+
+/**
+ * Creating or joining a team changes what every page shows: refetch everything except invite
+ * previews (a used-up link would read as invalid on the page that just joined through it).
+ */
+function useTeamsChanged() {
+  const qc = useQueryClient()
+  return () => qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== 'invite-preview' })
+}
+
+export function useCreateTeam() {
+  const changed = useTeamsChanged()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { name: string; slug?: string }) => api.post<TeamDetail>('/teams', v),
+    onSuccess: (d) => {
+      qc.setQueryData(['team-detail', d.team.slug], d)
+      void changed()
+    },
+  })
+}
+
+function useTeamDetailWrite<V>(slug: string, fn: (v: V) => Promise<TeamDetail>) {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: fn, onSuccess: (d) => qc.setQueryData(['team-detail', slug], d) })
+}
+
+export const useAddTeamRepo = (slug: string) => useTeamDetailWrite(slug, (repo: string) => api.post<TeamDetail>(`/teams/${slug}/repos`, { repo }))
+export const useRemoveTeamRepo = (slug: string) =>
+  useTeamDetailWrite(slug, (id: string) => api.post<TeamDetail>(`/teams/${slug}/repos/${encodeURIComponent(id)}/remove`, {}))
+
+/** Owners and admins only (members get 403). */
+export const useTeamInvites = (slug: string | undefined, enabled: boolean) =>
+  useQuery({ queryKey: ['team-invites', slug], queryFn: () => api.get<{ items: TeamInvite[] }>(`/teams/${slug}/invites`), enabled: !!slug && enabled })
+
+export function useCreateInvite(slug: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { role?: 'admin' | 'member'; maxUses?: number; expiresInHours?: number }) => api.post<CreatedInvite>(`/teams/${slug}/invites`, v),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['team-invites', slug] }),
+  })
+}
+
+export function useRevokeInvite(slug: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.post<{ items: TeamInvite[] }>(`/teams/${slug}/invites/${encodeURIComponent(id)}/revoke`, {}),
+    onSuccess: (l) => qc.setQueryData(['team-invites', slug], l),
+  })
+}
+
+/** Read-only: what an invite link joins. Joining is useAcceptInvite, on the Join click only. */
+export const useInvitePreview = (token: string | undefined) =>
+  useQuery({
+    queryKey: ['invite-preview', token],
+    queryFn: () => api.post<InvitePreview>('/invites/preview', { token }),
+    enabled: !!token,
+    retry: false,
+    staleTime: Infinity,
+  })
+
+export function useAcceptInvite() {
+  const changed = useTeamsChanged()
+  return useMutation({
+    mutationFn: (token: string) => api.post<AcceptedInvite>('/invites/accept', { token }),
+    onSuccess: () => void changed(),
   })
 }

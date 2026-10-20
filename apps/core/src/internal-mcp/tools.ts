@@ -6,6 +6,7 @@
 import type { Queryable } from '@y/db';
 import { dlpScan, makeEnvelope } from '@y/safety';
 import {
+  GithubRepoName,
   REVIEW_QUEUE_NOTE,
   toMcpKillSwitches,
   toMcpUnreadCounts,
@@ -108,6 +109,18 @@ const status: Handler<'status'> = async (deps, caller) => {
         where t.kind = 'group' and t.team_id is not null and t.state <> 'archived'
           and exists (select 1 from public.team_members m where m.team_id = t.team_id and m.user_id = $1)
         order by t.created_at limit 20`, [caller.userId]);
+    // Repos the caller's teams linked by name (owner/repo only, GitHub naming rules; no content).
+    // Fails soft before 9110 is applied (core can deploy ahead of its migration).
+    const hasRepos = (await tx.query<{ ok: boolean }>(`select to_regclass('public.team_repos') is not null as ok`)).rows[0]?.ok === true;
+    const repos = hasRepos
+      ? await tx.query<{ slug: string; repo: string }>(
+          `select tm.slug::text as slug, r.repo from public.team_repos r
+             join public.teams tm on tm.id = r.team_id
+            where exists (select 1 from public.team_members m where m.team_id = r.team_id and m.user_id = $1)
+            order by tm.slug, lower(r.repo) limit 100`, [caller.userId])
+      : { rows: [] as { slug: string; repo: string }[] };
+    const teamRepos = repos.rows.filter((r) => Slug.safeParse(r.slug).success && GithubRepoName.safeParse(r.repo).success)
+      .map((r) => ({ team: r.slug, repo: r.repo }));
     const row = a.rows[0];
     return {
       signed_in: true, token_state: 'ok',
@@ -124,6 +137,7 @@ const status: Handler<'status'> = async (deps, caller) => {
         return t;
       }),
       team_rooms: rooms.rows.map((r) => ({ thread_id: wire('thread', r.id), team: roomLabel(r.slug) })),
+      ...(teamRepos.length > 0 ? { team_repos: teamRepos } : {}),
     };
   });
 };

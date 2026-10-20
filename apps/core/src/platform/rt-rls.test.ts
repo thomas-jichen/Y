@@ -54,15 +54,16 @@ describe('default team (9003) and real GitHub accounts (#0)', () => {
       appMetadata: { provider: 'github', providers: ['github'] },
     });
 
-  it('a GitHub sign-up joins a dev-login dev team (9003); dev logins honour `team`', async () => {
+  it('a GitHub sign-up no longer joins a dev-login dev team (9110); dev logins honour `team`', async () => {
     const devUser = await devLogin('judge-dev');
     expect(await teamsOf(devUser)).toEqual(['dev']);
 
-    expect(await teamsOf(await githubSignUp('late-real', '5550001'))).toEqual(['dev']);
+    // 9110: sign-ups create a team or join through an invite link instead.
+    expect(await teamsOf(await githubSignUp('late-real', '5550001'))).toEqual([]);
 
-    // A user with no GitHub identity (local dev / test fixtures) keeps the old behaviour.
+    // A user with no GitHub identity (local dev / test fixtures) joins no team either (9110).
     const local = await createAuthUser(env.db, { userMetadata: { user_name: 'local-dev' } });
-    expect(await teamsOf(local)).toEqual(['dev']);
+    expect(await teamsOf(local)).toEqual([]);
 
     // Dev login: default joins dev; a named team or team:null keeps the user out of dev.
     expect(await teamsOf(await devLogin('judge-two'))).toEqual(['dev']);
@@ -70,9 +71,9 @@ describe('default team (9003) and real GitHub accounts (#0)', () => {
     expect(await teamsOf(await devLogin('stranger-x', null))).toEqual([]);
   });
 
-  it('an operator-made dev team (no dev logins) still enrolls GitHub sign-ups', async () => {
+  it('an operator-made dev team (no dev logins) no longer enrolls GitHub sign-ups (9110)', async () => {
     await seedTeam(env.db, 'dev', [alice]);
-    expect(await teamsOf(await githubSignUp('real-one', '5550002'))).toEqual(['dev']);
+    expect(await teamsOf(await githubSignUp('real-one', '5550002'))).toEqual([]);
   });
 });
 

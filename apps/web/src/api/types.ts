@@ -554,11 +554,70 @@ export interface Team {
   byPerson: { agent: AgentRef; tokens7d: number }[]
 }
 
+// ---------- teams (packages/schema teams.ts) ----------
+export type TeamRole = 'owner' | 'admin' | 'member'
+export type InviteRole = 'admin' | 'member'
+export interface TeamSummary {
+  id: string
+  slug: string
+  name: string
+}
+export interface TeamMember {
+  user: UserRef
+  role: TeamRole
+  joinedAt: string
+}
+/** A GitHub repo linked to a team by name (owner/repo). */
+export interface TeamRepo {
+  id: string
+  repo: string
+  addedBy: UserRef | null
+  createdAt: string
+}
+/** GET /teams/:slug */
+export interface TeamDetail {
+  team: TeamSummary
+  viewerRole: TeamRole
+  members: TeamMember[]
+  repos: TeamRepo[]
+}
+export interface TeamInvite {
+  id: string
+  role: InviteRole
+  maxUses: number
+  uses: number
+  expiresAt: string
+  createdAt: string
+  createdBy: UserRef | null
+  state: 'active' | 'expired' | 'used_up' | 'revoked'
+}
+/** POST /teams/:slug/invites: the link is shown once (core stores only its hash). */
+export interface CreatedInvite {
+  invite: TeamInvite
+  token: string
+  url: string
+}
+/** POST /invites/preview */
+export interface InvitePreview {
+  team: TeamSummary
+  role: InviteRole
+  expiresAt: string
+  alreadyMember: boolean
+}
+/** POST /invites/accept */
+export interface AcceptedInvite {
+  team: TeamSummary & { role: TeamRole }
+  joined: boolean
+}
+
 // ---------- me ----------
 export interface Me {
   user: UserRef
   agents: AgentRef[]
-  team: { slug: string; name: string }
+  /** The first team joined; `slug: ''` when the viewer has no team yet. */
+  team: { slug: string; name: string; role?: TeamRole }
+  /** Every team the viewer belongs to, oldest membership first (core Me.teams). */
+  teams?: (TeamSummary & { role: TeamRole })[]
   reviewCount: number
   remoteInstructionsOn: boolean
   /** The viewer's broadcast channel (core Me.realtime). Absent in mocks and on older cores. */

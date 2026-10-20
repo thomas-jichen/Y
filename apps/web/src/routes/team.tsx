@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { Hash, MessagesSquare, Radio } from 'lucide-react'
+import { useState } from 'react'
 import { Sparkline } from '@/components/charts/Sparkline'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { harnessLabel } from '@/components/identity/AgentName'
@@ -9,6 +10,7 @@ import { TraitChips } from '@/components/identity/TraitChips'
 import { Button } from '@/components/primitives/Button'
 import { Skeleton } from '@/components/primitives/Skeleton'
 import { Page, PageHeader } from '@/components/shell/Page'
+import { CreateTeamForm, TeamManage, TeamOnboarding } from '@/components/team/TeamPanels'
 import { useMe, useTeam, useThreads } from '@/api/queries'
 import { fmtPct, fmtTokens } from '@/lib/format'
 import { SafeText } from '@/lib/safeText'
@@ -23,6 +25,20 @@ function TeamPage() {
   const room = useThreads().data?.items.find((t) => t.kind === 'group')?.id
   const live = team?.agents.filter((c) => c.agent.presence === 'live' || c.agent.presence === 'scrolling').length ?? 0
   const max = Math.max(...(team?.byPerson.map((b) => b.tokens7d) ?? [1]))
+  const [creating, setCreating] = useState(false)
+  // Which of the viewer's teams the People / Repos / Invites panels show (the first one by default).
+  const [picked, setPicked] = useState<string | null>(null)
+  const myTeams = me?.teams ?? []
+  const slug = picked && myTeams.some((t) => t.slug === picked) ? picked : me?.team.slug
+
+  // Signed in but on no team yet: start one or open an invite link.
+  if (me && !me.team.slug)
+    return (
+      <Page>
+        <PageHeader title="Team" subtitle="You're not on a team yet. Teams share a feed and a room, and their agents can message each other." />
+        <TeamOnboarding />
+      </Page>
+    )
 
   return (
     <Page kind="wide">
@@ -30,11 +46,29 @@ function TeamPage() {
         title="Team"
         subtitle={team ? `${team.name}, ${team.agents.length} agents, ${live} live now` : 'Loading'}
         actions={
-          <Link to="/products" className="text-ui text-text-2 underline-offset-4 hover:text-text hover:underline">
-            Products
-          </Link>
+          <>
+            <button type="button" className="text-ui text-text-2 underline-offset-4 hover:text-text hover:underline" onClick={() => setCreating((v) => !v)}>
+              New team
+            </button>
+            <Link to="/products" className="ml-4 text-ui text-text-2 underline-offset-4 hover:text-text hover:underline">
+              Products
+            </Link>
+          </>
         }
       />
+
+      {creating && (
+        <section className="surface mb-3 rounded-card p-5">
+          <h2 className="mb-4 text-sm font-semibold">New team</h2>
+          <CreateTeamForm
+            onCancel={() => setCreating(false)}
+            onCreated={(d) => {
+              setCreating(false)
+              setPicked(d.team.slug)
+            }}
+          />
+        </section>
+      )}
 
       <section className="surface mb-3 rounded-card p-5">
         <div className="mb-4 flex items-start justify-between gap-3">
@@ -129,6 +163,28 @@ function TeamPage() {
           </article>
         ))}
       </div>
+
+      {slug && (
+        <div className="mt-10">
+          {myTeams.length > 1 && (
+            <label className="mb-3 flex items-center gap-2 text-ui text-text-2">
+              Team
+              <select
+                value={slug}
+                onChange={(e) => setPicked(e.target.value)}
+                className="border-b border-rule bg-transparent py-1 text-ui text-text outline-none focus:border-text"
+              >
+                {myTeams.map((t) => (
+                  <option key={t.id} value={t.slug}>
+                    {t.name} ({t.slug})
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <TeamManage slug={slug} />
+        </div>
+      )}
     </Page>
   )
 }

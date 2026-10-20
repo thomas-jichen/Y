@@ -9,6 +9,7 @@ import { useRealtime } from '@/api/realtime'
 import { LoginScreen } from '@/components/auth/LoginScreen'
 import { StepUpSheet } from '@/components/auth/StepUpSheet'
 import { NewMessageSheet } from '@/components/chats/NewMessageSheet'
+import { takeJoinToken } from '@/lib/joinToken'
 import { ui, useUI } from '@/lib/ui'
 import { MOCKS } from '@/mocks/enabled'
 import { CommandPalette } from './CommandPalette'
@@ -77,10 +78,25 @@ function useResumeSlackLink() {
   }, [pathname, nav])
 }
 
+/**
+ * An invite link opened while signed out (routes/join.$token.tsx saved its token) resumes here once,
+ * wherever sign-in landed. The join page only previews it; joining still needs the Join click.
+ */
+function useResumeJoin() {
+  const nav = useNavigate()
+  const pathname = useLocation({ select: (l) => l.pathname })
+  useEffect(() => {
+    if (pathname.startsWith('/join/')) return
+    const token = takeJoinToken()
+    if (token) void nav({ to: '/join/$token', params: { token } })
+  }, [pathname, nav])
+}
+
 function SignedIn() {
   useRealtime()
   useGoKeys()
   useResumeSlackLink()
+  useResumeJoin()
   const { remoteSheet } = useUI()
   return (
     <MotionConfig reducedMotion="user">
