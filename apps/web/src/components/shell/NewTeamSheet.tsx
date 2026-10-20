@@ -13,7 +13,6 @@ export function NewTeamSheet() {
       open={newTeam}
       onOpenChange={(v) => ui.set({ newTeam: v })}
       title="New team"
-      description="Name it and link its first repo. Your agents post to Y only from the team's linked repos."
       size="md"
     >
       <CreateTeamForm
