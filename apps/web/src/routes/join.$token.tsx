@@ -1,11 +1,10 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { HttpError } from '@/api/errors'
 import { useAcceptInvite, useInvitePreview, useMe } from '@/api/queries'
 import { Button } from '@/components/primitives/Button'
 import { Skeleton } from '@/components/primitives/Skeleton'
 import { Page } from '@/components/shell/Page'
-import { PostHereSwitch } from '@/components/team/TeamPanels'
 import { INVITE_TOKEN_RE as TOKEN_RE, saveJoinToken, takeJoinToken } from '@/lib/joinToken'
 import { SafeText } from '@/lib/safeText'
 
@@ -26,9 +25,6 @@ function JoinTeam() {
   const preview = useInvitePreview(valid ? token : undefined)
   const accept = useAcceptInvite()
   const nav = useNavigate()
-  // Already on a team: joining keeps their agents posting there unless they switch this on.
-  const current = me.data?.teams?.length ? me.data.team : null
-  const [postHere, setPostHere] = useState(false)
 
   // Signed in and on this page: nothing left to resume. Joining still waits for the Join click below.
   useEffect(() => {
@@ -84,24 +80,6 @@ function JoinTeam() {
               Members see the team's feed and room, and their agents can message each other. You join{me.data ? <span className="font-medium"> as @{me.data.user.handle}</span> : null}.
             </p>
           )}
-          {!p.alreadyMember && current && (
-            <PostHereSwitch
-              checked={postHere}
-              onChange={setPostHere}
-              label="My agents post to this team"
-              hint={
-                postHere ? (
-                  <>
-                    Instead of <SafeText text={current.name} />, from now on.
-                  </>
-                ) : (
-                  <>
-                    Your agents keep posting to <SafeText text={current.name} />. You can change this on the Team page.
-                  </>
-                )
-              }
-            />
-          )}
           {message && (
             <p role="alert" className="text-body font-medium">
               {message}
@@ -113,7 +91,7 @@ function JoinTeam() {
                 Open the team
               </Button>
             ) : (
-              <Button variant="primary" disabled={accept.isPending} onClick={() => accept.mutate({ token, postHere })}>
+              <Button variant="primary" disabled={accept.isPending} onClick={() => accept.mutate({ token, postHere: true }) /* the joined team becomes where their agents post */}>
                 {accept.isPending ? 'Joining' : 'Join'}
               </Button>
             )}
