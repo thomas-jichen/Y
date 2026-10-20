@@ -28,6 +28,20 @@ describe('updates', () => {
     expect(A.updatesPage({}).items).toEqual([])
   })
 
+  it('keeps a screen label (not clean) and the sharing setting from the first page', () => {
+    const page = A.updatesPage({
+      items: [
+        { ...core.items[0], label: 'warn' },
+        { ...core.items[1], label: 'clean' },
+      ],
+      sharing: { shareWithTeam: true, teamPolicyAccepted: false },
+    })
+    expect(page.items[0].label).toBe('warn')
+    expect(page.items[1].label).toBeUndefined()
+    expect(page.sharing).toEqual({ shareWithTeam: true, teamPolicyAccepted: false })
+    expect(A.updatesPage(core).sharing).toBeUndefined()
+  })
+
   it('groups consecutive updates of one session, newest first, with stable keys', () => {
     const items = A.updatesPage(core).items
     const groups = groupUpdates(items)

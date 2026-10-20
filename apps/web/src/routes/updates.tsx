@@ -1,11 +1,13 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { AnimatePresence, motion } from 'motion/react'
 import { useMemo } from 'react'
-import { useMe, useUpdates } from '@/api/queries'
-import type { TurnUpdate } from '@/api/types'
+import { useMe, useUpdates, useUpdatesSharing } from '@/api/queries'
+import type { TurnUpdate, UpdatesSharing } from '@/api/types'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { AgentName } from '@/components/identity/AgentName'
+import { Switch } from '@/components/primitives/Switch'
 import { Page } from '@/components/shell/Page'
+import { ScreenChip } from '@/components/trust/TrustBadge'
 import { groupUpdates, type UpdateGroup as Group } from '@/components/updates/group'
 import { fmtAgo, fmtClock } from '@/lib/format'
 import { SafeText } from '@/lib/safeText'
@@ -24,6 +26,12 @@ function UpdateRow({ u }: { u: TurnUpdate }) {
           <dt className="inline font-medium">Changed: </dt>
           <dd className="inline">
             <SafeText text={u.changed} />
+            {u.label && (
+              <>
+                {' '}
+                <ScreenChip label={u.label} compact />
+              </>
+            )}
           </dd>
         </div>
         <div className="text-text-2">
@@ -64,12 +72,43 @@ function UpdateGroup({ g, mine }: { g: Group; mine: boolean }) {
   )
 }
 
+/** The viewer's own consent: their agents' updates stay private until they share them. */
+function SharingRow({ sharing }: { sharing: UpdatesSharing }) {
+  const set = useUpdatesSharing()
+  const on = sharing.teamPolicyAccepted || (set.isPending ? set.variables === true : sharing.shareWithTeam)
+  const note = sharing.teamPolicyAccepted
+    ? 'You accepted your team’s policy, so your updates are shared with your team.'
+    : on
+      ? 'Teammates see what your agents changed and are building. Turning this off hides earlier updates from them too.'
+      : 'Only you see your agents’ updates.'
+  return (
+    <label className="mb-10 flex items-center justify-between gap-6 border-y border-rule py-3 text-ui">
+      <span>
+        Share my agents’ updates with my team
+        <span className="block text-caption text-text-2">{note}</span>
+        {set.isError && (
+          <span role="alert" className="block text-caption font-medium">
+            Couldn’t save that. Try again.
+          </span>
+        )}
+      </span>
+      <Switch
+        checked={on}
+        disabled={sharing.teamPolicyAccepted || set.isPending}
+        onCheckedChange={(v) => set.mutate(v)}
+        label="Share my agents’ updates with my team"
+      />
+    </label>
+  )
+}
+
 function Updates() {
   const { data, isPending, isError, hasNextPage, fetchNextPage, isFetchingNextPage } = useUpdates()
   const { data: me } = useMe()
   const myIds = useMemo(() => new Set(me?.agents.map((a) => a.id)), [me])
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
   const groups = useMemo(() => groupUpdates(items), [items])
+  const sharing = data?.pages[0]?.sharing
 
   return (
     <Page>
@@ -77,6 +116,8 @@ function Updates() {
         <h1 className="display text-headline">What agents are building</h1>
         <p className="mt-3 text-body text-text-2">A short note after every response from your team's agents: what changed, and where it is heading.</p>
       </header>
+
+      {sharing && <SharingRow sharing={sharing} />}
 
       <div className="divide-y divide-rule">
         {isPending &&
@@ -110,7 +151,7 @@ function Updates() {
               <Link to="/connect" className="underline decoration-1 underline-offset-4">
                 Connect a machine
               </Link>{' '}
-              to start. Agents that share stats only send no updates.
+              to start. Agents that share stats only send no updates, and teammates' updates show up once they share them.
             </div>
           </div>
         )}

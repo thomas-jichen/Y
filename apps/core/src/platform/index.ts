@@ -77,7 +77,12 @@ export async function createDeps(
   if (opts.migrateCore ?? config.mode === 'server') await migrateCore(db);
   const now = opts.now ?? (() => new Date());
   const log = opts.log ?? defaultLog;
-  if (config.llm !== 'mock') log('warn', 'llm=anthropic is not wired in v0; distill uses the deterministic heuristic');
+  if (config.llm !== 'mock') {
+    log('warn', 'llm=anthropic: distill still uses the deterministic heuristic; turn summaries (Updates tab) use Haiku');
+    if (!config.anthropicApiKey) log('warn', 'llm=anthropic without ANTHROPIC_API_KEY: turn summaries (Updates tab) are disabled');
+  } else if (config.production) {
+    log('warn', 'llm=mock in production: turn summaries (Updates tab) are disabled; set Y_LLM=anthropic and ANTHROPIC_API_KEY');
+  }
   const auth = new PlatformAuth(config, db, now, opts.jwks ? { jwks: opts.jwks } : {});
   const bus =
     config.mode === 'serverless'

@@ -6,8 +6,9 @@
  * sampling params, no tools, no forced tool_choice, no viewer data (I9). The
  * digest goes in as one JSON-encoded untrusted string. A `refusal` stop
  * yields null (the turn gets no summary). The mock (`Y_LLM=mock`) is
- * deterministic and offline: counts from TOOL lines and the turn's first
- * prompt line, so tests exercise the same screening as model output.
+ * deterministic and offline, and templated from tool counts only: it never
+ * copies digest text (prompts, replies, tool arguments). Production never
+ * uses it: with `Y_LLM=mock` in production no summaries are written.
  *
  * Whatever a summarizer returns is untrusted: the job normalizes, redacts,
  * L0-screens and DLP-checks it before storing (job.ts).
@@ -15,7 +16,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { LLM_MODELS, TurnSummaryDraft, encodeUntrustedContent, jsonSchemaFormat, turnSummaryJsonSchema } from '@y/schema';
 import type { CoreConfig } from '../contracts.js';
-import { maskEnvironment } from '../platform/distill.js';
 
 export interface TurnSummarizer {
   readonly name: string;
@@ -93,12 +93,17 @@ export function createAnthropicTurnSummarizer(opts: AnthropicSummarizerOptions =
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
-/** Deterministic offline summarizer for `Y_LLM=mock` (tests, local dev). */
+/**
+ * Deterministic offline summarizer for `Y_LLM=mock` (tests, local dev). Both fields are fixed
+ * templates filled with counts of known tool names; no USER, ASSISTANT, FINAL or tool-argument text
+ * ever reaches them, so a teammate never sees what the author typed.
+ */
 export function createMockTurnSummarizer(): TurnSummarizer {
   return {
     name: 'mock',
     async summarize(digest) {
       const lines = digest.split('\n');
+      // Only the count of TOOL lines and whether their name is a known edit / shell tool: no name is echoed.
       const tools = lines.flatMap((l) => {
         const m = /^TOOL ([^:]{1,80}):/.exec(l);
         return m?.[1] ? [m[1].trim()] : [];
@@ -112,9 +117,7 @@ export function createMockTurnSummarizer(): TurnSummarizer {
         other ? `made ${other} other tool call${other === 1 ? '' : 's'}` : '',
       ].filter(Boolean);
       const changed = parts.length ? `${parts.join(', ').replace(/^./, (c) => c.toUpperCase())}.` : 'Looked around the codebase.';
-      const prompt = lines.find((l) => l.startsWith('USER: '))?.slice('USER: '.length).replace(/ ⏎ /g, ' ').trim() ?? '';
-      const building = prompt ? `Working on: ${maskEnvironment(prompt)}` : 'Continuing the current task.';
-      return { changed, building };
+      return { changed, building: 'Continuing the current task.' };
     },
   };
 }
@@ -128,14 +131,19 @@ export function setTurnSummarizer(deps: object, s: TurnSummarizer | null): void 
 
 const cache = new WeakMap<CoreConfig, TurnSummarizer | null>();
 
-/** The configured summarizer: mock for `Y_LLM=mock`, Anthropic when a key is set, else none (no summaries). */
+/**
+ * The configured summarizer: Anthropic for `Y_LLM=anthropic` with ANTHROPIC_API_KEY; the mock for
+ * `Y_LLM=mock` outside production; else none (no summaries are written).
+ */
 export function turnSummarizerFor(deps: { config: CoreConfig }): TurnSummarizer | null {
   const o = overrides.get(deps);
   if (o) return o;
   if (cache.has(deps.config)) return cache.get(deps.config) ?? null;
   const s =
     deps.config.llm === 'mock'
-      ? createMockTurnSummarizer()
+      ? deps.config.production
+        ? null
+        : createMockTurnSummarizer()
       : deps.config.anthropicApiKey
         ? createAnthropicTurnSummarizer({ apiKey: deps.config.anthropicApiKey })
         : null;

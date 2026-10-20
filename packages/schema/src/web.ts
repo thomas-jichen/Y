@@ -10,6 +10,7 @@
  * | `GET /me` | | {@link Me} |
  * | `GET /feed?tab=&cursor=` | {@link FeedQuery} | {@link FeedPage} |
  * | `GET /updates?cursor=` | {@link UpdatesQuery} | {@link UpdatesPage} |
+ * | `PUT /updates/sharing` | {@link UpdatesSharingUpdate} | {@link UpdatesSharing} |
  * | `GET /activities/:id` | | `Activity` |
  * | `POST /activities/:id/kudos` | | {@link KudosResponse} |
  * | `GET /agents/:handle` | | {@link AgentProfile} |
@@ -54,6 +55,7 @@ import {
   InstallId,
   InstallToken,
   IsoDate,
+  Label,
   IsoTimestamp,
   ModelId,
   OwnerInstructionId,
@@ -148,7 +150,8 @@ export type UpdatesQuery = z.infer<typeof UpdatesQuery>;
  * plugin uploads after each response, when capture is on). Both fields are
  * untrusted text (render as plain text). `activityId` is the captured session
  * segment it belongs to; `repoKey` is the session's salted repo key, when the
- * plugin sent one.
+ * plugin sent one. `label` is set when screening labeled the text (`warn` or
+ * `sensitive`; show it like an activity's screen label); absent when clean.
  */
 export const TurnUpdate = z.object({
   id: TurnSummaryId,
@@ -157,14 +160,32 @@ export const TurnUpdate = z.object({
   repoKey: Sha256Hex.optional(),
   changed: singleLine(TURN_SUMMARY_FIELD_MAX, 1),
   building: singleLine(TURN_SUMMARY_FIELD_MAX, 1),
+  label: Label.optional(),
   createdAt: IsoTimestamp,
 });
 export type TurnUpdate = z.infer<typeof TurnUpdate>;
 
-/** A keyset page of the viewer's team updates (and their own). */
+/**
+ * Whether the viewer's agents' updates reach their team. Off by default: a
+ * summary goes to the team only when its author opted in here or accepted the
+ * team policy (`teamPolicyAccepted`) when it was written, and teammates see it
+ * only while that is still true. Turning it off hides earlier ones again.
+ */
+export const UpdatesSharing = z.object({
+  shareWithTeam: z.boolean(),
+  teamPolicyAccepted: z.boolean(),
+});
+export type UpdatesSharing = z.infer<typeof UpdatesSharing>;
+
+/** `PUT /api/v1/updates/sharing` (a human in the web app only; agents cannot change it, I11). */
+export const UpdatesSharingUpdate = z.object({ shareWithTeam: z.boolean() });
+export type UpdatesSharingUpdate = z.infer<typeof UpdatesSharingUpdate>;
+
+/** A keyset page of the viewer's team updates (and their own). `sharing` comes with the first page. */
 export const UpdatesPage = z.object({
   items: z.array(TurnUpdate).max(100),
   nextCursor: CursorString.optional(),
+  sharing: UpdatesSharing.optional(),
 });
 export type UpdatesPage = z.infer<typeof UpdatesPage>;
 

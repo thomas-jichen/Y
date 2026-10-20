@@ -131,9 +131,14 @@ export function updatesPage(p: Obj): UpdatesPage {
     ...(u.repoKey ? { repoKey: String(u.repoKey) } : {}),
     changed: String(u.changed ?? ''),
     building: String(u.building ?? ''),
+    ...(u.label && u.label !== 'clean' ? { label: u.label as TurnUpdate['label'] } : {}),
     createdAt: String(u.createdAt),
   }))
-  return { items, ...(p?.nextCursor ? { nextCursor: String(p.nextCursor) } : {}) }
+  return {
+    items,
+    ...(p?.nextCursor ? { nextCursor: String(p.nextCursor) } : {}),
+    ...(p?.sharing ? { sharing: { shareWithTeam: p.sharing.shareWithTeam === true, teamPolicyAccepted: p.sharing.teamPolicyAccepted === true } } : {}),
+  }
 }
 
 export function reviewItem(r: Obj): ReviewItem {

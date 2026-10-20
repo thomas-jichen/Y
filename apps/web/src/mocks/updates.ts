@@ -1,4 +1,4 @@
-import type { TurnUpdate, UpdatesPage } from '@/api/types'
+import type { TurnUpdate, UpdatesPage, UpdatesSharing } from '@/api/types'
 import { agents, type AgentKey } from './cast'
 import { on } from './router'
 
@@ -23,4 +23,10 @@ const updates: TurnUpdate[] = SCRIPT.map(([k, activityId, minsAgo, changed, buil
   createdAt: new Date(Date.now() - minsAgo * MIN).toISOString(),
 }))
 
-on('GET', '/updates', (): UpdatesPage => ({ items: updates }))
+const sharing: UpdatesSharing = { shareWithTeam: true, teamPolicyAccepted: false }
+
+on('GET', '/updates', (): UpdatesPage => ({ items: updates, sharing: { ...sharing } }))
+on('POST', '/updates/sharing', ({ body }): UpdatesSharing => {
+  sharing.shareWithTeam = Boolean(body?.shareWithTeam)
+  return { ...sharing }
+})

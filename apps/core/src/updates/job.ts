@@ -3,17 +3,24 @@
  * non-empty digest → at most one row in public.turn_summaries.
  *
  * Reads that chunk's sealed digest delta (never copied anywhere: it stays in
- * activity_chunks under the existing 24 h purge, I6), asks the summarizer for
- * {changed, building}, then normalizes, redacts (pass 2), masks, L0-screens and
- * DLP-checks the output (I8, I10). Anything that fails is dropped. Kill
- * switches `ingest` and `network_content` (or failing to read them) skip the
- * job. Chunks without a digest (share mode 'stats'), prompt-only turns (no
- * TOOL/CONFIG lines) and already summarized chunks are skipped. The web is
- * told with an ids-only `activity.updated` event (I3).
+ * activity_chunks under the existing 24 h purge, I6), runs server pass-2
+ * redaction on it, asks the summarizer for {changed, building}, then
+ * normalizes, redacts (pass 2), masks, L0-screens and DLP-checks the output
+ * (I8, I10). Anything that fails is dropped. Kill switches `ingest` and
+ * `network_content` (or failing to read them) skip the job. Chunks without a
+ * digest (share mode 'stats'), prompt-only turns (no TOOL/CONFIG lines) and
+ * already summarized chunks are skipped.
+ *
+ * Audience: the row carries a team only when the author consents (opted in via
+ * public.update_sharing, or accepted that team's policy) and the team is
+ * unambiguous (see {@link shareTeamFor}); otherwise only the author sees it.
+ * No event is published per turn: the web polls /updates while that page is
+ * open, so busy teams don't refetch the feed on every response.
  */
 import { REDACTION_MARKER_RE, TURN_SUMMARY_FIELD_MAX, type Label } from '@y/schema';
 import { redact } from '@y/redact';
 import { actionFor, dlpScan, l0Scan, normalizeUntrusted } from '@y/safety';
+import type { Tx } from '@y/db';
 import type { CoreDeps, JobHandler } from '../contracts.js';
 import { maskEnvironment } from '../platform/distill.js';
 import { screenVariants, type SealedChunk } from '../platform/pipeline.js';
@@ -100,6 +107,28 @@ interface ChunkRow {
   done: boolean;
 }
 
+/**
+ * The team a summary may go to, or null (author only). It is the activity's team, i.e. the team
+ * ingest files this work under (with the teams feature, the posting team the human chose). An author
+ * on several teams shares with none while no posting-team choice exists (no public.user_posting_team
+ * table), so work is never broadcast to a team just because it was joined first. Then the author must
+ * still be on that team and consent: the update_sharing opt-in or that team's policy accepted.
+ */
+export async function shareTeamFor(tx: Tx, ownerUserId: string, activityTeamId: string | null): Promise<string | null> {
+  if (!activityTeamId) return null;
+  const r = await tx.query<{ ok: boolean }>(
+    `select exists (
+       select 1 from public.team_members m
+        where m.team_id = $2 and m.user_id = $1
+          and (m.policy_accepted_version is not null
+               or exists (select 1 from public.update_sharing u where u.user_id = $1 and u.share_with_team)))
+       and (to_regclass('public.user_posting_team') is not null
+            or (select count(*) from public.team_members m where m.user_id = $1) = 1) as ok`,
+    [ownerUserId, activityTeamId],
+  );
+  return r.rows[0]?.ok ? activityTeamId : null;
+}
+
 const turnSummary: JobHandler = async (payload, deps) => {
   const sessionId = payload.sessionId;
   const seq = payload.seq;
@@ -134,6 +163,13 @@ const turnSummary: JobHandler = async (payload, deps) => {
   }
   // Rate/cost guard: a prompt-only turn (no tool calls, no edits) has nothing to report.
   if (!digest.trim() || !digestShowsWork(digest)) return;
+  // Server pass 2 on the input too (PLAN §7): an old or custom client's missed secret never reaches the model.
+  const pass2 = redact(digest);
+  if (pass2.dropped) {
+    deps.log('info', 'turn summary skipped', { reason: 'digest_dropped_by_pass2', seq });
+    return;
+  }
+  digest = pass2.text;
 
   // The model call runs outside any transaction (it holds no DB connection while it waits).
   const draft = await summarizer.summarize(digest);
@@ -152,31 +188,13 @@ const turnSummary: JobHandler = async (payload, deps) => {
   }
 
   await deps.db.asService(async (tx) => {
-    const ins = await tx.query<{ id: string }>(
-      `insert into public.turn_summaries (agent_id, owner_user_id, team_id, session_id, chunk_seq, activity_id, repo_key, changed, building, model)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       on conflict (session_id, chunk_seq) do nothing
-       returning id`,
-      [row.agent_id, row.owner_user_id, row.team_id, sessionId, seq, row.activity_id, row.repo_key, changed, building, summarizer.name.slice(0, 80)],
+    const team = await shareTeamFor(tx, row.owner_user_id, row.team_id);
+    await tx.query(
+      `insert into public.turn_summaries (agent_id, owner_user_id, team_id, session_id, chunk_seq, activity_id, repo_key, changed, building, screen_label, model)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       on conflict (session_id, chunk_seq) do nothing`,
+      [row.agent_id, row.owner_user_id, team, sessionId, seq, row.activity_id, row.repo_key, changed, building, screened.label, summarizer.name.slice(0, 80)],
     );
-    if (!ins.rows[0]) return;
-    // Live update for open web clients: ids only (I3). The web refetches /updates on activity events.
-    const audience = row.team_id
-      ? (
-          await tx.query<{ user_id: string }>('select user_id from public.team_members where team_id = $1 order by joined_at limit 100', [row.team_id])
-        ).rows.map((r) => r.user_id)
-      : [];
-    if (row.activity_id) {
-      await deps.bus.publish(
-        {
-          type: 'activity.updated',
-          audienceAgentIds: [],
-          audienceUserIds: [...new Set([row.owner_user_id, ...audience])].slice(0, 100),
-          payload: { activityId: `a_${row.activity_id}` },
-        },
-        tx,
-      );
-    }
   });
 };
 

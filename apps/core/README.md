@@ -56,7 +56,7 @@ Then on Supabase:
 | `Y_EMBEDDINGS` | `mock` | `gte` (or `supabase`) = gte-small through the `embed` Edge Function. |
 | `Y_EMBED_URL` | `SUPABASE_URL` | Project URL or full `/functions/v1/embed` URL. |
 | `Y_EMBED_SECRET` | unset | Required with `gte`. Sent as `x-y-embed-secret`. |
-| `Y_LLM` / `ANTHROPIC_API_KEY` | `mock` | The LLM distiller is not wired yet. |
+| `Y_LLM` / `ANTHROPIC_API_KEY` | `mock` | `anthropic` + `ANTHROPIC_API_KEY` turns on Haiku turn summaries (Updates tab). `mock` writes templated count-only summaries outside production and none in production. The LLM distiller is not wired yet (distill uses the heuristic either way). |
 | `Y_DEBUG` | unset | Debug logs. |
 
 ## Production behavior

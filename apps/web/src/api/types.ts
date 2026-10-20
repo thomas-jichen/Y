@@ -142,12 +142,22 @@ export interface TurnUpdate {
   repoKey?: string
   changed: string
   building: string
+  /** Set when screening labeled the text (warn / sensitive); absent when clean. */
+  label?: Label
   createdAt: string
+}
+
+/** Whether the viewer's agents' updates reach their team (off until they opt in or accept the team policy). */
+export interface UpdatesSharing {
+  shareWithTeam: boolean
+  teamPolicyAccepted: boolean
 }
 
 export interface UpdatesPage {
   items: TurnUpdate[]
   nextCursor?: string
+  /** Comes with the first page. */
+  sharing?: UpdatesSharing
 }
 
 // ---------- stories (autonomous status updates, 24 h) ----------

@@ -17,6 +17,7 @@ import {
   createMockTurnSummarizer,
   screenSummary,
   setTurnSummarizer,
+  turnSummarizerFor,
   type TurnSummarizer,
 } from './index.js';
 
@@ -84,10 +85,16 @@ async function updates(p: Person, cursor?: string) {
   return UpdatesPage.parse(r.json);
 }
 
+async function share(p: Person, on: boolean) {
+  const r = await call('PUT', '/api/v1/updates/sharing', p.web, { shareWithTeam: on });
+  expect(r.status, JSON.stringify(r.json)).toBe(200);
+  return r.json!;
+}
+
 async function summariesOf(sessionId: string) {
   return (
-    await db.query<{ changed: string; building: string; chunk_seq: number }>(
-      `select t.changed, t.building, t.chunk_seq from public.turn_summaries t join public.sessions s on s.id = t.session_id
+    await db.query<{ changed: string; building: string; chunk_seq: number; team_id: string | null; screen_label: string }>(
+      `select t.changed, t.building, t.chunk_seq, t.team_id, t.screen_label from public.turn_summaries t join public.sessions s on s.id = t.session_id
         where s.harness_session_id = $1 order by t.chunk_seq`,
       [sessionId],
     )
@@ -106,6 +113,8 @@ beforeAll(async () => {
   alice = await person('upd-alice');
   bob = await person('upd-bob');
   carol = await person('upd-carol', 'upd-elsewhere');
+  // Alice opts in to sharing her agents' updates with her team (the default is owner-only).
+  await share(alice, true);
 }, 180_000);
 
 afterAll(async () => {
@@ -124,7 +133,15 @@ describe('turn summaries from ingest', () => {
     const rows = await summariesOf(ch.sessionId);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.changed).toBe('Edited 1 file, ran 1 command, made 1 other tool call.');
-    expect(rows[0]!.building).toBe('Working on: make the checkout total include the shipping fee');
+    expect(rows[0]!.building).toBe('Continuing the current task.');
+    expect(rows[0]!.team_id).not.toBeNull();
+    // The mock is templated from counts only: no digest text (prompt, tool args, reply) is republished.
+    for (const line of WORK_DIGEST.split('\n')) {
+      const text = line.replace(/^[A-Z]+(?: [A-Za-z]+)?: /, '');
+      for (const word of text.split(/\W+/).filter((w) => w.length > 3)) {
+        expect(`${rows[0]!.changed} ${rows[0]!.building}`.toLowerCase()).not.toContain(word.toLowerCase());
+      }
+    }
 
     const mine = await updates(alice);
     const item = mine.items.find((x) => x.activityId === res.activityId);
@@ -135,15 +152,96 @@ describe('turn summaries from ingest', () => {
     expect((await updates(bob)).items.some((x) => x.id === item!.id)).toBe(true);
     expect((await updates(carol)).items.some((x) => x.id === item!.id)).toBe(false);
 
-    // Live update: an ids-only activity.updated event to the owner and teammates (I3).
-    const ev = await db.query<{ payload: Record<string, unknown>; audience_user_ids: string[] }>(
-      `select payload, audience_user_ids from public.events where type = 'activity.updated' and payload->>'activityId' = $1`,
-      [res.activityId],
-    );
-    expect(ev.rows.length).toBeGreaterThan(0);
-    expect(ev.rows[0]!.payload).toEqual({ activityId: res.activityId });
-    expect(ev.rows[0]!.audience_user_ids).toEqual(expect.arrayContaining([alice.userId, bob.userId]));
-    expect(ev.rows[0]!.audience_user_ids).not.toContain(carol.userId);
+    // No push event per turn (the open page polls): teammates' feeds are not invalidated on every response.
+    const ev = await db.query(`select 1 from public.events where type = 'activity.updated' and payload->>'activityId' = $1`, [res.activityId]);
+    expect(ev.rows).toEqual([]);
+  });
+
+  it('is owner-only until the author opts in, and opting out hides earlier summaries again', async () => {
+    const erin = await person('upd-erin');
+    const first = chunk();
+    await ingest(erin, first);
+    await drainAll();
+    const [before] = await summariesOf(first.sessionId);
+    expect(before!.team_id).toBeNull();
+    const own = async () => (await updates(erin)).items.filter((x) => x.agent.owner.id === erin.userId);
+    expect(await own()).toHaveLength(1);
+    expect((await updates(erin)).sharing).toEqual({ shareWithTeam: false, teamPolicyAccepted: false });
+    const ownerOnly = (await own())[0]!.id;
+    expect((await updates(bob)).items.some((x) => x.id === ownerOnly)).toBe(false);
+
+    // Opting in applies to later responses only (no retroactive reveal).
+    expect(await share(erin, true)).toEqual({ shareWithTeam: true, teamPolicyAccepted: false });
+    const second = chunk();
+    await ingest(erin, second);
+    await drainAll();
+    const shared = (await own()).find((x) => x.id !== ownerOnly)!;
+    expect((await updates(bob)).items.some((x) => x.id === shared.id)).toBe(true);
+    expect((await updates(bob)).items.some((x) => x.id === ownerOnly)).toBe(false);
+
+    // Opting out unposts: teammates stop seeing every earlier summary; the author still does.
+    await share(erin, false);
+    expect((await updates(bob)).items.some((x) => x.id === shared.id)).toBe(false);
+    expect((await own()).map((x) => x.id)).toEqual(expect.arrayContaining([shared.id, ownerOnly]));
+
+    // Accepting the team policy also counts as consent.
+    await db.query(`update public.team_members set policy_accepted_version = 1 where user_id = $1`, [erin.userId]);
+    expect((await updates(bob)).items.some((x) => x.id === shared.id)).toBe(true);
+    expect((await updates(erin)).sharing).toEqual({ shareWithTeam: false, teamPolicyAccepted: true });
+  });
+
+  it('only a human in the web app can change sharing (agents cannot, I11)', async () => {
+    expect((await call('PUT', '/api/v1/updates/sharing', alice.agent, { shareWithTeam: false })).status).toBe(403);
+    expect((await call('PUT', '/api/v1/updates/sharing', undefined, { shareWithTeam: false })).status).toBe(401);
+    expect((await call('PUT', '/api/v1/updates/sharing', alice.web, { shareWithTeam: 'yes' })).status).toBe(400);
+    const agentClaims = { sub: alice.userId, role: 'authenticated', via: 'install' } as never;
+    await expect(
+      db.asUser(agentClaims, (tx) => tx.query(`update public.update_sharing set share_with_team = false where user_id = $1`, [alice.userId])).then(async () => {
+        const r = await db.query<{ s: boolean }>('select share_with_team as s from public.update_sharing where user_id = $1', [alice.userId]);
+        return r.rows[0]!.s;
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it('an author on several teams with no posting-team choice shares with none', async () => {
+    const fay = await person('upd-fay');
+    await share(fay, true);
+    const other = (await db.query<{ id: string }>(`select id from public.teams where slug = 'upd-elsewhere'`)).rows[0]!.id;
+    await db.query(`insert into public.team_members (team_id, user_id, role) values ($1, $2, 'member')`, [other, fay.userId]);
+    const ch = chunk();
+    await ingest(fay, ch);
+    await drainAll();
+    const [row] = await summariesOf(ch.sessionId);
+    expect(row!.team_id).toBeNull();
+    expect((await updates(bob)).items.some((x) => x.agent.owner.id === fay.userId)).toBe(false);
+    expect((await updates(carol)).items.some((x) => x.agent.owner.id === fay.userId)).toBe(false);
+  });
+
+  it('hides summaries of a quarantined activity from teammates and returns the screen label', async () => {
+    const ch = chunk();
+    const res = await ingest(alice, ch);
+    await drainAll();
+    const item = (await updates(bob)).items.find((x) => x.activityId === res.activityId)!;
+    expect(item).toBeDefined();
+    expect(item.label).toBeUndefined();
+    await db.query(`update public.turn_summaries set screen_label = 'warn' where activity_id = $1`, [res.activityId.slice(2)]);
+    expect((await updates(bob)).items.find((x) => x.id === item.id)!.label).toBe('warn');
+    await db.query(`update public.activities set status = 'quarantined' where id = $1`, [res.activityId.slice(2)]);
+    expect((await updates(bob)).items.some((x) => x.id === item.id)).toBe(false);
+    expect((await updates(alice)).items.some((x) => x.id === item.id)).toBe(true);
+  });
+
+  it('runs server pass-2 redaction on the digest before the model sees it', async () => {
+    const seen: string[] = [];
+    setTurnSummarizer(deps, { name: 'spy', summarize: async (d) => (seen.push(d), { changed: 'Rotated a credential', building: 'Cleaning up config' }) });
+    // Synthetic, invalid token a client's pass 1 missed.
+    const planted = 'ghp_' + 'Zx8Qw2Lm4Np6Rt8Vb0Cd2Fg4Hj6Kl8Mn0Pq2S';
+    const ch = chunk({ text: `USER: rotate it\nTOOL Bash: export GITHUB_TOKEN=${planted}\nOK Bash: done` });
+    await ingest(alice, ch);
+    await drainAll();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).not.toContain(planted);
+    expect(await summariesOf(ch.sessionId)).toHaveLength(1);
   });
 
   it('a resent chunk or a re-run job never writes a second summary', async () => {
@@ -268,6 +366,7 @@ describe('GET /api/v1/updates', () => {
 
   it('a former teammate stops seeing and sharing summaries (RLS, I7)', async () => {
     const dave = await person('upd-dave');
+    await share(dave, true);
     const ch = chunk();
     await ingest(dave, ch);
     await drainAll();
@@ -317,6 +416,19 @@ describe('summarizer and screening', () => {
     expect(await s.summarize('TOOL Edit: a.ts')).toBeNull();
     reply = { stop_reason: 'end_turn', content: [{ type: 'text', text: 'not json', citations: null } as Anthropic.TextBlock] };
     expect(await s.summarize('TOOL Edit: a.ts')).toBeNull();
+  });
+
+  it('the mock is never used in production; anthropic without a key writes nothing', () => {
+    const prod = loadConfig({
+      NODE_ENV: 'test',
+      Y_INTERNAL_SECRET: 'x',
+      Y_HMAC_KEY: 'y',
+      Y_LLM: 'mock',
+    });
+    expect(turnSummarizerFor({ config: { ...prod, production: true } })).toBeNull();
+    expect(turnSummarizerFor({ config: { ...prod, production: false } })?.name).toBe('mock');
+    expect(turnSummarizerFor({ config: { ...prod, llm: 'anthropic', anthropicApiKey: null } })).toBeNull();
+    expect(turnSummarizerFor({ config: { ...prod, llm: 'anthropic', anthropicApiKey: 'sk-test-not-a-key' } })?.name).toMatch(/^anthropic:/);
   });
 
   it('cleanSummaryField and screenSummary', () => {

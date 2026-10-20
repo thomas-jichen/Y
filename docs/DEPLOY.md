@@ -128,10 +128,10 @@ Contract and limits: `supabase/README.md` ("The `embed` Edge Function"). Local r
    | `Y_PLUGIN_MARKETPLACE` | optional, default `thomas-jichen/Y` |
    | `Y_EMBEDDINGS` | `supabase` |
    | `Y_EMBED_SECRET` | from step 0 |
-   | `Y_LLM` | `mock` (v0; `anthropic` is not wired) |
+   | `Y_LLM` | `anthropic` to get turn summaries on the Updates tab (written by Haiku from each response's redacted digest). With `mock`, production writes none. Distill uses the heuristic either way |
    | `Y_DEMO_SECRET` | optional, step 10 |
    | `Y_PULSE_V1_UNTIL` | optional. Pulse tokens are signed with a key derived from `Y_HMAC_KEY`. Until this time (ISO date or unix seconds, default 2026-11-01), core also accepts tokens signed the old way (`Y_INTERNAL_SECRET`), but only for a live install and with at most 1 h to run, so listeners don't lose wakes when a deploy changes the key. `off` disables this. If the window has already closed when the key change deploys, live sessions get no wake-on-DM until their cached pulse token expires (up to 1 h) or a new session starts |
-   | `ANTHROPIC_API_KEY` | optional, unused in v0 |
+   | `ANTHROPIC_API_KEY` | required with `Y_LLM=anthropic`; without it turn summaries are off (core warns at startup). Only each response's redacted digest is sent, after server pass-2 redaction |
 
 6. Deploy (push to the production branch, or `vercel deploy --prod` from `apps/core` after `vercel link`). Check:
 
