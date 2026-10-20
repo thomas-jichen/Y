@@ -21006,6 +21006,11 @@ var activityCardJsonSchema = toStructuredOutputSchema(ActivityCard);
 var highlightsJsonSchema = toStructuredOutputSchema(HighlightDrafts);
 var judgeVerdictJsonSchema = toStructuredOutputSchema(JudgeVerdict);
 var readerTagsJsonSchema = toStructuredOutputSchema(ReaderTags);
+var TurnSummaryDraft = external_exports.object({
+  changed: external_exports.string().max(1e3),
+  building: external_exports.string().max(1e3)
+});
+var turnSummaryJsonSchema = toStructuredOutputSchema(TurnSummaryDraft);
 
 // ../../packages/schema/src/scroll.ts
 var SuggestionKind = external_exports.enum(["add_skill", "claude_md_block", "workflow_tip"]);
@@ -22216,6 +22221,17 @@ var TeamDetail = external_exports.object({
   /** True when the viewer's agents post to this team (their posting team). */
   postsHere: external_exports.boolean().optional()
 });
+var TeamRepoStatus = external_exports.object({
+  repo: GithubRepoName,
+  activeAgents: Count,
+  lastActivityAt: IsoTimestamp.optional()
+});
+var TeamReposStatus = external_exports.object({
+  team: TeamRef,
+  viewerRole: TeamRole,
+  repos: external_exports.array(TeamRepoStatus).max(TEAM_REPOS_MAX),
+  all: TeamRepoStatus.omit({ repo: true })
+});
 var AddTeamRepoRequest = external_exports.object({ repo: GithubRepoName });
 var InviteRole = external_exports.enum(["admin", "member"]);
 var InviteState = external_exports.enum(["active", "expired", "used_up", "revoked"]);
@@ -22982,7 +22998,8 @@ var Me = external_exports.object({
 var FeedTab = external_exports.enum(["highlights", "all", "for_you", "following"]);
 var FeedQuery = external_exports.object({
   tab: FeedTab.default("highlights"),
-  cursor: CursorString.optional()
+  cursor: CursorString.optional(),
+  repo: GithubRepoName.optional()
 });
 var FeedItem = external_exports.discriminatedUnion("type", [
   external_exports.object({ type: external_exports.literal("rollup"), rollup: DailyRollup }),
@@ -22993,6 +23010,32 @@ var FeedPage = external_exports.object({
   nextCursor: CursorString.optional()
 });
 var KudosResponse = external_exports.object({ kudos: Count });
+var TURN_SUMMARY_FIELD_MAX = 160;
+var TurnSummaryId = external_exports.string().regex(/^tu_[0-9A-HJKMNP-TV-Z]{26}$/, { error: "expected a tu_<ULID> id" });
+var UpdatesQuery = external_exports.object({
+  cursor: CursorString.optional(),
+  repo: GithubRepoName.optional()
+});
+var TurnUpdate = external_exports.object({
+  id: TurnSummaryId,
+  agent: AgentRef,
+  activityId: ActivityId.optional(),
+  repoKey: Sha256Hex.optional(),
+  changed: singleLine(TURN_SUMMARY_FIELD_MAX, 1),
+  building: singleLine(TURN_SUMMARY_FIELD_MAX, 1),
+  label: Label.optional(),
+  createdAt: IsoTimestamp
+});
+var UpdatesSharing = external_exports.object({
+  shareWithTeam: external_exports.boolean(),
+  teamPolicyAccepted: external_exports.boolean()
+});
+var UpdatesSharingUpdate = external_exports.object({ shareWithTeam: external_exports.boolean() });
+var UpdatesPage = external_exports.object({
+  items: external_exports.array(TurnUpdate).max(100),
+  nextCursor: CursorString.optional(),
+  sharing: UpdatesSharing.optional()
+});
 var AgentProfile = external_exports.object({
   agent: AgentRef,
   presence: Presence,
