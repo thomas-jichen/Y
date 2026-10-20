@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { teamReposStatus } from '@/api/adapt'
 import type { Me, TeamReposStatus } from '@/api/types'
-import { RepoBarView, repoBarModel, repoStatusLine, type RepoBarModel } from './RepoBar'
+import { RepoBarView, repoBarModel, repoBarReserve, repoStatusLine, type RepoBarModel } from './RepoBar'
 
 const NOW = Date.parse('2026-10-20T12:00:00Z')
 const ago = (ms: number) => new Date(NOW - ms).toISOString()
@@ -80,6 +80,14 @@ describe('RepoBarView', () => {
     expect(api).toContain('glass')
   })
 
+  it('the status line is plain text, not a live region read out on every poll; the section and select have distinct labels', () => {
+    const all = html(repoBarModel(me('acme'), status(), null)!)
+    expect(all).not.toContain('role="status"')
+    expect(all).not.toContain('aria-live')
+    expect(all).toContain('<section aria-label="Repo scope"')
+    expect(all).toContain('<select aria-label="Repo"')
+  })
+
   it('the link variant points at the team page', () => {
     const link = html({ kind: 'link', team: 'acme' })
     expect(link).toContain('href="/team?team=acme"')
@@ -97,5 +105,19 @@ describe('RepoBarView', () => {
     })
     expect(JSON.stringify(s)).not.toContain(key)
     expect(html(repoBarModel(me('acme'), s, null)!)).not.toMatch(/[0-9a-f]{64}/)
+  })
+})
+
+describe('repoBarReserve', () => {
+  const bar = repoBarModel(me('acme'), status(), null)
+  it('once known: room exactly when the bar shows', () => {
+    expect(repoBarReserve({ model: bar, pending: false, postingTeam: 'acme', last: null })).toBe(true)
+    expect(repoBarReserve({ model: null, pending: false, postingTeam: 'acme', last: '1' })).toBe(false)
+  })
+  it('while loading: room when the bar is likely to show, so the page does not jump when it lands', () => {
+    expect(repoBarReserve({ model: null, pending: true, postingTeam: undefined, last: '1' })).toBe(true)
+    expect(repoBarReserve({ model: null, pending: true, postingTeam: 'acme', last: '0' })).toBe(false)
+    expect(repoBarReserve({ model: null, pending: true, postingTeam: 'acme', last: null })).toBe(true)
+    expect(repoBarReserve({ model: null, pending: true, postingTeam: null, last: null })).toBe(false)
   })
 })

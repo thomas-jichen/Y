@@ -15,6 +15,7 @@ import { MOCKS } from '@/mocks/enabled'
 import { CommandPalette } from './CommandPalette'
 import { RemoteInstructionsSheet } from './RemoteInstructionsSheet'
 import { REPO_BAR_OFFSET, RepoBar, useRepoBar } from './RepoBar'
+import { useRepoSync } from './repoScope'
 import { TopBar } from './TopBar'
 import { GO } from './nav'
 
@@ -99,14 +100,15 @@ function SignedIn() {
   useResumeSlackLink()
   useResumeJoin()
   const { remoteSheet } = useUI()
-  const repoBar = useRepoBar()
+  const { model: repoBar, reserve: reserveRepoBar } = useRepoBar()
+  useRepoSync()
   return (
     <MotionConfig reducedMotion="user">
       <TooltipProvider>
         <TopBar />
         {repoBar && <RepoBar model={repoBar} />}
-        {/* Pages start below the floating bars: they add --repo-bar-h to their top padding. */}
-        <div className="contents" style={repoBar ? ({ '--repo-bar-h': REPO_BAR_OFFSET } as CSSProperties) : undefined}>
+        {/* Pages start below the floating bars: they add --repo-bar-h to their top padding (kept while the bar is likely still loading). */}
+        <div className="contents" style={reserveRepoBar ? ({ '--repo-bar-h': REPO_BAR_OFFSET } as CSSProperties) : undefined}>
           <Outlet />
         </div>
         <CommandPalette />

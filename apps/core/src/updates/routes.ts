@@ -110,6 +110,8 @@ export function registerUpdatesRoutes(app: Hono, deps: CoreDeps): void {
           id: `tu_${x.id}`,
           agent: agentRef(a),
           ...(x.activity_id ? { activityId: `a_${x.activity_id}` } : {}),
+          // Follow-up: stop sending repoKey (optional in the schema; the web drops it). With ?repo=
+          // a client can pair it with a repo name. Kept for now because updates.test.ts pins it.
           ...(x.repo_key ? { repoKey: x.repo_key } : {}),
           changed: x.changed,
           building: x.building,

@@ -1,10 +1,11 @@
-import { useNavigate, useRouterState } from '@tanstack/react-router'
+import { useNavigate } from '@tanstack/react-router'
 import { ChevronDown } from 'lucide-react'
+import { useEffect } from 'react'
 import type { Me, TeamRepoStatus, TeamReposStatus } from '@/api/types'
 import { useMe, useRepoStatus } from '@/api/queries'
 import { fmtAgo } from '@/lib/format'
-import { matchRepo, setStoredRepo } from '@/lib/repoScope'
-import { onRepoRoute, useWantedRepo } from './repoScope'
+import { matchRepo } from '@/lib/repoScope'
+import { useSelectRepo, useWantedRepo } from './repoScope'
 
 /** Height the bar takes under the top nav (36 px pill + 8 px gap); pages add it to their top padding. */
 export const REPO_BAR_OFFSET = '44px'
@@ -62,7 +63,7 @@ export function RepoBarView({ model, onSelect, onLinkRepo, now }: { model: RepoB
   const line = repoStatusLine(current ?? model.all, now)
   return (
     <div className="pointer-events-none fixed inset-x-0 top-[80px] z-30 flex justify-center px-3">
-      <section aria-label="Repo" className="glass pointer-events-auto flex h-9 w-full max-w-[860px] items-center gap-2 rounded-full pl-4 pr-4 text-ui">
+      <section aria-label="Repo scope" className="glass pointer-events-auto flex h-9 w-full max-w-[860px] items-center gap-2 rounded-full pl-4 pr-4 text-ui">
         <span className="relative inline-flex shrink-0 items-center">
           <select
             aria-label="Repo"
@@ -82,7 +83,8 @@ export function RepoBarView({ model, onSelect, onLinkRepo, now }: { model: RepoB
         <span aria-hidden className="text-text-2">
           ·
         </span>
-        <span role="status" className="min-w-0 truncate text-text-2 tnum">
+        {/* Plain text, not a live region: it changes on every poll and would be read out again and again. */}
+        <span className="min-w-0 truncate text-text-2 tnum">
           {line}
         </span>
       </section>
@@ -90,25 +92,57 @@ export function RepoBarView({ model, onSelect, onLinkRepo, now }: { model: RepoB
   )
 }
 
+const SHOWN_KEY = 'y.repoBar'
+
+/** Whether the bar showed last time in this browser: '1', '0', or null when never recorded. */
+function lastShown(): string | null {
+  try {
+    return localStorage.getItem(SHOWN_KEY)
+  } catch {
+    return null
+  }
+}
+
+function rememberShown(shown: boolean) {
+  try {
+    localStorage.setItem(SHOWN_KEY, shown ? '1' : '0')
+  } catch {
+    /* storage unavailable: the next load may shift once */
+  }
+}
+
+/**
+ * Whether pages keep room for the bar. Once the outcome is known: exactly when it shows. While /me or
+ * the repo status is still loading: when it is likely to show (it showed last time here, or, never
+ * recorded, the viewer has a posting team), so pages don't jump 44 px when it lands.
+ */
+export function repoBarReserve(o: { model: RepoBarModel | null; pending: boolean; postingTeam: string | null | undefined; last: string | null }): boolean {
+  if (o.model) return true
+  if (!o.pending) return false
+  if (o.last === '1') return true
+  if (o.last === '0') return false
+  return !!o.postingTeam
+}
+
 /** Data for the bar: the viewer's posting team's linked repos and what is happening in them. */
-export function useRepoBar(): RepoBarModel | null {
-  const { data: me } = useMe()
-  const { data: status } = useRepoStatus(me?.postingTeam || null)
+export function useRepoBar(): { model: RepoBarModel | null; reserve: boolean } {
+  const { data: me, isPending: mePending } = useMe()
+  const slug = me?.postingTeam || null
+  const { data: status, isPending: statusPending } = useRepoStatus(slug)
   const want = useWantedRepo()
-  return repoBarModel(me, status, want)
+  const model = repoBarModel(me, status, want)
+  const pending = mePending || (!!slug && statusPending)
+  const shown = !!model
+  useEffect(() => {
+    if (!pending) rememberShown(shown)
+  }, [pending, shown])
+  return { model, reserve: repoBarReserve({ model, pending, postingTeam: slug, last: pending ? lastShown() : null }) }
 }
 
 /** The repo selector and status line under the top nav, on every signed-in page. */
 export function RepoBar({ model }: { model: RepoBarModel }) {
   const nav = useNavigate()
-  const path = useRouterState({ select: (s) => s.location.pathname })
-  const select = (repo: string | null) => {
-    setStoredRepo(repo)
-    // Routes that filter by repo carry it in the URL too, so the page's link keeps the scope.
-    if (onRepoRoute(path)) {
-      void nav({ to: '.', search: ((prev: Record<string, unknown>) => ({ ...prev, repo: repo ?? undefined })) as never, replace: true })
-    }
-  }
+  const select = useSelectRepo()
   const linkRepo = () => void nav({ to: '/team', search: { team: model.team } })
   return <RepoBarView model={model} onSelect={select} onLinkRepo={linkRepo} />
 }

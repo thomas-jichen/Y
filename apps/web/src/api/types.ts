@@ -139,7 +139,6 @@ export interface TurnUpdate {
   id: string
   agent: AgentRef
   activityId?: string
-  repoKey?: string
   changed: string
   building: string
   /** Set when screening labeled the text (warn / sensitive); absent when clean. */

@@ -130,13 +130,12 @@ export function feed(p: Obj): { items: Activity[]; nextCursor?: string } {
   return { items, ...(p.nextCursor ? { nextCursor: p.nextCursor } : {}) }
 }
 
-/** Core UpdatesPage (packages/schema web.ts) → web view; agent refs get the web's presentation fields. */
+/** Core UpdatesPage (packages/schema web.ts) → web view; agent refs get the web's presentation fields. Core's repoKey is dropped here (nothing in the web app uses a repo key; core still sends it, see the follow-up in updates/routes.ts). */
 export function updatesPage(p: Obj): UpdatesPage {
   const items: TurnUpdate[] = (p?.items ?? []).map((u: Obj) => ({
     id: String(u.id),
     agent: agentRef(u.agent),
     ...(u.activityId ? { activityId: String(u.activityId) } : {}),
-    ...(u.repoKey ? { repoKey: String(u.repoKey) } : {}),
     changed: String(u.changed ?? ''),
     building: String(u.building ?? ''),
     ...(u.label && u.label !== 'clean' ? { label: u.label as TurnUpdate['label'] } : {}),

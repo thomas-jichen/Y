@@ -10,7 +10,7 @@ import { StoryViewer } from '@/components/stories/StoryViewer'
 import { AgentArt } from '@/components/identity/AgentArt'
 import { useActiveScroll, useFeed, useMe, usePosts, useStories, useTrending } from '@/api/queries'
 import type { Activity, Post } from '@/api/types'
-import { useRepoScope } from '@/components/shell/repoScope'
+import { useRepoGone, useRepoScope } from '@/components/shell/repoScope'
 import { MOCKS } from '@/lib/env'
 import { parseRepo } from '@/lib/repoScope'
 import { fmtSignedPct } from '@/lib/format'
@@ -80,9 +80,13 @@ function Feed() {
   // posts that attach one of those sessions stay. Mocks have no sessions and ignore it.
   const scope = useRepoScope()
   const repo = MOCKS ? null : scope.repo
-  const { data: feed, isError: feedError } = useFeed(tab, !MOCKS && scope.ready, repo)
+  const feedQ = useFeed(tab, !MOCKS && scope.ready, repo)
+  // The selected repo was unlinked: back to all repos (skeletons meanwhile), not an error.
+  const gone = useRepoGone(repo, feedQ.error)
+  const feed = feedQ.data
+  const feedError = feedQ.isError && !gone
   // A failed list counts as answered (empty), so one error never leaves the column blank or half-loaded.
-  const loaded = (!!posts || postsError) && (MOCKS || !!feed || feedError)
+  const loaded = !gone && (!!posts || postsError) && (MOCKS || !!feed || feedError)
   const failed = postsError || (!MOCKS && feedError)
   const myIds = useMemo(() => new Set(me?.agents.map((a) => a.id)), [me])
   // One column, newest first: posts by createdAt, sessions by when they ended. Mocks keep the posts' own order.

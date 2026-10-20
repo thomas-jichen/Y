@@ -1,7 +1,8 @@
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { gestureKeys } from '@/lib/idempotency'
 import { api } from './client'
+import { HttpError } from './errors'
 import type {
   AcceptedInvite,
   Activity,
@@ -49,7 +50,12 @@ export const useFeed = (tab: string, enabled = true, repo?: string | null) =>
     queryFn: () => api.get<{ items: Activity[]; nextCursor?: string }>(`/feed?tab=${tab}${repo ? `&repo=${encodeURIComponent(repo)}` : ''}`),
     placeholderData: keepPreviousData,
     enabled,
+    retry: noRetryOnRepoGone,
   })
+/** A 404 on a ?repo= request means the repo was unlinked: no point retrying, the page falls back to all repos. */
+export function noRetryOnRepoGone(failures: number, e: unknown) {
+  return !(e instanceof HttpError && e.status === 404) && failures < 1
+}
 /** How often the open Updates page polls (core sends no push event per response). */
 export const UPDATES_POLL_MS = 15_000
 /** Per-response summaries from the team's agents, newest first; older pages load on demand. Polls only while mounted. */
@@ -66,6 +72,7 @@ export const useUpdates = (repo?: string | null, enabled = true) =>
     getNextPageParam: (last) => last.nextCursor,
     refetchInterval: UPDATES_POLL_MS,
     enabled,
+    retry: noRetryOnRepoGone,
   })
 /** The viewer's update-sharing setting alone (the account menu), without loading the Updates feed. */
 export const useUpdatesSharingState = (enabled = true) =>
@@ -374,14 +381,22 @@ export function useCreateTeam() {
   })
 }
 
-function useTeamDetailWrite<V>(slug: string, fn: (v: V) => Promise<TeamDetail>) {
-  const qc = useQueryClient()
-  return useMutation({ mutationFn: fn, onSuccess: (d) => qc.setQueryData(['team-detail', slug], d) })
+/** Linking or unlinking a repo changes the bar under the top nav and what a repo-scoped list may ask for. */
+export function teamReposChanged(qc: QueryClient, slug: string, d: TeamDetail) {
+  qc.setQueryData(['team-detail', slug], d)
+  void qc.invalidateQueries({ queryKey: ['repo-status', slug] })
+  void qc.invalidateQueries({ queryKey: ['updates'] })
+  void qc.invalidateQueries({ queryKey: ['feed'] })
 }
 
-export const useAddTeamRepo = (slug: string) => useTeamDetailWrite(slug, (repo: string) => api.post<TeamDetail>(`/teams/${slug}/repos`, { repo }))
+function useTeamReposWrite<V>(slug: string, fn: (v: V) => Promise<TeamDetail>) {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: fn, onSuccess: (d) => teamReposChanged(qc, slug, d) })
+}
+
+export const useAddTeamRepo = (slug: string) => useTeamReposWrite(slug, (repo: string) => api.post<TeamDetail>(`/teams/${slug}/repos`, { repo }))
 export const useRemoveTeamRepo = (slug: string) =>
-  useTeamDetailWrite(slug, (id: string) => api.post<TeamDetail>(`/teams/${slug}/repos/${encodeURIComponent(id)}/remove`, {}))
+  useTeamReposWrite(slug, (id: string) => api.post<TeamDetail>(`/teams/${slug}/repos/${encodeURIComponent(id)}/remove`, {}))
 
 /** Owners and admins only (members get 403). */
 export const useTeamInvites = (slug: string | undefined, enabled: boolean) =>

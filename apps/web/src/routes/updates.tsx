@@ -6,7 +6,7 @@ import type { TurnUpdate } from '@/api/types'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { AgentName } from '@/components/identity/AgentName'
 import { Page } from '@/components/shell/Page'
-import { useRepoScope } from '@/components/shell/repoScope'
+import { useRepoGone, useRepoScope } from '@/components/shell/repoScope'
 import { ScreenChip } from '@/components/trust/TrustBadge'
 import { groupUpdates, type UpdateGroup as Group } from '@/components/updates/group'
 import { fmtAgo, fmtClock } from '@/lib/format'
@@ -82,7 +82,12 @@ function UpdateGroup({ g, mine }: { g: Group; mine: boolean }) {
 
 function Updates() {
   const scope = useRepoScope()
-  const { data, isPending, isError, hasNextPage, fetchNextPage, isFetchingNextPage } = useUpdates(scope.repo, scope.ready)
+  const q = useUpdates(scope.repo, scope.ready)
+  // The selected repo was unlinked: back to all repos (the skeleton stays up meanwhile), not an error.
+  const gone = useRepoGone(scope.repo, q.error)
+  const { data, hasNextPage, fetchNextPage, isFetchingNextPage } = q
+  const isPending = q.isPending || gone
+  const isError = q.isError && !gone
   const { data: me } = useMe()
   const myIds = useMemo(() => new Set(me?.agents.map((a) => a.id)), [me])
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
