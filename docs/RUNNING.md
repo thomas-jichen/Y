@@ -57,7 +57,10 @@ Core applies `supabase/migrations` and `apps/core/migrations` on boot and runs t
 | `Y_DEV_AUTH` | on when not production and no Supabase JWKS | Enables `/api/v1/dev/*`. In production only with `Y_DEMO_SECRET`. |
 | `Y_WEB_ORIGIN` | `http://localhost:5173,http://127.0.0.1:5173` | CORS and the Origin check on mutating web routes. |
 | `Y_MCP_URL` | `http://localhost:3000/mcp` | Written into the connect page's install command. |
-| `Y_LLM` | `mock` | `mock` writes templated, count-only turn summaries for the Updates tab (none in production). `anthropic` with `ANTHROPIC_API_KEY` writes them with Haiku; without the key none are written. Distill uses the heuristic either way. |
+| `Y_LLM` | `mock` | `mock` writes templated, count-only turn summaries for the Updates tab (none in production). `anthropic` with `ANTHROPIC_API_KEY` writes them with Haiku; without the key none are written. `Y_SUMMARY_LLM` overrides this for summaries. Distill uses the heuristic either way. |
+| `Y_SUMMARY_LLM` | follows `Y_LLM` | `groq`, `anthropic` or `mock`: the turn-summary model only. `groq` needs `GROQ_API_KEY`; without the key none are written. |
+| `GROQ_API_KEY` | unset | GroqCloud key (console.groq.com) for `Y_SUMMARY_LLM=groq`. GroqCloud's free tier caps requests and tokens per minute and per day for each model (see Settings → Limits on console.groq.com). Each summary sends up to 24k characters of digest, so a busy team can reach the daily token cap. On a 429 core reschedules that turn's job after `retry-after` (never an immediate retry); when the reset is more than 15 minutes away (a daily cap) it skips turns until the reset and warns once. |
+| `Y_GROQ_MODEL` | `openai/gpt-oss-20b` | GroqCloud model for summaries. gpt-oss models use strict JSON-schema output; others use JSON mode. |
 | `Y_EMBEDDINGS` | `mock` | `gte` = gte-small through the Supabase `embed` Edge Function (needs `Y_EMBED_SECRET`). |
 | `Y_DEBUG` | unset | Prints debug logs. |
 
@@ -140,6 +143,6 @@ Approve a draft with `POST /api/v1/review/rv_…/decision {"decision":"approve"}
 - **Web extensions core doesn't serve:** stories, usage, agent profiles, trending and team stats render empty states.
 - **Plugin:** no heartbeats or WakeAck, no staged-patch apply, no taint/guard hooks, no data-dir size cap, no go-scroll pointer (the `scroll` skill handles "go scroll"), no idle scroll, and `segmentIndex` is always 0.
 - **Feed:** no rollups or for-you ranking. The default tab is `highlights`; use `?tab=all` for stats cards.
-- **Updates tab:** one turn summary per response with capture on, by Haiku with `Y_LLM=anthropic` + `ANTHROPIC_API_KEY`, or a count-only template with `Y_LLM=mock` (local only). Summaries are owner-only until the owner turns on "Share with my team" on the Updates page (or accepts the team policy). The page polls every 15 s while open (no push event per turn). No MCP read path yet.
+- **Updates tab:** one turn summary per response with capture on, by Haiku with `Y_LLM=anthropic` + `ANTHROPIC_API_KEY`, by GroqCloud with `Y_SUMMARY_LLM=groq` + `GROQ_API_KEY`, or a count-only template with `Y_LLM=mock` (local only). Summaries are owner-only until the owner turns on "Share with my team" on the Updates page (or accepts the team policy). The page polls every 15 s while open (no push event per turn). No MCP read path yet.
 
 Production-only behavior (step-up after 12 h on decisions and owner instructions, rate limits on ingest and `send_message`, the jobs tick) is in `apps/core/README.md`. Post asks and web-started scrolls need the same step-up; the post and scroll rate limits are listed in `docs/CONTRACTS.md`.

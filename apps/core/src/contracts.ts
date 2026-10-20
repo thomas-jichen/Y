@@ -19,6 +19,15 @@ export interface CoreConfig {
   llm: 'mock' | 'anthropic';
   embeddings: 'mock' | 'gte' | 'gateway';
   anthropicApiKey: string | null;
+  /**
+   * Y_SUMMARY_LLM: which model writes turn summaries (Updates tab). Unset = follow `llm`
+   * (so configs without it behave as before).
+   */
+  summaryLlm?: 'groq' | 'anthropic' | 'mock';
+  /** GROQ_API_KEY (GroqCloud). Null = no Groq summaries. */
+  groqApiKey?: string | null;
+  /** Y_GROQ_MODEL: GroqCloud model id. Null = the default (openai/gpt-oss-20b). */
+  groqModel?: string | null;
   /** Dev-only login (POST /api/v1/dev/login) when no Supabase auth is configured. */
   devAuth: boolean;
   supabase: {

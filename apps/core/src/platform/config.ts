@@ -47,6 +47,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
   if (production && mode === 'serverless' && !cronSecret) throw new Error('Y_CRON_SECRET is required in serverless production (pg_cron tick)');
 
   const llm = env.Y_LLM?.trim() === 'anthropic' ? 'anthropic' : 'mock';
+  const sl = env.Y_SUMMARY_LLM?.trim().toLowerCase();
+  const summaryLlm = sl === 'groq' || sl === 'anthropic' || sl === 'mock' ? sl : undefined;
+  if (sl && !summaryLlm) console.warn('[y core] Y_SUMMARY_LLM is unknown (expected groq, anthropic or mock); following Y_LLM');
+  const groqModel = str(env.Y_GROQ_MODEL);
+  if (groqModel && !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(groqModel)) throw new Error('Y_GROQ_MODEL must be a model id like openai/gpt-oss-20b');
   const emb = env.Y_EMBEDDINGS?.trim().toLowerCase();
   const embeddings = emb === 'gateway' ? 'gateway' : emb === 'gte' || emb === 'supabase' ? 'gte' : 'mock';
   if (production && embeddings === 'mock' && emb !== 'mock') {
@@ -102,6 +107,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
     llm,
     embeddings,
     anthropicApiKey: str(env.ANTHROPIC_API_KEY),
+    ...(summaryLlm ? { summaryLlm } : {}),
+    groqApiKey: str(env.GROQ_API_KEY),
+    groqModel,
     devAuth,
     supabase: { url: supabaseUrl, jwksUrl, serviceKey: str(env.SUPABASE_SERVICE_ROLE_KEY), jwtSecret, publishableKey: str(env.SUPABASE_PUBLISHABLE_KEY) ?? str(env.SUPABASE_ANON_KEY) },
     production,

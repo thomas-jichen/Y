@@ -11,6 +11,9 @@ import { registerUpdatesRoutes } from './routes.js';
 export { TURN_SUMMARY_TOPIC, turnSummaryJob, cleanSummaryField, screenSummary } from './job.js';
 export {
   createAnthropicTurnSummarizer,
+  createGroqTurnSummarizer,
+  DEFAULT_GROQ_MODEL,
+  SummaryRetryLaterError,
   createMockTurnSummarizer,
   setTurnSummarizer,
   turnSummarizerFor,

@@ -10,12 +10,20 @@
  * copies digest text (prompts, replies, tool arguments). Production never
  * uses it: with `Y_LLM=mock` in production no summaries are written.
  *
+ * GroqCloud (`Y_SUMMARY_LLM=groq` + GROQ_API_KEY) is the OpenAI-compatible
+ * chat completions API over plain fetch: the same system prompt and digest
+ * tail, low temperature, a small completion budget, `reasoning_effort: 'low'`
+ * for gpt-oss, strict json_schema output where the model supports it (else
+ * json_object), no tools, no viewer data. A 429 never hot-retries: the job is
+ * rescheduled after retry-after, or the turn is skipped when the reset (a
+ * free-tier daily cap) is far away. Errors carry only status codes.
+ *
  * Whatever a summarizer returns is untrusted: the job normalizes, redacts,
  * L0-screens and DLP-checks it before storing (job.ts).
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { LLM_MODELS, TurnSummaryDraft, encodeUntrustedContent, jsonSchemaFormat, turnSummaryJsonSchema } from '@y/schema';
-import type { CoreConfig } from '../contracts.js';
+import type { CoreConfig, CoreDeps } from '../contracts.js';
 
 export interface TurnSummarizer {
   readonly name: string;
@@ -37,6 +45,12 @@ export const TURN_SUMMARY_SYSTEM_PROMPT = [
   'Never include code, commands, file paths, file names, URLs, host names, IP addresses, e-mail addresses, secrets, tokens, keys or redaction markers. Describe things in words instead.',
   'Do not address the reader and do not give instructions. Answer only with the JSON object required by the schema.',
 ].join('\n');
+
+/** The model's input: the digest tail as one JSON-encoded untrusted string. */
+export function summaryUserMessage(digest: string): string {
+  const input = digest.length > SUMMARY_INPUT_MAX_CHARS ? digest.slice(-SUMMARY_INPUT_MAX_CHARS) : digest;
+  return `untrusted_digest (JSON-encoded string):\n${encodeUntrustedContent(input)}`;
+}
 
 /** The digest lines that show work (a tool call or a config change). Prompt-only turns have none. */
 export function digestShowsWork(digest: string): boolean {
@@ -61,13 +75,12 @@ export function createAnthropicTurnSummarizer(opts: AnthropicSummarizerOptions =
     name: `anthropic:${model}`,
     async summarize(digest) {
       client ??= new Anthropic(opts.apiKey ? { apiKey: opts.apiKey } : {});
-      const input = digest.length > SUMMARY_INPUT_MAX_CHARS ? digest.slice(-SUMMARY_INPUT_MAX_CHARS) : digest;
       const response = await client.messages.create(
         {
           model,
           max_tokens: maxTokens,
           system: TURN_SUMMARY_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: `untrusted_digest (JSON-encoded string):\n${encodeUntrustedContent(input)}` }],
+          messages: [{ role: 'user', content: summaryUserMessage(digest) }],
           output_config: {
             effort: 'low',
             format: jsonSchemaFormat(turnSummaryJsonSchema) as Anthropic.JSONOutputFormat,
@@ -78,15 +91,185 @@ export function createAnthropicTurnSummarizer(opts: AnthropicSummarizerOptions =
       );
       if (response.stop_reason === 'refusal') return null;
       const text = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text;
-      if (!text) return null;
-      let parsed: unknown;
+      return parseDraft(text);
+    },
+  };
+}
+
+/** A model's JSON text → a validated draft, or null (not JSON, wrong shape, too long). */
+function parseDraft(text: string | null | undefined): TurnSummaryDraft | null {
+  if (!text) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const r = TurnSummaryDraft.safeParse(parsed);
+  return r.success ? r.data : null;
+}
+
+// ---------------------------------------------------------------- GroqCloud
+
+export const GROQ_API_BASE = 'https://api.groq.com/openai/v1';
+export const DEFAULT_GROQ_MODEL = 'openai/gpt-oss-20b';
+/** A rate-limit reset further away than this (a free-tier daily cap) skips turns instead of rescheduling them. */
+export const GROQ_MAX_RETRY_AFTER_S = 15 * 60;
+/** Reschedule delay for a 429 that names no reset time (never a hot retry). */
+const GROQ_DEFAULT_RETRY_AFTER_S = 60;
+
+/** gpt-oss models on Groq support strict json_schema output and `reasoning_effort`. */
+export function groqModelIsGptOss(model: string): boolean {
+  return /(?:^|\/)gpt-oss/i.test(model);
+}
+
+/**
+ * A summarizer error the job should retry later (rate limit, 5xx, timeout, network). `retryAfterS`,
+ * when set, replaces the job's default backoff (platform/jobs.ts). The message never carries the
+ * key, the digest or the response body.
+ */
+export class SummaryRetryLaterError extends Error {
+  readonly retryable = true;
+  constructor(
+    message: string,
+    readonly retryAfterS?: number,
+  ) {
+    super(message);
+    this.name = 'SummaryRetryLaterError';
+  }
+}
+
+/** Seconds from a duration like `7.66s`, `2m59.56s`, `1h2m`, `350ms` (Groq's x-ratelimit-reset-*). */
+function parseGroqDuration(v: string): number | null {
+  const t = v.trim();
+  if (/^\d+(?:\.\d+)?$/.test(t)) return Number(t);
+  const re = /(\d+(?:\.\d+)?)(ms|h|m|s)/gy;
+  let total = 0;
+  let matched = 0;
+  for (let m = re.exec(t); m; m = re.exec(t)) {
+    const n = Number(m[1]);
+    total += m[2] === 'h' ? n * 3600 : m[2] === 'm' ? n * 60 : m[2] === 's' ? n : n / 1000;
+    matched = re.lastIndex;
+  }
+  return matched > 0 && matched === t.length ? total : null;
+}
+
+/** Seconds until a 429 resets: retry-after (seconds or HTTP date), else the x-ratelimit-reset-* headers. */
+export function groqRetryAfterSeconds(headers: Headers, nowMs: number): number | null {
+  const ra = headers.get('retry-after')?.trim();
+  if (ra) {
+    if (/^\d+(?:\.\d+)?$/.test(ra)) return Number(ra);
+    const at = Date.parse(ra);
+    if (Number.isFinite(at)) return Math.max(0, (at - nowMs) / 1000);
+  }
+  const resets = ['x-ratelimit-reset-tokens', 'x-ratelimit-reset-requests']
+    .map((h) => headers.get(h))
+    .flatMap((v) => (v ? [parseGroqDuration(v)] : []))
+    .filter((n): n is number => n !== null);
+  return resets.length ? Math.max(...resets) : null;
+}
+
+/** Options for {@link createGroqTurnSummarizer}. */
+export interface GroqSummarizerOptions {
+  apiKey: string;
+  model?: string;
+  fetch?: typeof fetch;
+  baseUrl?: string;
+  timeoutMs?: number;
+  maxCompletionTokens?: number;
+  log?: CoreDeps['log'];
+  now?: () => number;
+}
+
+export function createGroqTurnSummarizer(opts: GroqSummarizerOptions): TurnSummarizer {
+  const model = opts.model ?? DEFAULT_GROQ_MODEL;
+  const gptOss = groqModelIsGptOss(model);
+  const timeoutMs = opts.timeoutMs ?? 20_000;
+  const maxCompletionTokens = opts.maxCompletionTokens ?? 512;
+  const url = `${(opts.baseUrl ?? GROQ_API_BASE).replace(/\/+$/, '')}/chat/completions`;
+  const now = opts.now ?? Date.now;
+  const log = opts.log ?? (() => undefined);
+  /** Rate limited until (epoch ms): calls before then don't reach Groq. */
+  let blockedUntil = 0;
+  let warnedConfig = false;
+
+  const retryLater = (waitS: number): never => {
+    // Spread rescheduled jobs a little so they don't all hit the reset at once.
+    const jitter = Math.random() * Math.min(30, waitS / 4);
+    throw new SummaryRetryLaterError('groq rate limited', Math.ceil(waitS + jitter));
+  };
+
+  return {
+    name: `groq:${model}`,
+    async summarize(digest) {
+      const t0 = now();
+      if (blockedUntil > t0) {
+        const waitS = (blockedUntil - t0) / 1000;
+        if (waitS > GROQ_MAX_RETRY_AFTER_S) return null;
+        retryLater(waitS);
+      }
+      const body = {
+        model,
+        messages: [
+          { role: 'system', content: TURN_SUMMARY_SYSTEM_PROMPT },
+          { role: 'user', content: summaryUserMessage(digest) },
+        ],
+        temperature: 0.2,
+        max_completion_tokens: maxCompletionTokens,
+        stream: false,
+        response_format: gptOss
+          ? { type: 'json_schema', json_schema: { name: 'turn_summary', schema: turnSummaryJsonSchema, strict: true } }
+          : { type: 'json_object' },
+        ...(gptOss ? { reasoning_effort: 'low', include_reasoning: false } : {}),
+      };
+      let res: Response;
       try {
-        parsed = JSON.parse(text);
+        res = await (opts.fetch ?? fetch)(url, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${opts.apiKey}`, 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (e) {
+        const timedOut = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
+        throw new SummaryRetryLaterError(timedOut ? 'groq request timed out' : 'groq request failed');
+      }
+
+      if (res.status === 429) {
+        void res.body?.cancel().catch(() => undefined);
+        const waitS = groqRetryAfterSeconds(res.headers, now()) ?? GROQ_DEFAULT_RETRY_AFTER_S;
+        const first = blockedUntil <= t0;
+        blockedUntil = now() + waitS * 1000;
+        if (waitS > GROQ_MAX_RETRY_AFTER_S) {
+          if (first) log('warn', 'turn summary: GroqCloud rate limit (daily cap?); skipping turns until it resets', { retryAfterS: Math.ceil(waitS) });
+          return null;
+        }
+        return retryLater(Math.max(1, waitS));
+      }
+      if (res.status >= 500 || res.status === 408 || res.status === 498) {
+        void res.body?.cancel().catch(() => undefined);
+        throw new SummaryRetryLaterError(`groq http ${res.status}`);
+      }
+      if (!res.ok) {
+        void res.body?.cancel().catch(() => undefined);
+        // Bad key, no access or unknown model: every turn would fail the same way, so say so once.
+        if ((res.status === 401 || res.status === 403 || res.status === 404) && !warnedConfig) {
+          warnedConfig = true;
+          log('warn', 'turn summary: GroqCloud rejected the request; check GROQ_API_KEY and Y_GROQ_MODEL', { status: res.status });
+        }
+        return null; // other 4xx (e.g. json_validate_failed, too large): skip this turn
+      }
+
+      let json: unknown;
+      try {
+        json = await res.json();
       } catch {
         return null;
       }
-      const r = TurnSummaryDraft.safeParse(parsed);
-      return r.success ? r.data : null;
+      const choice = (json as { choices?: { message?: { content?: unknown; refusal?: unknown } }[] } | null)?.choices?.[0];
+      if (!choice?.message || (typeof choice.message.refusal === 'string' && choice.message.refusal)) return null;
+      const content = choice.message.content;
+      return parseDraft(typeof content === 'string' ? content : null);
     },
   };
 }
@@ -132,21 +315,32 @@ export function setTurnSummarizer(deps: object, s: TurnSummarizer | null): void 
 const cache = new WeakMap<CoreConfig, TurnSummarizer | null>();
 
 /**
- * The configured summarizer: Anthropic for `Y_LLM=anthropic` with ANTHROPIC_API_KEY; the mock for
- * `Y_LLM=mock` outside production; else none (no summaries are written).
+ * The configured summarizer, chosen by `Y_SUMMARY_LLM` (else `Y_LLM`): GroqCloud for `groq` with
+ * GROQ_API_KEY; Anthropic for `anthropic` with ANTHROPIC_API_KEY; the mock for `mock` outside
+ * production; else none (no summaries are written; core warns at startup).
  */
-export function turnSummarizerFor(deps: { config: CoreConfig }): TurnSummarizer | null {
+export function turnSummarizerFor(deps: { config: CoreConfig; log?: CoreDeps['log'] }): TurnSummarizer | null {
   const o = overrides.get(deps);
   if (o) return o;
-  if (cache.has(deps.config)) return cache.get(deps.config) ?? null;
+  const config = deps.config;
+  if (cache.has(config)) return cache.get(config) ?? null;
+  const kind = config.summaryLlm ?? config.llm;
   const s =
-    deps.config.llm === 'mock'
-      ? deps.config.production
+    kind === 'mock'
+      ? config.production
         ? null
         : createMockTurnSummarizer()
-      : deps.config.anthropicApiKey
-        ? createAnthropicTurnSummarizer({ apiKey: deps.config.anthropicApiKey })
-        : null;
-  cache.set(deps.config, s);
+      : kind === 'groq'
+        ? config.groqApiKey
+          ? createGroqTurnSummarizer({
+              apiKey: config.groqApiKey,
+              ...(config.groqModel ? { model: config.groqModel } : {}),
+              ...(deps.log ? { log: deps.log } : {}),
+            })
+          : null
+        : config.anthropicApiKey
+          ? createAnthropicTurnSummarizer({ apiKey: config.anthropicApiKey })
+          : null;
+  cache.set(config, s);
   return s;
 }

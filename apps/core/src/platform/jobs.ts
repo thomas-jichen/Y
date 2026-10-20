@@ -6,6 +6,16 @@ import type { CoreDeps, JobHandler, JobQueue } from '../contracts.js';
 export const JOB_MAX_ATTEMPTS = 10;
 const LEASE = '5 minutes';
 
+/**
+ * A handler error may ask for a later retry (e.g. an upstream 429 with retry-after) by carrying a
+ * numeric `retryAfterS`; it replaces the default backoff, clamped to [1 s, 1 h]. Null = default.
+ */
+export function retryAfterSeconds(e: unknown): number | null {
+  const v = e && typeof e === 'object' ? (e as { retryAfterS?: unknown }).retryAfterS : undefined;
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+  return Math.min(3600, Math.max(1, Math.ceil(v)));
+}
+
 interface JobRow {
   id: string | number;
   topic: string;
@@ -92,7 +102,10 @@ export class PgJobQueue implements JobQueue {
           // Error class + message only; handlers never put user content in errors.
           const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
           this.deps.log('warn', 'job failed', { topic: job.topic, id: String(job.id), attempts: job.attempts, err: msg.slice(0, 300) });
-          await this.db.asService((tx) => tx.query('select api.fail_job($1, $2, null, $3)', [job.id, msg.slice(0, 2000), job.attempts]));
+          const retryIn = retryAfterSeconds(e);
+          await this.db.asService((tx) =>
+            tx.query('select api.fail_job($1, $2, $3::interval, $4)', [job.id, msg.slice(0, 2000), retryIn === null ? null : `${retryIn} seconds`, job.attempts]),
+          );
           failed++;
         }
       }

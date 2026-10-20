@@ -57,6 +57,7 @@ Then on Supabase:
 | `Y_EMBED_URL` | `SUPABASE_URL` | Project URL or full `/functions/v1/embed` URL. |
 | `Y_EMBED_SECRET` | unset | Required with `gte`. Sent as `x-y-embed-secret`. |
 | `Y_LLM` / `ANTHROPIC_API_KEY` | `mock` | `anthropic` + `ANTHROPIC_API_KEY` turns on Haiku turn summaries (Updates tab). `mock` writes templated count-only summaries outside production and none in production. The LLM distiller is not wired yet (distill uses the heuristic either way). |
+| `Y_SUMMARY_LLM` / `GROQ_API_KEY` / `Y_GROQ_MODEL` | follows `Y_LLM` | `groq` + `GROQ_API_KEY` writes turn summaries with GroqCloud (default model `openai/gpt-oss-20b`); `anthropic` or `mock` pick those for summaries regardless of `Y_LLM`. A 429 reschedules the job after `retry-after`, or skips turns while a free-tier daily cap resets. |
 | `Y_DEBUG` | unset | Debug logs. |
 
 ## Production behavior

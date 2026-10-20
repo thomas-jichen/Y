@@ -78,11 +78,20 @@ export async function createDeps(
   if (opts.migrateCore ?? config.mode === 'server') await migrateCore(db);
   const now = opts.now ?? (() => new Date());
   const log = opts.log ?? defaultLog;
+  // Turn summaries (Updates tab) follow Y_SUMMARY_LLM when set, else Y_LLM.
+  const summaryLlm = config.summaryLlm ?? config.llm;
+  const summaryVar = config.summaryLlm ? 'summary_llm' : 'llm';
   if (config.llm !== 'mock') {
-    log('warn', 'llm=anthropic: distill still uses the deterministic heuristic; turn summaries (Updates tab) use Haiku');
-    if (!config.anthropicApiKey) log('warn', 'llm=anthropic without ANTHROPIC_API_KEY: turn summaries (Updates tab) are disabled');
-  } else if (config.production) {
-    log('warn', 'llm=mock in production: turn summaries (Updates tab) are disabled; set Y_LLM=anthropic and ANTHROPIC_API_KEY');
+    const by = summaryLlm === 'anthropic' ? 'use Haiku' : summaryLlm === 'groq' ? 'use GroqCloud' : 'use the mock (none in production)';
+    log('warn', `llm=anthropic: distill still uses the deterministic heuristic; turn summaries (Updates tab) ${by}`);
+  }
+  if (summaryLlm === 'anthropic' && !config.anthropicApiKey) {
+    log('warn', `${summaryVar}=anthropic without ANTHROPIC_API_KEY: turn summaries (Updates tab) are disabled`);
+  } else if (summaryLlm === 'groq') {
+    if (!config.groqApiKey) log('warn', 'summary_llm=groq without GROQ_API_KEY: turn summaries (Updates tab) are disabled');
+    else log('info', 'turn summaries (Updates tab) use GroqCloud', { model: config.groqModel ?? 'default' });
+  } else if (summaryLlm === 'mock' && config.production) {
+    log('warn', `${summaryVar}=mock in production: turn summaries (Updates tab) are disabled; set Y_SUMMARY_LLM=groq and GROQ_API_KEY, or Y_LLM=anthropic and ANTHROPIC_API_KEY`);
   }
   const auth = new PlatformAuth(config, db, now, opts.jwks ? { jwks: opts.jwks } : {});
   const bus =
