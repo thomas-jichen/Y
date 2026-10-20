@@ -13,6 +13,7 @@ import { takeJoinToken } from '@/lib/joinToken'
 import { ui, useUI } from '@/lib/ui'
 import { MOCKS } from '@/mocks/enabled'
 import { CommandPalette } from './CommandPalette'
+import { NewTeamSheet } from './NewTeamSheet'
 import { RemoteInstructionsSheet } from './RemoteInstructionsSheet'
 import { REPO_BAR_OFFSET, RepoBar, useRepoBar } from './RepoBar'
 import { useRepoSync } from './repoScope'
@@ -114,6 +115,7 @@ function SignedIn() {
         <CommandPalette />
         <RemoteInstructionsSheet open={remoteSheet} onOpenChange={(v) => ui.set({ remoteSheet: v })} />
         <NewMessageSheet />
+        <NewTeamSheet />
         {!MOCKS && <StepUpSheet />}
         {MOCKS && <DemoDirector />}
       </TooltipProvider>

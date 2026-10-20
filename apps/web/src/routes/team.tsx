@@ -9,7 +9,7 @@ import { TraitChips } from '@/components/identity/TraitChips'
 import { Button } from '@/components/primitives/Button'
 import { Skeleton } from '@/components/primitives/Skeleton'
 import { Page, PageHeader } from '@/components/shell/Page'
-import { CreateTeamForm, PostingTeamNote, TeamManage, TeamOnboarding } from '@/components/team/TeamPanels'
+import { PostingTeamNote, TeamManage, TeamOnboarding } from '@/components/team/TeamPanels'
 import { useMe, useTeam, useTeamDetail, useThreads } from '@/api/queries'
 import { fmtPct, fmtTokens } from '@/lib/format'
 import { SafeText } from '@/lib/safeText'
@@ -19,11 +19,7 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/
 
 export const Route = createFileRoute('/team')({
   // ?team=<slug>: which of the viewer's teams the page shows (default: the one their agents post to).
-  // ?new=1: the create-team form (from "New team" in the team switcher under the navbar).
-  validateSearch: (s: Record<string, unknown>): { team?: string; new?: '1' } => ({
-    ...(typeof s.team === 'string' && SLUG_RE.test(s.team) ? { team: s.team } : {}),
-    ...(s.new === '1' || s.new === 1 ? { new: '1' as const } : {}),
-  }),
+  validateSearch: (s: Record<string, unknown>): { team?: string } => (typeof s.team === 'string' && SLUG_RE.test(s.team) ? { team: s.team } : {}),
   component: TeamPage,
 })
 
@@ -67,16 +63,6 @@ function TeamPage() {
           </>
         }
       />
-
-      {search.new === '1' && (
-        <section className="surface mb-3 rounded-card p-5">
-          <h2 className="mb-4 text-sm font-semibold">New team</h2>
-          <CreateTeamForm
-            onCancel={() => void nav({ to: '/team', search: {} })}
-            onCreated={(d) => void nav({ to: '/team', search: { team: d.team.slug } })}
-          />
-        </section>
-      )}
 
       {detail && <PostingTeamNote d={detail} />}
 

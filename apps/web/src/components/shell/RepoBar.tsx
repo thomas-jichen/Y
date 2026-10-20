@@ -5,6 +5,7 @@ import type { Me, TeamRepoStatus, TeamReposStatus } from '@/api/types'
 import { useMe, useRepoStatus, useSetPostingTeam } from '@/api/queries'
 import { fmtAgo } from '@/lib/format'
 import { matchRepo } from '@/lib/repoScope'
+import { ui } from '@/lib/ui'
 import { useSelectRepo, useWantedRepo } from './repoScope'
 
 /** Height the bar takes under the top nav (36 px pill + 8 px gap); pages add it to their top padding. */
@@ -49,7 +50,7 @@ export function repoStatusLine(s: Omit<TeamRepoStatus, 'repo'>, now = Date.now()
 const ALL = ''
 
 /** "Team: acme" switcher: where the viewer's agents post (and what Y shows), plus "New team". */
-/** The switcher's last option: start a team (opens the create form on the Team page). */
+/** The switcher's last option: start a team (opens the New team side sheet). */
 export const NEW_TEAM = '__new__'
 
 function TeamSwitch({ team, teams, onSwitchTeam, onNewTeam }: { team: string; teams: TeamChoice[]; onSwitchTeam: (slug: string) => void; onNewTeam: () => void }) {
@@ -214,6 +215,6 @@ export function RepoBar({ model }: { model: RepoBarModel }) {
   const linkRepo = () => void nav({ to: '/team', search: { team: model.team } })
   // Repo choices belong to the old team; the new team's bar starts at all repos.
   const switchTeam = (slug: string) => setTeam.mutate(slug, { onSuccess: () => select(null) })
-  const newTeam = () => void nav({ to: '/team', search: { new: '1' } })
+  const newTeam = () => ui.set({ newTeam: true })
   return <RepoBarView model={model} onSelect={select} onLinkRepo={linkRepo} onSwitchTeam={switchTeam} onNewTeam={newTeam} />
 }
