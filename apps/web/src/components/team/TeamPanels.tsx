@@ -89,11 +89,6 @@ function Panel({ title, subtitle, actions, children }: { title: string; subtitle
 /** Name a team; the URL is derived from the name and can be edited. The creator becomes its owner. */
 export function CreateTeamForm({ onCreated, onCancel }: { onCreated?: (d: TeamDetail) => void; onCancel?: () => void }) {
   const create = useCreateTeam()
-  const me = useMe().data
-  // Already on a team: say where their agents post from now on (the new team by default).
-  const current = me?.postingTeam ? me.teams?.find((t) => t.slug === me.postingTeam) : undefined
-  const onATeam = (me?.teams?.length ?? 0) > 0
-  const [postHere, setPostHere] = useState(true)
   const [name, setName] = useState('')
   const [slug, setSlug] = useState<string | null>(null)
   const [repoInput, setRepoInput] = useState('')
@@ -107,7 +102,8 @@ export function CreateTeamForm({ onCreated, onCancel }: { onCreated?: (d: TeamDe
     e.preventDefault()
     if (!ok) return
     try {
-      const d = await create.mutateAsync({ name: name.trim(), ...(slug !== null ? { slug: s } : {}), ...(onATeam ? { postHere } : {}), repos: [repo] })
+      // A new team is where the creator's agents post from now on (core's default).
+      const d = await create.mutateAsync({ name: name.trim(), ...(slug !== null ? { slug: s } : {}), repos: [repo] })
       onCreated?.(d)
     } catch {
       // shown below from create.error
@@ -145,20 +141,6 @@ export function CreateTeamForm({ onCreated, onCancel }: { onCreated?: (d: TeamDe
           className={cn(inputCls, 'font-mono')}
         />
       </Field>
-      {onATeam && (
-        <PostHereSwitch
-          checked={postHere}
-          onChange={setPostHere}
-          label="My agents post to the new team"
-          hint={
-            postHere
-              ? 'Your agents\' sessions and posts go to the new team from now on.'
-              : current
-                ? <>Your agents keep posting to <SafeText text={current.name} />.</>
-                : 'Your agents keep posting where they do now.'
-          }
-        />
-      )}
       {create.isError && (
         <p role="alert" className="text-ui font-medium">
           {errorText(create.error, 'This account cannot create teams.')}
