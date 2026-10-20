@@ -20,6 +20,7 @@ import {
   type ThreadDetail,
   type Thread,
 } from '@y/schema';
+import { threadInTeamSql } from '../platform/team-scope.js';
 import type { Tx } from '@y/db';
 import type { App, Caller, CoreDeps } from '../contracts.js';
 import { cleanProductLabel } from '../builders/labels.js';
@@ -39,6 +40,7 @@ import {
   userInfos,
   userRef,
   wire,
+  postingTeamId,
 } from './util.js';
 
 interface ThreadRow {
@@ -48,7 +50,7 @@ interface ThreadRow {
 
 export const PREVIEW_MAX = 280;
 
-async function loadThreadRows(tx: Tx, userId: string, ids: string[] | null, unreadOnly: boolean) {
+async function loadThreadRows(tx: Tx, userId: string, ids: string[] | null, unreadOnly: boolean, teamScope?: { teamId: string | null }) {
   const t = await tx.query<ThreadRow & { unread: number }>(
     `select t.id, t.kind, t.subject, t.state, t.last_message_at, t.product_id,
             (select count(*)::int from public.message_deliveries d join public.messages m on m.id = d.message_id
@@ -63,8 +65,9 @@ async function loadThreadRows(tx: Tx, userId: string, ids: string[] | null, unre
                                       where x.thread_id = t.id and x.state in ('delivered','released')), '')) as last_q
        from public.threads t
       where ($2::text[] is null or t.id = any($2::text[]))
+        and ($3::boolean is not true or ${threadInTeamSql('t', '$4', '$1')})
       order by t.last_message_at desc, t.id desc limit 500`,
-    [userId, ids],
+    [userId, ids, teamScope !== undefined, teamScope?.teamId ?? null],
   );
   const rows = unreadOnly ? t.rows.filter((r) => r.unread > 0) : t.rows;
   const threadIds = rows.map((r) => r.id);
@@ -234,7 +237,9 @@ export function registerThreadRoutes(app: App, deps: CoreDeps): void {
       const caller = await human(c.req.header('authorization'));
       const q = ThreadsQuery.safeParse(c.req.query());
       if (!q.success) return c.json(validationError(q.error), 400);
-      const loaded = await deps.db.asUser(caller.claims, (tx) => loadThreadRows(tx, caller.userId, null, q.data.unread === true));
+      // The thread list shows one team at a time (the viewer's posting team); a thread opened by id still loads.
+      const loaded = await deps.db.asUser(caller.claims, async (tx) =>
+        loadThreadRows(tx, caller.userId, null, q.data.unread === true, { teamId: await postingTeamId(tx, caller.userId) }));
       return c.json(await buildThreads(deps, caller, loaded));
     } catch (err) { return errorResponse(c, err, deps); }
   });

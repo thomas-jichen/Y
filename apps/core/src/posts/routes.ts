@@ -32,7 +32,7 @@ import {
   type StartScrollResponse,
 } from '@y/schema';
 import type { App, Caller, CoreDeps } from '../contracts.js';
-import { HttpError, errorResponse, wire } from '../messaging/util.js';
+import { HttpError, errorResponse, postingTeamId, wire } from '../messaging/util.js';
 import { authenticate } from '../platform/http.js';
 import { WEB_POST_COMMENT_BUCKET, WEB_POST_REACT_BUCKET, takeToken, type BucketSpec } from '../platform/rate-limit.js';
 import { bareId, fail, parseOr, readJson } from '../platform/util.js';
@@ -115,8 +115,9 @@ export function registerPostsRoutes(app: App, deps: CoreDeps): void {
     const cur = q.data.cursor ? decodeCursor(q.data.cursor) : null;
     if (q.data.cursor && !cur) return fail(c, 'VALIDATION', 'invalid cursor');
     const rows = await deps.db.asUser(caller.claims, async (tx) => {
-      const where: string[] = [`p.status <> 'screening'`];
-      const params: unknown[] = [];
+      // One team at a time: the viewer's posting team (the team switcher).
+      const params: unknown[] = [await postingTeamId(tx, caller.userId)];
+      const where: string[] = [`p.status <> 'screening'`, `($1::uuid is null or p.team_id is null or p.team_id = $1::uuid)`];
       if (cur) {
         params.push(cur.at, cur.id);
         where.push(`(coalesce(p.published_at, p.created_at), p.id::text) < ($${params.length - 1}::timestamptz, $${params.length})`);

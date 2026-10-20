@@ -21,6 +21,7 @@ import {
   type ReviewItem,
   type ReviewKind,
 } from '@y/schema';
+import { reviewRefsInTeam } from '../team-scope.js';
 import type { Caller, CoreDeps, PushEvent } from '../../contracts.js';
 import { authenticate, bearerFrom } from '../http.js';
 import { takeToken, type BucketSpec } from '../rate-limit.js';
@@ -137,8 +138,9 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
     const cur = q.data.cursor ? decodeCursor(q.data.cursor) : null;
     if (q.data.cursor && !cur) return fail(c, 'VALIDATION', 'invalid cursor');
     const page = await deps.db.asUser(caller.claims, async (tx): Promise<FeedPage | null> => {
-      const where: string[] = [`a.status = 'published'`];
-      const params: unknown[] = [];
+      // One team at a time: the viewer's posting team (the team switcher).
+      const params: unknown[] = [await postingTeamId(tx, caller.userId)];
+      const where: string[] = [`a.status = 'published'`, `($1::uuid is null or a.team_id is null or a.team_id = $1::uuid)`];
       // ?repo=owner/repo: one repo linked to the viewer's posting team, by its salted key (never sent).
       if (q.data.repo) {
         const scoped = await postingTeamRepoKey(tx, caller.userId, q.data.repo);
@@ -209,14 +211,17 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
     if (caller instanceof Response) return caller;
     const q = parseOr(c, ReviewListQuery, c.req.query());
     if (!q.ok) return q.res;
-    const items = await deps.db.asUser(caller.claims, async (tx) => {
-      const r = await tx.query<Record<string, unknown>>(
+    const { rows, team } = await deps.db.asUser(caller.claims, async (tx) => ({
+      rows: (await tx.query<Record<string, unknown>>(
         `select * from public.review_items where owner_user_id = $1 and ($2::text is null or kind = $2)
           order by (state = 'pending') desc, created_at desc limit 500`,
         [caller.userId, q.data.kind ?? null],
-      );
-      return reviewItemsFromRows(tx, r.rows);
-    });
+      )).rows,
+      team: await postingTeamId(tx, caller.userId),
+    }));
+    // One team at a time: items tied to the viewer's other teams are left out.
+    const keep = await deps.db.asService((s) => reviewRefsInTeam(s, rows.map((x) => String(x.ref_id)), team, caller.userId));
+    const items = await deps.db.asUser(caller.claims, (tx) => reviewItemsFromRows(tx, rows.filter((x) => keep.has(String(x.ref_id)))));
     return c.json(items);
   });
 
