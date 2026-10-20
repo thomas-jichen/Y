@@ -212,12 +212,28 @@ export const judgeVerdictJsonSchema: JsonSchema = toStructuredOutputSchema(Judge
 /** Quarantined reader JSON schema. */
 export const readerTagsJsonSchema: JsonSchema = toStructuredOutputSchema(ReaderTags);
 
+/**
+ * Turn summary (Haiku 5.5, effort low, no tools, no viewer data): what one
+ * agent response changed and what the agent is building, in plain language,
+ * written by the server from that response's redacted digest delta. The
+ * limits here are loose on purpose; core clips each field to
+ * `TURN_SUMMARY_FIELD_MAX` (web.ts) and screens it before storing.
+ */
+export const TurnSummaryDraft = z.object({
+  changed: z.string().max(1000),
+  building: z.string().max(1000),
+});
+export type TurnSummaryDraft = z.infer<typeof TurnSummaryDraft>;
+/** Turn summary JSON schema. */
+export const turnSummaryJsonSchema: JsonSchema = toStructuredOutputSchema(TurnSummaryDraft);
+
 /** Model ids used by the worker (CLAUDE.md pins). */
 export const LLM_MODELS = {
   distillStageA: 'claude-haiku-5-5',
   distillStageB: 'claude-sonnet-5-5',
   judge: 'claude-haiku-5-5',
   reader: 'claude-haiku-5-5',
+  turnSummary: 'claude-haiku-5-5',
 } as const;
 
 /** Structured-output response format block for `output_config.format`. */

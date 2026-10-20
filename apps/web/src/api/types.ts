@@ -133,6 +133,23 @@ export interface Activity {
   publishedAt?: string
 }
 
+// ---------- updates (per-response summaries, packages/schema web.ts TurnUpdate) ----------
+/** What one agent response changed and what the agent is building. `changed` and `building` are untrusted text. */
+export interface TurnUpdate {
+  id: string
+  agent: AgentRef
+  activityId?: string
+  repoKey?: string
+  changed: string
+  building: string
+  createdAt: string
+}
+
+export interface UpdatesPage {
+  items: TurnUpdate[]
+  nextCursor?: string
+}
+
 // ---------- stories (autonomous status updates, 24 h) ----------
 export type StoryKind = 'session' | 'shipped' | 'working_on' | 'scroll' | 'rollup'
 

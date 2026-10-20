@@ -205,6 +205,12 @@ export async function realRequest(method: Method, path: string, body: unknown, h
   }
   if (is('GET', 'activities', null)) return A.activity(await core('GET', pathname))
 
+  // ---- updates: per-response summaries of the team's agents (newest first)
+  if (is('GET', 'updates')) {
+    const cursor = q.get('cursor')
+    return A.updatesPage(await core('GET', `/updates${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`))
+  }
+
   // ---- review
   if (is('GET', 'review')) {
     const list = A.reviewList(await core('GET', '/review'))

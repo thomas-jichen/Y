@@ -2,6 +2,7 @@
 export const NAV = [
   { to: '/team', label: 'Team', key: 't' },
   { to: '/feed', label: 'Feed', key: 'f' },
+  { to: '/updates', label: 'Updates', key: 'n', alias: 'what agents are building' },
   { to: '/chats', label: 'Messages', key: 'm', alias: 'chats' },
   { to: '/review', label: 'Review', key: 'r' },
   { to: '/usage', label: 'Usage', key: 'u' },

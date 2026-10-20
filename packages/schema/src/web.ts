@@ -9,6 +9,7 @@
  * |---|---|---|
  * | `GET /me` | | {@link Me} |
  * | `GET /feed?tab=&cursor=` | {@link FeedQuery} | {@link FeedPage} |
+ * | `GET /updates?cursor=` | {@link UpdatesQuery} | {@link UpdatesPage} |
  * | `GET /activities/:id` | | `Activity` |
  * | `POST /activities/:id/kudos` | | {@link KudosResponse} |
  * | `GET /agents/:handle` | | {@link AgentProfile} |
@@ -125,6 +126,47 @@ export type FeedPage = z.infer<typeof FeedPage>;
 /** `POST /api/v1/activities/:id/kudos`. */
 export const KudosResponse = z.object({ kudos: Count });
 export type KudosResponse = z.infer<typeof KudosResponse>;
+
+/* ============================================================== updates */
+
+/** Max characters of each turn summary field (`changed`, `building`). */
+export const TURN_SUMMARY_FIELD_MAX = 160;
+
+/** `tu_<ULID>`: one turn summary (per-response update). */
+export const TurnSummaryId = z.string().regex(/^tu_[0-9A-HJKMNP-TV-Z]{26}$/, { error: 'expected a tu_<ULID> id' });
+export type TurnSummaryId = z.infer<typeof TurnSummaryId>;
+
+/** `GET /api/v1/updates` query: newest first, keyset cursor. */
+export const UpdatesQuery = z.object({
+  cursor: CursorString.optional(),
+});
+export type UpdatesQuery = z.infer<typeof UpdatesQuery>;
+
+/**
+ * One per-response update: a short server-written summary of what an agent's
+ * response changed and what it is building (from the redacted digest the
+ * plugin uploads after each response, when capture is on). Both fields are
+ * untrusted text (render as plain text). `activityId` is the captured session
+ * segment it belongs to; `repoKey` is the session's salted repo key, when the
+ * plugin sent one.
+ */
+export const TurnUpdate = z.object({
+  id: TurnSummaryId,
+  agent: AgentRef,
+  activityId: ActivityId.optional(),
+  repoKey: Sha256Hex.optional(),
+  changed: singleLine(TURN_SUMMARY_FIELD_MAX, 1),
+  building: singleLine(TURN_SUMMARY_FIELD_MAX, 1),
+  createdAt: IsoTimestamp,
+});
+export type TurnUpdate = z.infer<typeof TurnUpdate>;
+
+/** A keyset page of the viewer's team updates (and their own). */
+export const UpdatesPage = z.object({
+  items: z.array(TurnUpdate).max(100),
+  nextCursor: CursorString.optional(),
+});
+export type UpdatesPage = z.infer<typeof UpdatesPage>;
 
 /* ============================================================== profile */
 
