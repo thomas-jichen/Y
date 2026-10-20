@@ -26,6 +26,8 @@ import type { SealedChunk } from '../pipeline.js';
 import { takeIngestToken } from '../rate-limit.js';
 import { postingTeamId } from '../../messaging/util.js';
 import { fail, parseOr, readJson, sealDigest, segmentUlid } from '../util.js';
+import { TURN_SUMMARY_TOPIC, turnSummaryJob } from '../../updates/job.js';
+import { turnSummarizerFor } from '../../updates/summarizer.js';
 
 export const MIN_PLUGIN_VERSION = '0.1.0';
 /** Request body cap for POST /api/v1/ingest (Vercel's own limit is 4.5 MB). */
@@ -144,6 +146,12 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
         await tx.query('update public.installs set last_seen_at = now(), plugin_version = $2 where id = $1', [caller.installId, ch.pluginVersion]);
       }
       const duplicate = inserted.rowCount === 0;
+      // Updates tab: one server-written summary per response that carried a digest (capture on).
+      // Enqueued before finalize so it runs before distill purges the digest.
+      if (!duplicate && sealed.text.trim() && turnSummarizerFor(deps)) {
+        const job = turnSummaryJob(session.id, ch.seq);
+        await deps.jobs.enqueue(TURN_SUMMARY_TOPIC, job.payload, { dedupeKey: job.dedupeKey, tx });
+      }
       if (!duplicate && ch.close) {
         await deps.jobs.enqueue('finalize', { activityId }, { dedupeKey: `finalize:${activityId}:${ch.seq}`, tx });
       }

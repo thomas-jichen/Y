@@ -16,6 +16,7 @@ import { Route as FeedRouteImport } from './routes/feed'
 import { Route as ProductsRouteImport } from './routes/products'
 import { Route as ReviewRouteImport } from './routes/review'
 import { Route as TeamRouteImport } from './routes/team'
+import { Route as UpdatesRouteImport } from './routes/updates'
 import { Route as UsageRouteImport } from './routes/usage'
 import { Route as AHandleRouteImport } from './routes/a.$handle'
 import { Route as ActivityIdRouteImport } from './routes/activity.$id'
@@ -61,6 +62,11 @@ const ReviewRoute = ReviewRouteImport.update({
 const TeamRoute = TeamRouteImport.update({
   id: '/team',
   path: '/team',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UpdatesRoute = UpdatesRouteImport.update({
+  id: '/updates',
+  path: '/updates',
   getParentRoute: () => rootRouteImport,
 } as any)
 const UsageRoute = UsageRouteImport.update({
@@ -127,6 +133,7 @@ export interface FileRoutesByFullPath {
   '/products': typeof ProductsRoute
   '/review': typeof ReviewRouteWithChildren
   '/team': typeof TeamRoute
+  '/updates': typeof UpdatesRoute
   '/usage': typeof UsageRoute
   '/a/$handle': typeof AHandleRoute
   '/activity/$id': typeof ActivityIdRoute
@@ -145,6 +152,7 @@ export interface FileRoutesByTo {
   '/feed': typeof FeedRoute
   '/products': typeof ProductsRoute
   '/team': typeof TeamRoute
+  '/updates': typeof UpdatesRoute
   '/usage': typeof UsageRoute
   '/a/$handle': typeof AHandleRoute
   '/activity/$id': typeof ActivityIdRoute
@@ -166,6 +174,7 @@ export interface FileRoutesById {
   '/products': typeof ProductsRoute
   '/review': typeof ReviewRouteWithChildren
   '/team': typeof TeamRoute
+  '/updates': typeof UpdatesRoute
   '/usage': typeof UsageRoute
   '/a/$handle': typeof AHandleRoute
   '/activity/$id': typeof ActivityIdRoute
@@ -188,6 +197,7 @@ export interface FileRouteTypes {
     | '/products'
     | '/review'
     | '/team'
+    | '/updates'
     | '/usage'
     | '/a/$handle'
     | '/activity/$id'
@@ -206,6 +216,7 @@ export interface FileRouteTypes {
     | '/feed'
     | '/products'
     | '/team'
+    | '/updates'
     | '/usage'
     | '/a/$handle'
     | '/activity/$id'
@@ -226,6 +237,7 @@ export interface FileRouteTypes {
     | '/products'
     | '/review'
     | '/team'
+    | '/updates'
     | '/usage'
     | '/a/$handle'
     | '/activity/$id'
@@ -247,6 +259,7 @@ export interface RootRouteChildren {
   ProductsRoute: typeof ProductsRoute
   ReviewRoute: typeof ReviewRouteWithChildren
   TeamRoute: typeof TeamRoute
+  UpdatesRoute: typeof UpdatesRoute
   UsageRoute: typeof UsageRoute
   AHandleRoute: typeof AHandleRoute
   ActivityIdRoute: typeof ActivityIdRoute
@@ -305,6 +318,13 @@ declare module '@tanstack/react-router' {
       path: '/team'
       fullPath: '/team'
       preLoaderRoute: typeof TeamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/updates': {
+      id: '/updates'
+      path: '/updates'
+      fullPath: '/updates'
+      preLoaderRoute: typeof UpdatesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/usage': {
@@ -420,6 +440,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProductsRoute: ProductsRoute,
   ReviewRoute: ReviewRouteWithChildren,
   TeamRoute: TeamRoute,
+  UpdatesRoute: UpdatesRoute,
   UsageRoute: UsageRoute,
   AHandleRoute: AHandleRoute,
   ActivityIdRoute: ActivityIdRoute,

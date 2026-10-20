@@ -33,7 +33,7 @@ function invalidate(qc: QueryClient, e: StreamEvent) {
       return inv(['me'], ['team'], ['agent'], ['threads'], ['thread'], ['stories'])
     case 'activity.published':
     case 'activity.updated':
-      return inv(['activity', e.activityId], ['agent-activities'], ['feed'])
+      return inv(['activity', e.activityId], ['agent-activities'], ['feed'], ['updates'])
     case 'rollup.updated':
       return inv(['feed'], ['usage'], ['agent'])
     case 'connect.first_hook':

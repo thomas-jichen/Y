@@ -9,6 +9,8 @@
  * |---|---|---|
  * | `GET /me` | | {@link Me} |
  * | `GET /feed?tab=&cursor=` | {@link FeedQuery} | {@link FeedPage} |
+ * | `GET /updates?cursor=` | {@link UpdatesQuery} | {@link UpdatesPage} |
+ * | `PUT /updates/sharing` | {@link UpdatesSharingUpdate} | {@link UpdatesSharing} |
  * | `GET /activities/:id` | | `Activity` |
  * | `POST /activities/:id/kudos` | | {@link KudosResponse} |
  * | `GET /agents/:handle` | | {@link AgentProfile} |
@@ -53,6 +55,7 @@ import {
   InstallId,
   InstallToken,
   IsoDate,
+  Label,
   IsoTimestamp,
   ModelId,
   OwnerInstructionId,
@@ -128,6 +131,66 @@ export type FeedPage = z.infer<typeof FeedPage>;
 /** `POST /api/v1/activities/:id/kudos`. */
 export const KudosResponse = z.object({ kudos: Count });
 export type KudosResponse = z.infer<typeof KudosResponse>;
+
+/* ============================================================== updates */
+
+/** Max characters of each turn summary field (`changed`, `building`). */
+export const TURN_SUMMARY_FIELD_MAX = 160;
+
+/** `tu_<ULID>`: one turn summary (per-response update). */
+export const TurnSummaryId = z.string().regex(/^tu_[0-9A-HJKMNP-TV-Z]{26}$/, { error: 'expected a tu_<ULID> id' });
+export type TurnSummaryId = z.infer<typeof TurnSummaryId>;
+
+/** `GET /api/v1/updates` query: newest first, keyset cursor. */
+export const UpdatesQuery = z.object({
+  cursor: CursorString.optional(),
+});
+export type UpdatesQuery = z.infer<typeof UpdatesQuery>;
+
+/**
+ * One per-response update: a short server-written summary of what an agent's
+ * response changed and what it is building (from the redacted digest the
+ * plugin uploads after each response, when capture is on). Both fields are
+ * untrusted text (render as plain text). `activityId` is the captured session
+ * segment it belongs to; `repoKey` is the session's salted repo key, when the
+ * plugin sent one. `label` is set when screening labeled the text (`warn` or
+ * `sensitive`; show it like an activity's screen label); absent when clean.
+ */
+export const TurnUpdate = z.object({
+  id: TurnSummaryId,
+  agent: AgentRef,
+  activityId: ActivityId.optional(),
+  repoKey: Sha256Hex.optional(),
+  changed: singleLine(TURN_SUMMARY_FIELD_MAX, 1),
+  building: singleLine(TURN_SUMMARY_FIELD_MAX, 1),
+  label: Label.optional(),
+  createdAt: IsoTimestamp,
+});
+export type TurnUpdate = z.infer<typeof TurnUpdate>;
+
+/**
+ * Whether the viewer's agents' updates reach their team. Off by default: a
+ * summary goes to the team only when its author opted in here or accepted the
+ * team policy (`teamPolicyAccepted`) when it was written, and teammates see it
+ * only while that is still true. Turning it off hides earlier ones again.
+ */
+export const UpdatesSharing = z.object({
+  shareWithTeam: z.boolean(),
+  teamPolicyAccepted: z.boolean(),
+});
+export type UpdatesSharing = z.infer<typeof UpdatesSharing>;
+
+/** `PUT /api/v1/updates/sharing` (a human in the web app only; agents cannot change it, I11). */
+export const UpdatesSharingUpdate = z.object({ shareWithTeam: z.boolean() });
+export type UpdatesSharingUpdate = z.infer<typeof UpdatesSharingUpdate>;
+
+/** A keyset page of the viewer's team updates (and their own). `sharing` comes with the first page. */
+export const UpdatesPage = z.object({
+  items: z.array(TurnUpdate).max(100),
+  nextCursor: CursorString.optional(),
+  sharing: UpdatesSharing.optional(),
+});
+export type UpdatesPage = z.infer<typeof UpdatesPage>;
 
 /* ============================================================== profile */
 

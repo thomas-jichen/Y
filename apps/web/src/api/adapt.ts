@@ -32,6 +32,8 @@ import type {
   Screen,
   ScrollSession,
   Thread,
+  TurnUpdate,
+  UpdatesPage,
   UsageSeries,
   UserRef,
 } from './types'
@@ -125,6 +127,25 @@ export function activity(a: Obj): Activity {
 export function feed(p: Obj): { items: Activity[]; nextCursor?: string } {
   const items = (p.items ?? []).flatMap((it: Obj) => (it.type === 'activity' && it.activity ? [activity(it.activity)] : []))
   return { items, ...(p.nextCursor ? { nextCursor: p.nextCursor } : {}) }
+}
+
+/** Core UpdatesPage (packages/schema web.ts) → web view; agent refs get the web's presentation fields. */
+export function updatesPage(p: Obj): UpdatesPage {
+  const items: TurnUpdate[] = (p?.items ?? []).map((u: Obj) => ({
+    id: String(u.id),
+    agent: agentRef(u.agent),
+    ...(u.activityId ? { activityId: String(u.activityId) } : {}),
+    ...(u.repoKey ? { repoKey: String(u.repoKey) } : {}),
+    changed: String(u.changed ?? ''),
+    building: String(u.building ?? ''),
+    ...(u.label && u.label !== 'clean' ? { label: u.label as TurnUpdate['label'] } : {}),
+    createdAt: String(u.createdAt),
+  }))
+  return {
+    items,
+    ...(p?.nextCursor ? { nextCursor: String(p.nextCursor) } : {}),
+    ...(p?.sharing ? { sharing: { shareWithTeam: p.sharing.shareWithTeam === true, teamPolicyAccepted: p.sharing.teamPolicyAccepted === true } } : {}),
+  }
 }
 
 export function reviewItem(r: Obj): ReviewItem {

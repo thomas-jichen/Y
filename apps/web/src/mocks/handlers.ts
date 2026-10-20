@@ -28,6 +28,7 @@ import { trending } from './fixtures'
 import { habitsFor, usageFor } from './gen'
 import { MockHttpError, on, onWrite } from './router'
 import { askToReply, respondToInstruction, startScroll } from './script'
+import './updates'
 
 onWrite(persist)
 
