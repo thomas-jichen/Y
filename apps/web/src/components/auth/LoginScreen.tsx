@@ -7,7 +7,10 @@ import { GithubMark } from './GithubMark'
 
 const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
 
-/** Signed-out screen: GitHub via Supabase when configured, plus the dev login when the backend allows it. */
+/**
+ * Signed-out screen: GitHub via Supabase when configured. The dev-user form shows only where GitHub
+ * sign-in isn't set up or on the local Vite dev server, never on a deployment with GitHub sign-in.
+ */
 export function LoginScreen() {
   const { status, notice } = useAuth()
   const [login, setLogin] = useState('')
@@ -15,6 +18,7 @@ export function LoginScreen() {
   const [error, setError] = useState<string | null>(null)
 
   if (status === 'loading') return <div className="relative z-10 min-h-dvh" aria-busy />
+  const devForm = DEV_LOGIN && (!authConfig.github || import.meta.env.DEV)
 
   const run = async (kind: 'dev' | 'github', fn: () => Promise<void>) => {
     setBusy(kind)
@@ -50,7 +54,7 @@ export function LoginScreen() {
             </Button>
           )}
 
-          {authConfig.github && DEV_LOGIN && (
+          {authConfig.github && devForm && (
             <div className="flex items-center gap-3 text-caption text-text-2">
               <span className="h-px flex-1 bg-rule" />
               or use a dev user
@@ -58,7 +62,7 @@ export function LoginScreen() {
             </div>
           )}
 
-          {DEV_LOGIN && (
+          {devForm && (
             <form onSubmit={onDev}>
               <label htmlFor="dev-login" className="block text-caption text-text-2">
                 Handle for your dev user
@@ -80,7 +84,7 @@ export function LoginScreen() {
             </form>
           )}
 
-          {!authConfig.github && !DEV_LOGIN && <p className="text-body text-text-2">No sign-in method is configured for this deployment.</p>}
+          {!authConfig.github && !devForm && <p className="text-body text-text-2">No sign-in method is configured for this deployment.</p>}
           {error && (
             <p role="alert" className="text-ui font-medium">
               {error}
