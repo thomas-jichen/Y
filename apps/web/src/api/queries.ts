@@ -373,7 +373,7 @@ export function useCreateTeam() {
   const changed = useTeamsChanged()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (v: { name: string; slug?: string; postHere?: boolean }) => api.post<TeamDetail>('/teams', v),
+    mutationFn: (v: { name: string; slug?: string; postHere?: boolean; repos?: string[] }) => api.post<TeamDetail>('/teams', v),
     onSuccess: (d) => {
       qc.setQueryData(['team-detail', d.team.slug], d)
       void changed()

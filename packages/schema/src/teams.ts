@@ -59,6 +59,8 @@ export const CreateTeamRequest = z.object({
   name: TeamName,
   slug: Slug.optional(),
   postHere: z.boolean().optional(),
+  /** Repos to link at creation (the web always sends the team's first repo). */
+  repos: z.array(GithubRepoName).min(1).max(10).optional(),
 });
 export type CreateTeamRequest = z.infer<typeof CreateTeamRequest>;
 

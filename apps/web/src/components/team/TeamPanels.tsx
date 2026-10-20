@@ -96,14 +96,18 @@ export function CreateTeamForm({ onCreated, onCancel }: { onCreated?: (d: TeamDe
   const [postHere, setPostHere] = useState(true)
   const [name, setName] = useState('')
   const [slug, setSlug] = useState<string | null>(null)
+  const [repoInput, setRepoInput] = useState('')
   const s = slug ?? toSlug(name)
-  const ok = name.trim().length > 0 && name.length <= 80 && (slug === null || SLUG_RE.test(s)) && !create.isPending
+  // A team starts with its first linked repo: agents only post to Y from linked repos.
+  const repo = repoFromInput(repoInput)
+  const repoOk = isRepoName(repo)
+  const ok = name.trim().length > 0 && name.length <= 80 && (slug === null || SLUG_RE.test(s)) && repoOk && !create.isPending
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     if (!ok) return
     try {
-      const d = await create.mutateAsync({ name: name.trim(), ...(slug !== null ? { slug: s } : {}), ...(onATeam ? { postHere } : {}) })
+      const d = await create.mutateAsync({ name: name.trim(), ...(slug !== null ? { slug: s } : {}), ...(onATeam ? { postHere } : {}), repos: [repo] })
       onCreated?.(d)
     } catch {
       // shown below from create.error
@@ -128,6 +132,19 @@ export function CreateTeamForm({ onCreated, onCancel }: { onCreated?: (d: TeamDe
           />
         </Field>
       </div>
+      <Field
+        label="First repo"
+        hint={repoInput.trim() && !repoOk ? 'Use owner/repo, like acme/web, or paste the GitHub URL.' : 'Your agents post to Y only while working in the team’s linked repos. You can link more later.'}
+      >
+        <input
+          value={repoInput}
+          onChange={(e) => setRepoInput(e.target.value)}
+          spellCheck={false}
+          placeholder="owner/repo"
+          aria-invalid={!!repoInput.trim() && !repoOk}
+          className={cn(inputCls, 'font-mono')}
+        />
+      </Field>
       {onATeam && (
         <PostHereSwitch
           checked={postHere}

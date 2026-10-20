@@ -2,7 +2,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { ChevronDown } from 'lucide-react'
 import { useEffect } from 'react'
 import type { Me, TeamRepoStatus, TeamReposStatus } from '@/api/types'
-import { useMe, useRepoStatus } from '@/api/queries'
+import { useMe, useRepoStatus, useSetPostingTeam } from '@/api/queries'
 import { fmtAgo } from '@/lib/format'
 import { matchRepo } from '@/lib/repoScope'
 import { useSelectRepo, useWantedRepo } from './repoScope'
@@ -10,20 +10,30 @@ import { useSelectRepo, useWantedRepo } from './repoScope'
 /** Height the bar takes under the top nav (36 px pill + 8 px gap); pages add it to their top padding. */
 export const REPO_BAR_OFFSET = '44px'
 
+/** A team the viewer can switch their agents to (shown only when they are on several). */
+export type TeamChoice = { slug: string; name: string }
+
 export type RepoBarModel =
-  | { kind: 'bar'; team: string; repos: TeamRepoStatus[]; all: Omit<TeamRepoStatus, 'repo'>; selected: string | null }
-  | { kind: 'link'; team: string }
+  | { kind: 'bar'; team: string; teams?: TeamChoice[]; repos: TeamRepoStatus[]; all: Omit<TeamRepoStatus, 'repo'>; selected: string | null }
+  | { kind: 'link'; team: string; teams?: TeamChoice[] }
+  | { kind: 'notice'; team: string; teams?: TeamChoice[] }
 
 /**
- * What the bar shows, if anything: nothing without a posting team or before its status loads; a
- * quiet "Link a repo" for owners and admins of a team with no linked repos (nothing for members);
- * else the selector, with the wanted repo when the team links it (else all repos).
+ * What the bar shows, if anything: nothing without a posting team or before its status loads. A team
+ * with no linked repos gets "Link your first repo" for owners and admins and a notice for members
+ * (agents post nothing to Y until a repo is linked). Else the selector, with the wanted repo when the
+ * team links it (else all repos). Viewers on several teams also get the team switcher (`teams`).
  */
 export function repoBarModel(me: Me | undefined, status: TeamReposStatus | undefined, want: string | null): RepoBarModel | null {
   const team = me?.postingTeam
   if (!team || !status || status.team.slug !== team) return null
-  if (status.repos.length === 0) return status.viewerRole === 'owner' || status.viewerRole === 'admin' ? { kind: 'link', team } : null
-  return { kind: 'bar', team, repos: status.repos, all: status.all, selected: matchRepo(want, status.repos.map((r) => r.repo)) }
+  const mine = me?.teams ?? []
+  const teams = mine.length > 1 ? { teams: mine.map((t) => ({ slug: t.slug, name: t.name })) } : {}
+  if (status.repos.length === 0) {
+    const admin = status.viewerRole === 'owner' || status.viewerRole === 'admin'
+    return admin ? { kind: 'link', team, ...teams } : { kind: 'notice', team, ...teams }
+  }
+  return { kind: 'bar', team, ...teams, repos: status.repos, all: status.all, selected: matchRepo(want, status.repos.map((r) => r.repo)) }
 }
 
 /** "2 agents working · updated 5m ago" */
@@ -38,24 +48,70 @@ export function repoStatusLine(s: Omit<TeamRepoStatus, 'repo'>, now = Date.now()
 
 const ALL = ''
 
+/** "Team: acme" switcher for viewers on several teams: where their agents post (and what Y shows). */
+function TeamSwitch({ team, teams, onSwitchTeam }: { team: string; teams: TeamChoice[]; onSwitchTeam: (slug: string) => void }) {
+  return (
+    <>
+      <span className="relative inline-flex shrink-0 items-center">
+        <span className="mr-1.5 text-text-2">Team</span>
+        <select
+          aria-label="Team your agents use"
+          value={team}
+          onChange={(e) => e.target.value !== team && onSwitchTeam(e.target.value)}
+          className="max-w-[30vw] cursor-pointer appearance-none truncate bg-transparent pr-5 font-medium outline-none md:max-w-[200px] [&>option]:bg-page [&>option]:text-text"
+        >
+          {teams.map((t) => (
+            <option key={t.slug} value={t.slug}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+        <ChevronDown aria-hidden size={14} strokeWidth={1.8} className="pointer-events-none absolute right-0 text-text-2" />
+      </span>
+      <span aria-hidden className="text-text-2">
+        ·
+      </span>
+    </>
+  )
+}
+
 /** The pill itself. Pure: `onSelect` gets a linked repo name or null for all repos. */
-export function RepoBarView({ model, onSelect, onLinkRepo, now }: { model: RepoBarModel; onSelect: (repo: string | null) => void; onLinkRepo: () => void; now?: number }) {
-  if (model.kind === 'link') {
+export function RepoBarView({
+  model,
+  onSelect,
+  onLinkRepo,
+  onSwitchTeam = () => {},
+  now,
+}: {
+  model: RepoBarModel
+  onSelect: (repo: string | null) => void
+  onLinkRepo: () => void
+  onSwitchTeam?: (slug: string) => void
+  now?: number
+}) {
+  const switcher = model.teams && model.teams.length > 1 ? <TeamSwitch team={model.team} teams={model.teams} onSwitchTeam={onSwitchTeam} /> : null
+  if (model.kind === 'link' || model.kind === 'notice') {
     return (
       <div className="pointer-events-none fixed inset-x-0 top-[80px] z-30 flex justify-center px-3">
-        <div className="flex w-full max-w-[860px]">
-          <a
-            href={`/team?team=${encodeURIComponent(model.team)}`}
-            onClick={(e) => {
-              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
-              e.preventDefault()
-              onLinkRepo()
-            }}
-            className="glass pointer-events-auto inline-flex h-9 items-center rounded-full px-4 text-ui text-text-2 hover:text-text hover:underline hover:decoration-1 hover:underline-offset-4"
-          >
-            Link a repo
-          </a>
-        </div>
+        <section aria-label="Repo scope" className="glass pointer-events-auto flex h-9 w-full max-w-[860px] items-center gap-2 rounded-full pl-4 pr-4 text-ui">
+          {switcher}
+          {model.kind === 'link' ? (
+            <a
+              href={`/team?team=${encodeURIComponent(model.team)}`}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+                e.preventDefault()
+                onLinkRepo()
+              }}
+              className="min-w-0 truncate font-medium hover:underline hover:decoration-1 hover:underline-offset-4"
+            >
+              Link your first repo
+              <span className="font-normal text-text-2"> · your agents aren’t posting to Y until you do</span>
+            </a>
+          ) : (
+            <span className="min-w-0 truncate text-text-2">No repo linked yet, so your agents aren’t posting to Y. Ask a team admin to link one.</span>
+          )}
+        </section>
       </div>
     )
   }
@@ -64,6 +120,7 @@ export function RepoBarView({ model, onSelect, onLinkRepo, now }: { model: RepoB
   return (
     <div className="pointer-events-none fixed inset-x-0 top-[80px] z-30 flex justify-center px-3">
       <section aria-label="Repo scope" className="glass pointer-events-auto flex h-9 w-full max-w-[860px] items-center gap-2 rounded-full pl-4 pr-4 text-ui">
+        {switcher}
         <span className="relative inline-flex shrink-0 items-center">
           <select
             aria-label="Repo"
@@ -139,10 +196,13 @@ export function useRepoBar(): { model: RepoBarModel | null; reserve: boolean } {
   return { model, reserve: repoBarReserve({ model, pending, postingTeam: slug, last: pending ? lastShown() : null }) }
 }
 
-/** The repo selector and status line under the top nav, on every signed-in page. */
+/** The team switcher, repo selector and status line under the top nav, on every signed-in page. */
 export function RepoBar({ model }: { model: RepoBarModel }) {
   const nav = useNavigate()
   const select = useSelectRepo()
+  const setTeam = useSetPostingTeam()
   const linkRepo = () => void nav({ to: '/team', search: { team: model.team } })
-  return <RepoBarView model={model} onSelect={select} onLinkRepo={linkRepo} />
+  // Repo choices belong to the old team; the new team's bar starts at all repos.
+  const switchTeam = (slug: string) => setTeam.mutate(slug, { onSuccess: () => select(null) })
+  return <RepoBarView model={model} onSelect={select} onLinkRepo={linkRepo} onSwitchTeam={switchTeam} />
 }

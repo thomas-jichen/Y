@@ -31,7 +31,7 @@ function TeamPage() {
   const search = Route.useSearch()
   const [creating, setCreating] = useState(false)
   const myTeams = me?.teams ?? []
-  const slug = search.team && myTeams.some((t) => t.slug === search.team) ? search.team : me?.team.slug
+  const slug = search.team && myTeams.some((t) => t.slug === search.team) ? search.team : me?.postingTeam || me?.team.slug
   const current = myTeams.find((t) => t.slug === slug)
   const pick = (s: string) => void nav({ to: '/team', search: { team: s } })
   const { data: detail } = useTeamDetail(slug || undefined)

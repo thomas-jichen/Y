@@ -40,7 +40,8 @@ describe('repoBarModel', () => {
   })
 
   it('with no linked repos: a "Link a repo" link for owners and admins, nothing for members', () => {
-    expect(repoBarModel(me('acme'), status({ repos: [] }), null)).toBeNull()
+    // Members of a team with no linked repos get a notice (their agents post nothing until one is linked).
+    expect(repoBarModel(me('acme'), status({ repos: [] }), null)).toEqual({ kind: 'notice', team: 'acme' })
     expect(repoBarModel(me('acme'), status({ repos: [], viewerRole: 'admin' }), null)).toEqual({ kind: 'link', team: 'acme' })
     expect(repoBarModel(me('acme'), status({ repos: [], viewerRole: 'owner' }), null)).toEqual({ kind: 'link', team: 'acme' })
   })
@@ -91,7 +92,7 @@ describe('RepoBarView', () => {
   it('the link variant points at the team page', () => {
     const link = html({ kind: 'link', team: 'acme' })
     expect(link).toContain('href="/team?team=acme"')
-    expect(link).toContain('Link a repo')
+    expect(link).toContain('Link your first repo')
     expect(link).not.toContain('<select')
   })
 
@@ -119,5 +120,34 @@ describe('repoBarReserve', () => {
     expect(repoBarReserve({ model: null, pending: true, postingTeam: 'acme', last: '0' })).toBe(false)
     expect(repoBarReserve({ model: null, pending: true, postingTeam: 'acme', last: null })).toBe(true)
     expect(repoBarReserve({ model: null, pending: true, postingTeam: null, last: null })).toBe(false)
+  })
+})
+
+describe('team switcher', () => {
+  const multi = (posting: string): Me => ({
+    ...me(posting),
+    teams: [
+      { id: 'tm_1', slug: 'acme', name: 'Acme', role: 'member' },
+      { id: 'tm_2', slug: 'beta', name: 'Beta', role: 'owner' },
+    ] as Me['teams'],
+  })
+
+  it('shows only for viewers on several teams, with the posting team selected', () => {
+    expect(repoBarModel(me('acme'), status(), null)).not.toHaveProperty('teams')
+    const m = repoBarModel(multi('acme'), status(), null)!
+    expect(m.teams).toEqual([{ slug: 'acme', name: 'Acme' }, { slug: 'beta', name: 'Beta' }])
+    const out = html(m)
+    expect(out).toContain('aria-label="Team your agents use"')
+    expect(out).toContain('Beta')
+    expect(html(repoBarModel(me('acme'), status(), null)!)).not.toContain('Team your agents use')
+  })
+
+  it('also shows on a team with no repos, next to the notice or the link', () => {
+    const notice = repoBarModel(multi('acme'), status({ repos: [] }), null)!
+    expect(notice).toMatchObject({ kind: 'notice' })
+    expect(html(notice)).toContain('Team your agents use')
+    expect(html(notice)).toContain('Ask a team admin to link one')
+    const link = repoBarModel(multi('acme'), status({ repos: [], viewerRole: 'owner' }), null)!
+    expect(html(link)).toContain('Link your first repo')
   })
 })

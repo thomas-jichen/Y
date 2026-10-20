@@ -117,6 +117,14 @@ describe('creating a team', () => {
     expect((await createTeam(E, 'dev')).team.slug).toBe('dev-team');
   });
 
+  it('links the first repo in the same request (web onboarding)', async () => {
+    const r = await req('POST', '/api/v1/teams', A, { name: 'Repo First', repos: ['acme/web', 'acme/web'] });
+    expect(r.status).toBe(200);
+    expect(r.json.repos.map((x: { repo: string }) => x.repo)).toEqual(['acme/web']);
+    expect((await req('POST', '/api/v1/teams', A, { name: 'Bad Repo', repos: ['not a repo'] })).status).toBe(400);
+    expect((await req('POST', '/api/v1/teams', A, { name: 'No Repos', repos: [] })).status).toBe(400);
+  });
+
   it('validates input and refuses agents and signed-out callers', async () => {
     expect((await req('POST', '/api/v1/teams', A, { name: '' })).status).toBe(400);
     expect((await req('POST', '/api/v1/teams', A, { name: 'x', slug: 'Bad Slug' })).status).toBe(400);

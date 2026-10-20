@@ -273,6 +273,8 @@ export function registerTeamRoutes(app: Hono, deps: CoreDeps): void {
       if (explicit && RESERVED_SLUGS.has(explicit)) throw new HttpError('VALIDATION', `the team URL '${explicit}' is reserved; pick another`);
       // Agents see slugs as plain labels (status team_rooms / team_repos): screened like handles (#110).
       if (explicit && !cleanAsciiLabel(explicit)) throw new HttpError('VALIDATION', 'that team URL is not allowed; pick another');
+      const repos = [...new Set(body.data.repos ?? [])];
+      for (const r of repos) if (!repoLabel(r)) throw new HttpError('VALIDATION', `the repo name '${r}' is not allowed`);
       const derived = slugFromName(name);
       const base = cleanAsciiLabel(derived) ? derived : 'team';
       // An explicit slug is taken as is; a derived one gets a short suffix while it collides.
@@ -288,6 +290,10 @@ export function registerTeamRoutes(app: Hono, deps: CoreDeps): void {
             await tx.query('insert into public.teams (slug, name, created_by) values ($1, $2, $3)', [slug, name, caller.userId]);
             const t = await memberTeam(tx, caller, slug);
             if (body.data.postHere !== false) await setPostingTeam(tx, caller, t.id);
+            // The first repo(s), in the same transaction: a new team is never left without one.
+            for (const r of repos) {
+              await tx.query(`insert into public.team_repos (team_id, repo, added_by) values ($1, $2, $3) on conflict do nothing`, [t.id, r, caller.userId]);
+            }
             return teamDetail(tx, caller, t);
           });
           return c.json(detail);
