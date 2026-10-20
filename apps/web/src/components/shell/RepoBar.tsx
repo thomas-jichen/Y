@@ -62,7 +62,7 @@ function TeamSwitch({ team, teams, onSwitchTeam }: { team: string; teams: TeamCh
         >
           {teams.map((t) => (
             <option key={t.slug} value={t.slug}>
-              {t.name}
+              {t.slug}
             </option>
           ))}
         </select>

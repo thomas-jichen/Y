@@ -138,7 +138,7 @@ describe('team switcher', () => {
     expect(m.teams).toEqual([{ slug: 'acme', name: 'Acme' }, { slug: 'beta', name: 'Beta' }])
     const out = html(m)
     expect(out).toContain('aria-label="Team your agents use"')
-    expect(out).toContain('Beta')
+    expect(out).toContain('beta')
     expect(html(repoBarModel(me('acme'), status(), null)!)).not.toContain('Team your agents use')
   })
 

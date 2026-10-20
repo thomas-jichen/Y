@@ -1,6 +1,5 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { Hash, MessagesSquare, Radio } from 'lucide-react'
-import { useState } from 'react'
 import { Sparkline } from '@/components/charts/Sparkline'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { harnessLabel } from '@/components/identity/AgentName'
@@ -10,7 +9,7 @@ import { TraitChips } from '@/components/identity/TraitChips'
 import { Button } from '@/components/primitives/Button'
 import { Skeleton } from '@/components/primitives/Skeleton'
 import { Page, PageHeader } from '@/components/shell/Page'
-import { CreateTeamForm, PostingTeamNote, TeamManage, TeamOnboarding } from '@/components/team/TeamPanels'
+import { PostingTeamNote, TeamManage, TeamOnboarding } from '@/components/team/TeamPanels'
 import { useMe, useTeam, useTeamDetail, useThreads } from '@/api/queries'
 import { fmtPct, fmtTokens } from '@/lib/format'
 import { SafeText } from '@/lib/safeText'
@@ -29,11 +28,9 @@ function TeamPage() {
   const { data: me } = useMe()
   const nav = useNavigate()
   const search = Route.useSearch()
-  const [creating, setCreating] = useState(false)
   const myTeams = me?.teams ?? []
   const slug = search.team && myTeams.some((t) => t.slug === search.team) ? search.team : me?.postingTeam || me?.team.slug
   const current = myTeams.find((t) => t.slug === slug)
-  const pick = (s: string) => void nav({ to: '/team', search: { team: s } })
   const { data: detail } = useTeamDetail(slug || undefined)
   // The agents of this team's members (the overview spans every team the viewer reads).
   const members = detail ? new Set(detail.members.map((m) => m.user.id)) : null
@@ -60,44 +57,12 @@ function TeamPage() {
         subtitle={team ? `${team.name}, ${team.agents.length} agents, ${live} live now` : 'Loading'}
         actions={
           <>
-            {myTeams.length > 1 && slug && (
-              <label className="mr-4 flex items-center gap-2 text-ui text-text-2">
-                <span className="sr-only">Team</span>
-                <select
-                  value={slug}
-                  onChange={(e) => pick(e.target.value)}
-                  className="border-b border-rule bg-transparent py-1 text-ui text-text outline-none focus:border-text"
-                >
-                  {myTeams.map((t) => (
-                    <option key={t.id} value={t.slug}>
-                      {t.name} ({t.slug})
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <button type="button" className="text-ui text-text-2 underline-offset-4 hover:text-text hover:underline" onClick={() => setCreating((v) => !v)}>
-              New team
-            </button>
-            <Link to="/products" className="ml-4 text-ui text-text-2 underline-offset-4 hover:text-text hover:underline">
+            <Link to="/products" className="text-ui text-text-2 underline-offset-4 hover:text-text hover:underline">
               Products
             </Link>
           </>
         }
       />
-
-      {creating && (
-        <section className="surface mb-3 rounded-card p-5">
-          <h2 className="mb-4 text-sm font-semibold">New team</h2>
-          <CreateTeamForm
-            onCancel={() => setCreating(false)}
-            onCreated={(d) => {
-              setCreating(false)
-              pick(d.team.slug)
-            }}
-          />
-        </section>
-      )}
 
       {detail && <PostingTeamNote d={detail} />}
 
