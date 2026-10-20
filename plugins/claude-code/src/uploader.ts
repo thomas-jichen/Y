@@ -42,6 +42,7 @@ import {
   type Paths,
 } from './runtime.js';
 import { listChunks } from './outbox.js';
+import { repoAllowed } from './gating.js';
 import { killSwitchesSeenAt, mergeKillSwitches, readBrief, setupSentFile, updatePulse } from './state.js';
 
 export const MAX_ATTEMPTS = 10;
@@ -299,6 +300,14 @@ export async function drainOutbox(o: UploaderOpts): Promise<UploadSummary> {
       } catch {
         moveToDead(o.paths, next, 'invalid', now());
         summary.dead++;
+        continue;
+      }
+      // Repo gating: a chunk queued for a repo the team has not linked (or before gating) is
+      // dropped here, never sent.
+      const chunkRepo = body && typeof body === 'object' ? (body as { repoKey?: unknown }).repoKey : undefined;
+      if (!repoAllowed(readBrief(o.paths), typeof chunkRepo === 'string' ? chunkRepo : undefined)) {
+        fs.rmSync(next, { force: true });
+        fs.rmSync(attemptsFile(next), { force: true });
         continue;
       }
       let status = 0;

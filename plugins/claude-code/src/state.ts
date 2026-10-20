@@ -35,6 +35,10 @@ export interface LocalPolicy {
   repoKeySalt?: string;
   /** Core's `agent_settings.wake_on_dm`: the setting core's relationship-aware wake decision used. */
   wakeOnDm?: BriefPolicy['wakeOnDm'];
+  /** Repo gating: keys of the repos linked to the agent's team (see gating.ts). Absent: no gating. */
+  allowedRepoKeys?: string[];
+  /** Changes when the team or its repos change; a pulse with another version triggers a brief refresh. */
+  policyVersion?: string;
 }
 
 function parsePolicy(raw: unknown): LocalPolicy | undefined {
@@ -44,10 +48,15 @@ function parsePolicy(raw: unknown): LocalPolicy | undefined {
   if (!capture.success) return undefined;
   const salt = BriefPolicy.shape.repoKeySalt.safeParse(r.repoKeySalt);
   const wake = BriefPolicy.shape.wakeOnDm.safeParse(r.wakeOnDm);
+  const allowed = BriefPolicy.shape.allowedRepoKeys.safeParse(r.allowedRepoKeys);
+  const version = BriefPolicy.shape.policyVersion.safeParse(r.policyVersion);
   return {
     capture: capture.data,
     ...(salt.success && salt.data ? { repoKeySalt: salt.data } : {}),
     ...(wake.success ? { wakeOnDm: wake.data } : {}),
+    // A present but malformed list fails closed (nothing allowed); an absent one means no gating.
+    ...(r.allowedRepoKeys !== undefined ? { allowedRepoKeys: allowed.success && allowed.data ? allowed.data : [] } : {}),
+    ...(version.success && version.data ? { policyVersion: version.data } : {}),
   };
 }
 

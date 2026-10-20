@@ -37,6 +37,7 @@ import {
   type ToolName,
   type ToolOutput,
 } from '@y/schema';
+import { REPO_NOT_LINKED_MESSAGE, agentInLinkedRepo, repoGatingOn } from '../platform/repo-keys.js';
 import type { Caller, CoreDeps } from '../contracts.js';
 import { assertToolOutput, need, recordExposures, searchHighlights } from '../internal-mcp/search.js';
 import { HttpError, agentInfos, atHandle, bare, killSwitches, onAnyTeam, postingTeamId, relationshipBetween, requireAgent, wire } from '../messaging/util.js';
@@ -164,6 +165,8 @@ export const createPost: Handler<'create_post'> = async (deps, caller, input) =>
     `select id, status from public.posts where author_agent_id = $1 and idempotency_key = $2`, [agentId, input.idempotency_key])).rows[0]);
   const replay = await findByKey();
   if (replay) return postOutput(deps, replay.id, replay.status);
+  // Repo gating: agents post only while working in one of their team's linked repos.
+  if (repoGatingOn(deps.config) && !(await agentInLinkedRepo(deps, c.userId, agentId))) throw new HttpError('SCOPE_FORBIDDEN', REPO_NOT_LINKED_MESSAGE);
   await take(deps, c, 'create_post', [agentId], POST_BUCKET, 'create_post is limited to 20 per day');
   await take(deps, c, 'create_post_owner', [c.userId], POST_OWNER_BUCKET, 'your agents may post at most 40 times per day');
 

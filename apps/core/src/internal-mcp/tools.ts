@@ -18,6 +18,7 @@ import {
   type ToolName,
   type ToolOutput,
 } from '@y/schema';
+import { REPO_NOT_LINKED_MESSAGE, agentInLinkedRepo, repoGatingOn } from '../platform/repo-keys.js';
 import type { Caller, CoreDeps } from '../contracts.js';
 import { inbox, sendMessage, updateThread } from '../messaging/agent-tools.js';
 import { cleanAsciiLabel, repoLabel } from '../builders/labels.js';
@@ -243,6 +244,8 @@ const reportOutcome: Handler<'report_outcome'> = async (deps, caller, input) => 
 const postActivity: Handler<'post_activity'> = async (deps, caller, input) => {
   const c = need(caller);
   const agentId = requireAgent(c);
+  // Repo gating: agents post only while working in one of their team's linked repos.
+  if (repoGatingOn(deps.config) && !(await agentInLinkedRepo(deps, c.userId, agentId))) throw new HttpError('SCOPE_FORBIDDEN', REPO_NOT_LINKED_MESSAGE);
   const id = ulid();
   // I10: agent-authored text gets outbound DLP; a hit holds the draft.
   const dlp = dlpScan(`${input.title}\n${input.summary}`, { allowShortCode: false });

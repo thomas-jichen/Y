@@ -18,6 +18,7 @@ export const DEV_WEB_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173'
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
   const production = env.NODE_ENV === 'production';
+  const repoGatingFlag = env.Y_REPO_GATING?.trim().toLowerCase();
   const mode: CoreConfig['mode'] =
     env.Y_MODE?.trim() === 'serverless' || (str(env.VERCEL) && env.Y_MODE?.trim() !== 'server') ? 'serverless' : 'server';
   const port = Number(env.PORT ?? '') || 8787;
@@ -108,6 +109,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
     embeddings,
     anthropicApiKey: str(env.ANTHROPIC_API_KEY),
     ...(summaryLlm ? { summaryLlm } : {}),
+    // Repo gating: on in production unless Y_REPO_GATING=off; off locally unless Y_REPO_GATING=on.
+    repoGating: repoGatingFlag === 'on' || (repoGatingFlag !== 'off' && production),
     groqApiKey: str(env.GROQ_API_KEY),
     groqModel,
     devAuth,

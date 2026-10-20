@@ -27,6 +27,7 @@ import { writeChunk } from '../outbox.js';
 import { gitRemote, redactText } from '../redaction.js';
 import { allocSeq, ensureDir, logLine, PLUGIN_VERSION, readJson, safeSid, sha256Hex, writeJsonAtomic } from '../runtime.js';
 import { captureOn, readBrief, setupSentFile } from '../state.js';
+import { repoAllowed } from '../gating.js';
 import { episodesFile } from './post-tool-use-failure.js';
 
 /** `cursors/<sid>.json`. */
@@ -160,7 +161,7 @@ export async function buildStopChunk(ctx: HookCtx, sid: string, transcript: stri
   let repoKey: string | undefined;
   const salt = brief?.policy?.repoKeySalt;
   const remote = gitRemote(cwd);
-  if (capture && salt && remote) {
+  if (salt && remote) {
     try {
       repoKey = computeRepoKey(remote, salt);
     } catch {
@@ -194,7 +195,7 @@ export async function buildStopChunk(ctx: HookCtx, sid: string, transcript: stri
   let parsed = IngestChunk.safeParse(full);
   if (!parsed.success) {
     logLine(ctx.config.dataDir, 'hook', `Stop: chunk invalid, retrying stats-only: ${parsed.error.message.slice(0, 300)}`);
-    parsed = IngestChunk.safeParse({ ...base, errorEpisodes: [] });
+    parsed = IngestChunk.safeParse({ ...base, ...(repoKey ? { repoKey } : {}), errorEpisodes: [] });
   }
   writeJsonAtomic(curFile, {
     main: main.cursor,
@@ -226,7 +227,9 @@ export function stop(ctx: HookCtx): Promise<HookResult> {
     }
     try {
       const chunk = await buildStopChunk(ctx, sid, transcript);
-      if (chunk) writeChunk(ctx.paths, chunk, ctx.now());
+      // Repo gating: outside the team's linked repos nothing is queued (the cursor still advances,
+      // so this work is never uploaded later either).
+      if (chunk && repoAllowed(readBrief(ctx.paths), chunk.repoKey)) writeChunk(ctx.paths, chunk, ctx.now());
     } finally {
       fs.rmSync(lock, { recursive: true, force: true });
     }

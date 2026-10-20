@@ -64,6 +64,7 @@ import { httpJson, logLine, pidAlive, readJson, safeSid, sleep, writeJsonAtomic 
 import { fallbackText, mergeKillSwitches, readBrief, readPulse, renderOne, updatePulse } from './state.js';
 import { clearSessionEnded, endTurn, sessionEnded, startTurn, turnActive } from './turn.js';
 import { parkPendingWake, takeWake } from './wake-budget.js';
+import { refreshBrief } from './gating.js';
 
 /** Hook timeout is 3300 s; leave a margin so we exit 0 before the harness kills us. */
 export const LISTEN_TIMEOUT_MS = 3300_000;
@@ -334,6 +335,10 @@ export function listen(ctx: HookCtx, o: ListenOpts = {}): Promise<HookResult> {
             updatePulse(ctx.paths, { ...(newCursor ? { cursor: newCursor } : {}), ...(unread.success ? { unread: unread.data } : {}) }, ctx.now());
             if (newCursor) writeJsonAtomic(cursorFile(ctx, sid), { cursor: newCursor });
             if (ks.success) mergeKillSwitches(ctx.paths, ks.data, ctx.now());
+            // Repo gating: the team or its linked repos changed; re-fetch the brief so this session
+            // uploads (or stops uploading) without a restart.
+            const pv = typeof r.policyVersion === 'string' && /^[0-9a-f]{16}$/.test(r.policyVersion) ? r.policyVersion : undefined;
+            if (pv && pv !== readBrief(ctx.paths)?.policy?.policyVersion) await refreshBrief(ctx);
             const wake = r.wake as { targetSessionId?: unknown; pointer?: unknown } | undefined;
             const pushOk = ks.success && !ks.data.pushPaths;
             // A newer listener took the slot while this poll was in flight: it owns the wake.

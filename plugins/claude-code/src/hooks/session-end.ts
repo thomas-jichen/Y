@@ -12,6 +12,8 @@ import { failOpen, OK, type HookCtx, type HookResult } from '../context.js';
 import { writeChunk } from '../outbox.js';
 import { allocSeq, PLUGIN_VERSION, safeSid } from '../runtime.js';
 import { markSessionEnded } from '../turn.js';
+import { repoAllowed, sessionRepoKey } from '../gating.js';
+import { readBrief } from '../state.js';
 
 export function sessionEnd(ctx: HookCtx): Promise<HookResult> {
   return failOpen(ctx, 'SessionEnd', async () => {
@@ -21,6 +23,10 @@ export function sessionEnd(ctx: HookCtx): Promise<HookResult> {
     markSessionEnded(ctx.paths, sid, ctx.now());
     fs.rmSync(path.join(ctx.paths.state, `pulse-cursor-${safeSid(sid)}.json`), { force: true }); // the listener's own cursor
     if (ctx.config.shareMode === 'off') return OK;
+    // Repo gating: a session outside the team's linked repos sends nothing, not even its close.
+    const brief = readBrief(ctx.paths);
+    const repoKey = sessionRepoKey(brief, typeof ctx.input.cwd === 'string' ? ctx.input.cwd : undefined);
+    if (!repoAllowed(brief, repoKey)) return OK;
     const pm = PermissionMode.safeParse(ctx.input.permission_mode);
     const chunk = IngestChunk.safeParse({
       v: 1,
@@ -28,6 +34,7 @@ export function sessionEnd(ctx: HookCtx): Promise<HookResult> {
       harnessVersion: '0',
       pluginVersion: PLUGIN_VERSION,
       sessionId: sid,
+      ...(repoKey ? { repoKey } : {}),
       seq: allocSeq(ctx.paths, sid),
       segmentIndex: 0,
       statsDelta: emptyStats('0'),

@@ -13,6 +13,7 @@ import { contextOutput, failOpen, OK, remaining, type HookCtx, type HookResult }
 import { redactText } from '../redaction.js';
 import { ensureDir, httpJson, safeSid } from '../runtime.js';
 import { captureOn, pushPathsAllowed, readBrief, renderOne } from '../state.js';
+import { repoAllowed, sessionRepoKey } from '../gating.js';
 
 /** Minimum score to push (THRESHOLDS.push in retrieval). */
 const PUSH_SCORE = 0.6;
@@ -78,6 +79,8 @@ export function postToolUseFailure(ctx: HookCtx): Promise<HookResult> {
     fs.appendFileSync(episodesFile(ctx, sid), `${JSON.stringify(ep)}\n`);
 
     if (!ctx.config.token || !pushPathsAllowed(brief)) return OK;
+    // Repo gating: the error text is only matched against Y from the team's linked repos.
+    if (!repoAllowed(brief, sessionRepoKey(brief, cwd))) return OK;
     const timeoutMs = remaining(ctx) - 100;
     if (timeoutMs < 50) return OK;
     const res = await httpJson(ctx.fetch, 'POST', `${ctx.config.apiUrl}/api/v1/hook/match`, {

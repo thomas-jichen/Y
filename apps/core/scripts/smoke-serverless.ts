@@ -73,6 +73,8 @@ try {
     Y_DEMO_SECRET: DEMO,
     Y_WEB_ORIGIN: 'https://web.smoke.test',
     Y_LLM: 'mock',
+    // The smoke ingests from a session with no linked repo; repo gating is covered by core tests.
+    Y_REPO_GATING: 'off',
     Y_EMBEDDINGS: 'mock',
   });
   const entry = (await import('../src/vercel-entry.js')) as Record<string, (r: Request) => Promise<Response>>;

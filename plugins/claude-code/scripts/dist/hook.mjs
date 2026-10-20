@@ -22173,7 +22173,15 @@ var BriefPolicy = external_exports.object({
   policyAccepted: external_exports.boolean(),
   distiller: DistillerMode,
   teamId: TeamId.optional(),
-  repoKeySalt: external_exports.string().regex(/^[A-Za-z0-9_-]{16,128}$/).optional()
+  repoKeySalt: external_exports.string().regex(/^[A-Za-z0-9_-]{16,128}$/).optional(),
+  /**
+   * Repo gating: the salted keys of the repos linked to the posting team. When present, the plugin
+   * captures and uploads nothing for a session whose repo key is not in the list (empty: nothing).
+   * Absent: an older core without gating.
+   */
+  allowedRepoKeys: external_exports.array(RepoKey).max(100).optional(),
+  /** Changes when the posting team or its linked repos change; the pulse carries it so listeners refresh the brief. */
+  policyVersion: external_exports.string().regex(/^[0-9a-f]{16}$/).optional()
 });
 var ClaimedPackage = external_exports.object({
   ecosystem: external_exports.enum(["npm", "pypi", "github"]),
@@ -22264,7 +22272,9 @@ var PulseResponse = external_exports.object({
   approvedChanges: external_exports.array(external_exports.object({ changeRequestId: ChangeRequestId })).max(20),
   killSwitches: KillSwitches,
   /** Back off before polling again (rate limiting / maintenance). */
-  retryAfterS: external_exports.int().min(0).max(3600).optional()
+  retryAfterS: external_exports.int().min(0).max(3600).optional(),
+  /** The brief's `policy.policyVersion` now; a listener holding another version re-fetches the brief. */
+  policyVersion: external_exports.string().regex(/^[0-9a-f]{16}$/).optional()
 });
 var WakeAck = external_exports.object({
   sessionId: HarnessSessionId,
@@ -22353,7 +22363,9 @@ var IngestResponse = external_exports.object({
   accepted: external_exports.boolean(),
   duplicate: external_exports.boolean().optional(),
   activityId: ActivityId.optional(),
-  pulse: PulseSummary
+  pulse: PulseSummary,
+  /** Repo gating: nothing was stored because the session's repo is not linked to the posting team. */
+  dropped: external_exports.enum(["repo_not_linked"]).optional()
 });
 
 // ../../packages/schema/src/hook.ts
@@ -22432,7 +22444,9 @@ var GithubRepoName = external_exports.string().max(140).regex(/^[A-Za-z0-9](?:[A
 var CreateTeamRequest = external_exports.object({
   name: TeamName,
   slug: Slug.optional(),
-  postHere: external_exports.boolean().optional()
+  postHere: external_exports.boolean().optional(),
+  /** Repos to link at creation (the web always sends the team's first repo). */
+  repos: external_exports.array(GithubRepoName).min(1).max(10).optional()
 });
 var TeamMember = external_exports.object({
   user: UserRef,
@@ -25749,10 +25763,15 @@ function parsePolicy(raw) {
   if (!capture.success) return void 0;
   const salt = BriefPolicy.shape.repoKeySalt.safeParse(r.repoKeySalt);
   const wake = BriefPolicy.shape.wakeOnDm.safeParse(r.wakeOnDm);
+  const allowed = BriefPolicy.shape.allowedRepoKeys.safeParse(r.allowedRepoKeys);
+  const version2 = BriefPolicy.shape.policyVersion.safeParse(r.policyVersion);
   return {
     capture: capture.data,
     ...salt.success && salt.data ? { repoKeySalt: salt.data } : {},
-    ...wake.success ? { wakeOnDm: wake.data } : {}
+    ...wake.success ? { wakeOnDm: wake.data } : {},
+    // A present but malformed list fails closed (nothing allowed); an absent one means no gating.
+    ...r.allowedRepoKeys !== void 0 ? { allowedRepoKeys: allowed.success && allowed.data ? allowed.data : [] } : {},
+    ...version2.success && version2.data ? { policyVersion: version2.data } : {}
   };
 }
 var ALL_ENGAGED = { pushPaths: true, networkContent: true, apply: true, ingest: true };
@@ -25860,6 +25879,23 @@ function renderBlock(pointers, budgetChars, locals) {
   return lines.join("\n");
 }
 
+// src/gating.ts
+function sessionRepoKey(brief, cwd) {
+  const salt = brief?.policy?.repoKeySalt;
+  const remote = gitRemote(cwd);
+  if (!salt || !remote) return void 0;
+  try {
+    return computeRepoKey(remote, salt);
+  } catch {
+    return void 0;
+  }
+}
+function repoAllowed(brief, repoKey) {
+  const allowed = brief?.policy?.allowedRepoKeys;
+  if (allowed === void 0) return true;
+  return !!repoKey && allowed.includes(repoKey);
+}
+
 // src/hooks/post-tool-use-failure.ts
 var PUSH_SCORE = 0.6;
 function trustGate(m) {
@@ -25912,6 +25948,7 @@ function postToolUseFailure(ctx) {
     fs3.appendFileSync(episodesFile(ctx, sid), `${JSON.stringify(ep)}
 `);
     if (!ctx.config.token || !pushPathsAllowed(brief)) return OK;
+    if (!repoAllowed(brief, sessionRepoKey(brief, cwd))) return OK;
     const timeoutMs = remaining(ctx) - 100;
     if (timeoutMs < 50) return OK;
     const res = await httpJson(ctx.fetch, "POST", `${ctx.config.apiUrl}/api/v1/hook/match`, {
@@ -26009,6 +26046,9 @@ function sessionEnd(ctx) {
     markSessionEnded(ctx.paths, sid, ctx.now());
     fs6.rmSync(path7.join(ctx.paths.state, `pulse-cursor-${safeSid(sid)}.json`), { force: true });
     if (ctx.config.shareMode === "off") return OK;
+    const brief = readBrief(ctx.paths);
+    const repoKey = sessionRepoKey(brief, typeof ctx.input.cwd === "string" ? ctx.input.cwd : void 0);
+    if (!repoAllowed(brief, repoKey)) return OK;
     const pm = PermissionMode.safeParse(ctx.input.permission_mode);
     const chunk = IngestChunk.safeParse({
       v: 1,
@@ -26016,6 +26056,7 @@ function sessionEnd(ctx) {
       harnessVersion: "0",
       pluginVersion: PLUGIN_VERSION,
       sessionId: sid,
+      ...repoKey ? { repoKey } : {},
       seq: allocSeq(ctx.paths, sid),
       segmentIndex: 0,
       statsDelta: emptyStats("0"),
@@ -26441,7 +26482,7 @@ async function buildStopChunk(ctx, sid, transcript) {
   let repoKey;
   const salt = brief?.policy?.repoKeySalt;
   const remote = gitRemote(cwd);
-  if (capture && salt && remote) {
+  if (salt && remote) {
     try {
       repoKey = computeRepoKey(remote, salt);
     } catch {
@@ -26474,7 +26515,7 @@ async function buildStopChunk(ctx, sid, transcript) {
   let parsed = IngestChunk.safeParse(full);
   if (!parsed.success) {
     logLine(ctx.config.dataDir, "hook", `Stop: chunk invalid, retrying stats-only: ${parsed.error.message.slice(0, 300)}`);
-    parsed = IngestChunk.safeParse({ ...base, errorEpisodes: [] });
+    parsed = IngestChunk.safeParse({ ...base, ...repoKey ? { repoKey } : {}, errorEpisodes: [] });
   }
   writeJsonAtomic(curFile, {
     main: main2.cursor,
@@ -26504,7 +26545,7 @@ function stop(ctx) {
     }
     try {
       const chunk = await buildStopChunk(ctx, sid, transcript);
-      if (chunk) writeChunk(ctx.paths, chunk, ctx.now());
+      if (chunk && repoAllowed(readBrief(ctx.paths), chunk.repoKey)) writeChunk(ctx.paths, chunk, ctx.now());
     } finally {
       fs9.rmSync(lock, { recursive: true, force: true });
     }

@@ -7,6 +7,7 @@
 import type { App, CoreDeps, PushEvent } from '../contracts.js';
 import { LEASE_STALE_MS, pickLeaseSession, wakeBudget, type LeaseCandidate } from '@y/domain';
 import { HarnessSessionId, PulseQuery, WakeAck, makePointer, validationError, type PulseResponse } from '@y/schema';
+import { repoGatingOn, repoPolicy } from '../platform/repo-keys.js';
 import { PlatformAuth } from '../platform/auth.js';
 import { refreshAgentPresence } from '../platform/presence.js';
 import { handleScreensClean } from '../platform/handles.js';
@@ -152,6 +153,7 @@ export function registerPulse(app: App, deps: CoreDeps): void {
         approvedChanges: [],
         killSwitches: ks,
       };
+      if (repoGatingOn(deps.config)) res.policyVersion = (await repoPolicy(deps, caller.userId)).version;
       if (wake && !ks.pushPaths) res.wake = wake;
       return c.json(res);
     } catch (err) {

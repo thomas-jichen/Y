@@ -22,6 +22,7 @@ import {
   ShareMode,
   TeamId,
   WakeOnDm,
+  RepoKey,
 } from './common.js';
 import { RealtimeChannel } from './hosting.js';
 import { Pointer } from './pointers.js';
@@ -72,6 +73,14 @@ export const BriefPolicy = z.object({
   distiller: DistillerMode,
   teamId: TeamId.optional(),
   repoKeySalt: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/).optional(),
+  /**
+   * Repo gating: the salted keys of the repos linked to the posting team. When present, the plugin
+   * captures and uploads nothing for a session whose repo key is not in the list (empty: nothing).
+   * Absent: an older core without gating.
+   */
+  allowedRepoKeys: z.array(RepoKey).max(100).optional(),
+  /** Changes when the posting team or its linked repos change; the pulse carries it so listeners refresh the brief. */
+  policyVersion: z.string().regex(/^[0-9a-f]{16}$/).optional(),
 });
 export type BriefPolicy = z.infer<typeof BriefPolicy>;
 

@@ -25,6 +25,7 @@ import { realtimeChannelFor } from '../realtime-channel.js';
 import type { SealedChunk } from '../pipeline.js';
 import { takeIngestToken } from '../rate-limit.js';
 import { postingTeamId } from '../../messaging/util.js';
+import { repoGatingOn, repoPolicy } from '../repo-keys.js';
 import { fail, parseOr, readJson, sealDigest, segmentUlid } from '../util.js';
 import { TURN_SUMMARY_TOPIC, turnSummaryJob } from '../../updates/job.js';
 import { turnSummarizerFor } from '../../updates/summarizer.js';
@@ -72,6 +73,15 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
     const ch = parsed.data;
     if ((await killSwitches(deps)).ingest) return fail(c, 'RATE_LIMITED', 'ingest is paused (kill switch)', { retryAfterS: 300 });
     const agentId = caller.agentId!;
+    // Repo gating: nothing is stored for a session outside the posting team's linked repos (older
+    // plugins still upload; a 2xx lets them drop the chunk).
+    if (repoGatingOn(deps.config)) {
+      const policy = await repoPolicy(deps, caller.userId);
+      if (!ch.repoKey || !policy.keys.includes(ch.repoKey)) {
+        const unread = await deps.db.asUser(caller.claims, (tx) => unreadFor(tx, agentId));
+        return c.json({ accepted: false, dropped: 'repo_not_linked', pulse: { unread, cursor: cursorOf(deps) } } satisfies IngestResponse);
+      }
+    }
     const rl = await deps.db.asUser(caller.claims, (tx) => takeIngestToken(tx, agentId, ch.sessionId));
     if (!rl.allowed) {
       c.header('retry-after', String(rl.retryAfterS));
@@ -221,6 +231,7 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
     }
     const caller: Caller = resolution.caller;
     const agentId = caller.agentId!;
+    const gating = repoGatingOn(deps.config) ? await repoPolicy(deps, caller.userId) : null;
     const brief = await deps.db.asUser(caller.claims, async (tx) => {
       const agent = (
         await tx.query<{ handle: string; harness: string }>('select handle, harness from public.agents where id = $1', [agentId])
@@ -270,6 +281,7 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
           policyAccepted: team?.policy_accepted_version != null,
           ...(team ? { teamId: team.team_id } : {}),
           ...(team?.repo_key_salt ? { repoKeySalt: team.repo_key_salt } : {}),
+          ...(gating ? { allowedRepoKeys: gating.keys, policyVersion: gating.version } : {}),
         },
         humanNotices: notices,
         serverTime: deps.now().toISOString(),

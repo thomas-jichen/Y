@@ -20468,7 +20468,9 @@ var IngestResponse = external_exports.object({
   accepted: external_exports.boolean(),
   duplicate: external_exports.boolean().optional(),
   activityId: ActivityId.optional(),
-  pulse: PulseSummary
+  pulse: PulseSummary,
+  /** Repo gating: nothing was stored because the session's repo is not linked to the posting team. */
+  dropped: external_exports.enum(["repo_not_linked"]).optional()
 });
 
 // src/runtime.ts
@@ -20651,6 +20653,273 @@ function listChunks(p) {
   }
 }
 
+// ../../packages/capture/src/types.ts
+var SEGMENT_IDLE_MS = 30 * 60 * 1e3;
+var SEGMENT_CAP_MS = 4 * 60 * 60 * 1e3;
+
+// ../../packages/capture/src/transcript.ts
+var DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
+
+// ../../packages/schema/src/errors.ts
+var ErrorCode = external_exports.enum([
+  "RATE_LIMITED",
+  "DM_NOT_PERMITTED",
+  "QUARANTINED",
+  "HELD_FOR_SENDER",
+  "PAUSED_BY_OWNER",
+  "STALE_SUGGESTION",
+  "SCOPE_FORBIDDEN",
+  "NOT_FOUND",
+  "VALIDATION",
+  "UPGRADE_REQUIRED",
+  "UNAUTHORIZED",
+  "STEP_UP_REQUIRED",
+  "CONFLICT",
+  "INTERNAL"
+]);
+var HumanAction = external_exports.enum([
+  "review_in_web",
+  "step_up",
+  "reconnect",
+  "upgrade_plugin",
+  "accept_policy",
+  "grant_permission",
+  "wait_for_owner"
+]);
+var ErrorNext = external_exports.union([
+  external_exports.strictObject({
+    tool: ToolName,
+    args: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
+  }),
+  external_exports.strictObject({
+    humanAction: HumanAction,
+    url: external_exports.url()
+  })
+]);
+var McpErrorNext = external_exports.union([
+  external_exports.strictObject({
+    tool: ToolName,
+    args: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
+  }),
+  external_exports.strictObject({
+    human_action: HumanAction,
+    url: external_exports.url()
+  })
+]);
+var ErrorDetail = external_exports.object({
+  code: ErrorCode,
+  message: external_exports.string().min(1).max(1e3),
+  retryable: external_exports.boolean(),
+  retryAfterS: external_exports.int().min(0).max(86400).optional(),
+  next: ErrorNext.optional(),
+  fields: external_exports.record(external_exports.string().max(200), external_exports.string().max(500)).optional()
+});
+var ErrorBody = external_exports.object({ error: ErrorDetail });
+var McpErrorDetail = external_exports.object({
+  code: ErrorCode,
+  message: external_exports.string().min(1).max(1e3),
+  retryable: external_exports.boolean(),
+  retry_after_s: external_exports.int().min(0).max(86400).optional(),
+  next: McpErrorNext.optional(),
+  fields: external_exports.record(external_exports.string().max(200), external_exports.string().max(500)).optional()
+});
+var McpErrorBody = external_exports.object({ error: McpErrorDetail });
+
+// ../../packages/schema/src/pointers.ts
+var POINTER_TEMPLATE_IDS = ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"];
+var PointerTemplateId = external_exports.enum(POINTER_TEMPLATE_IDS);
+var SmallCount = external_exports.int().min(1).max(999);
+var P0Params = external_exports.strictObject({});
+var P1Params = external_exports.strictObject({
+  count: SmallCount,
+  handle: Handle.optional(),
+  thread_id: ThreadId.optional()
+});
+var P2Params = external_exports.strictObject({
+  highlight_id: HighlightId,
+  score: external_exports.int().min(60).max(100),
+  scope: external_exports.enum(["team", "public"])
+});
+var P3Params = external_exports.strictObject({
+  change_request_id: ChangeRequestId,
+  state: external_exports.enum(["approved", "applied", "rolled_back", "failed", "conflict"])
+});
+var P4Params = external_exports.strictObject({
+  count: SmallCount,
+  thread_id: ThreadId.optional()
+});
+var P5Params = external_exports.strictObject({
+  count: SmallCount
+});
+var P6Params = external_exports.strictObject({
+  count: SmallCount
+});
+var P7Params = external_exports.strictObject({
+  dep_index: external_exports.int().min(0).max(9999),
+  product_id: ProductId
+});
+var P8Params = external_exports.strictObject({
+  change_request_id: ChangeRequestId
+});
+var P9Params = external_exports.strictObject({
+  item_id: external_exports.union([HighlightId, SharedComponentId, ChangeRequestId, ActivityId]),
+  rollback: external_exports.enum(["scheduled", "none"])
+});
+var POINTER_PARAMS = {
+  P0: P0Params,
+  P1: P1Params,
+  P2: P2Params,
+  P3: P3Params,
+  P4: P4Params,
+  P5: P5Params,
+  P6: P6Params,
+  P7: P7Params,
+  P8: P8Params,
+  P9: P9Params
+};
+var variant = (id2) => external_exports.strictObject({ template_id: external_exports.literal(id2), params: POINTER_PARAMS[id2] });
+var Pointer = external_exports.discriminatedUnion("template_id", [
+  variant("P0"),
+  variant("P1"),
+  variant("P2"),
+  variant("P3"),
+  variant("P4"),
+  variant("P5"),
+  variant("P6"),
+  variant("P7"),
+  variant("P8"),
+  variant("P9")
+]);
+
+// ../../packages/schema/src/messaging.ts
+var ThreadKind = external_exports.enum(["dm", "group", "comment", "support"]);
+var ThreadState = external_exports.enum(["request", "open", "paused_by_owner", "resolved", "archived"]);
+var MessageState = external_exports.enum([
+  "queued",
+  "request_pending",
+  "screening",
+  "delivered",
+  "quarantined",
+  "held_for_sender",
+  "blocked",
+  "released",
+  "rejected",
+  "expired"
+]);
+var MessageIntent = external_exports.enum([
+  "coordinate",
+  "question",
+  "answer",
+  "bug_report",
+  "claim",
+  "comment",
+  "handoff",
+  "fyi"
+]);
+var Urgency = external_exports.enum(["normal", "wake"]);
+var DeliveryState = external_exports.enum(["pending", "pointer_sent", "seen", "handled", "expired"]);
+var DeliveryPath = external_exports.enum(["inbox", "hook_pointer", "stop_nudge", "wake", "monitor", "owner_notification"]);
+var MESSAGE_BODY_MAX = 4e3;
+var INTRO_MAX = 280;
+var Delivery = external_exports.object({
+  recipient: AgentRef,
+  state: DeliveryState,
+  path: DeliveryPath.optional(),
+  seenAt: IsoTimestamp.optional()
+});
+var MessageSender = external_exports.object({
+  kind: external_exports.enum(["agent", "user", "system"]),
+  agent: AgentRef.optional(),
+  user: UserRef.optional()
+}).refine(
+  (s) => s.kind === "agent" && !!s.agent && !s.user || s.kind === "user" && !!s.user && !s.agent || s.kind === "system" && !s.agent && !s.user,
+  { error: "sender must carry exactly the ref matching its kind" }
+);
+var Message = external_exports.object({
+  id: MessageId,
+  threadId: ThreadId,
+  sender: MessageSender,
+  trust: Trust,
+  intent: MessageIntent,
+  urgency: Urgency,
+  body: multiLine(MESSAGE_BODY_MAX),
+  state: MessageState,
+  screen: Screen.optional(),
+  createdAt: IsoTimestamp,
+  deliveries: external_exports.array(Delivery).max(50)
+});
+var AreaGlob = external_exports.string().regex(/^[A-Za-z0-9_.*?/{}[\],!@+-]{1,200}$/, { error: "invalid area glob" });
+var WorkClaim = external_exports.object({
+  id: WorkClaimId,
+  agent: AgentRef,
+  areaGlob: AreaGlob,
+  note: singleLine(200).optional(),
+  until: IsoTimestamp
+});
+var ThreadParticipant = external_exports.object({
+  agent: AgentRef.optional(),
+  user: UserRef.optional(),
+  role: external_exports.enum(["member", "owner", "builder", "customer", "observer"]),
+  presence: Presence.optional()
+});
+var Thread = external_exports.object({
+  id: ThreadId,
+  kind: ThreadKind,
+  subject: singleLine(120),
+  state: ThreadState,
+  participants: external_exports.array(ThreadParticipant).max(50),
+  anchor: external_exports.object({
+    kind: external_exports.enum(["activity", "highlight", "component"]),
+    id: external_exports.union([ActivityId, HighlightId, SharedComponentId]),
+    title: singleLine(120)
+  }).optional(),
+  product: external_exports.object({ id: ProductId.optional(), slug: Slug, name: singleLine(64, 1) }).optional(),
+  claims: external_exports.array(WorkClaim).max(50),
+  lastMessageAt: IsoTimestamp,
+  /**
+   * First 280 characters of the latest delivered or released message the
+   * viewer may read. UNTRUSTED: plain text only. Never taken from a
+   * quarantined or request_pending message.
+   */
+  lastPreview: external_exports.string().max(280).optional(),
+  /** A quarantined message is newer than the preview (show a warning, not its text). */
+  lastPreviewQuarantined: external_exports.boolean().optional(),
+  unread: Count,
+  viewer: external_exports.object({
+    canInstruct: external_exports.boolean(),
+    remoteInstructionsOn: external_exports.boolean(),
+    needsStepUp: external_exports.boolean()
+  })
+});
+var VerifiedVia = external_exports.enum(["web", "slack"]);
+var CoreSignature = external_exports.object({
+  alg: external_exports.literal("Ed25519"),
+  kid: external_exports.string().regex(/^[A-Za-z0-9_.-]{1,64}$/),
+  /** 64-byte Ed25519 signature, unpadded base64url (86 chars). */
+  sig: external_exports.string().regex(/^[A-Za-z0-9_-]{86}$/, { error: "expected a base64url Ed25519 signature" })
+});
+var OwnerInstruction = external_exports.object({
+  id: OwnerInstructionId,
+  agent_id: AgentId,
+  thread_id: ThreadId.optional(),
+  body: multiLine(MESSAGE_BODY_MAX, 1),
+  verified_via: VerifiedVia,
+  created_at: IsoTimestamp,
+  delivered_at: IsoTimestamp.optional(),
+  signature: CoreSignature
+});
+var OWNER_INSTRUCTION_NOTE = "From your owner, verified by Y. It cannot authorize setup changes or credential operations.";
+var DmPolicy = external_exports.enum(["allow", "request", "deny"]);
+var DmDelivery = external_exports.enum(["wake", "next_turn", "digest"]);
+var SenderRelationship = external_exports.enum(["self", "teammate", "contact", "followed", "customer", "stranger"]);
+var DmPermission = external_exports.object({
+  subjectKind: external_exports.enum(["agent", "user", "team", "product", "relationship"]),
+  /** Agent/user/team/product id, or a {@link SenderRelationship} when `subjectKind` is `relationship`. */
+  subjectId: EntityId,
+  policy: DmPolicy,
+  delivery: DmDelivery
+});
+
 // ../../packages/schema/src/llm.ts
 var CAPABILITY_TAGS = [
   // testing
@@ -20813,657 +21082,6 @@ var TurnSummaryDraft = external_exports.object({
   building: external_exports.string().max(1e3)
 });
 var turnSummaryJsonSchema = toStructuredOutputSchema(TurnSummaryDraft);
-
-// ../../packages/schema/src/scroll.ts
-var SuggestionKind = external_exports.enum(["add_skill", "claude_md_block", "workflow_tip"]);
-var ChangeTarget = external_exports.enum(["user", "local", "project_pr"]);
-var EvidenceScope = external_exports.enum(["team", "public-aggregate"]);
-var SuggestionEvidence = external_exports.object({
-  segment: Slug,
-  source_success_wilson: Probability,
-  source_n: Count,
-  your_success: Probability,
-  your_n: Count,
-  median_tokens_delta: external_exports.number().min(-1).max(10),
-  distinct_owners: Count,
-  scope: EvidenceScope
-});
-var SKILL_SLUG = "[a-z0-9][a-z0-9-]{1,63}";
-var USER_SKILL_PATH_RE = new RegExp(`^~/\\.(?:claude|codex)/skills/${SKILL_SLUG}/SKILL\\.md$`);
-var PROJECT_SKILL_PATH_RE = new RegExp(`^\\.claude/skills/${SKILL_SLUG}/SKILL\\.md$`);
-var AllowedCreatePath = external_exports.string().refine((p) => USER_SKILL_PATH_RE.test(p) || PROJECT_SKILL_PATH_RE.test(p), {
-  error: "create_file path must be a SKILL.md under ~/.claude/skills, ~/.codex/skills or .claude/skills"
-});
-var ManagedBlockFile = external_exports.enum(["CLAUDE.local.md", "AGENTS.md"]);
-var PatchPrecondition = external_exports.union([external_exports.literal("absent"), external_exports.object({ sha256: Sha256Hex })]);
-var PATCH_CONTENT_MAX = 32e3;
-var PatchOp = external_exports.discriminatedUnion("op", [
-  external_exports.strictObject({
-    op: external_exports.literal("create_file"),
-    path: AllowedCreatePath,
-    content: multiLine(PATCH_CONTENT_MAX, 1),
-    sha256: Sha256Hex,
-    expect: PatchPrecondition
-  }),
-  external_exports.strictObject({
-    op: external_exports.literal("managed_block"),
-    file: ManagedBlockFile,
-    blockId: Slug,
-    content: multiLine(PATCH_CONTENT_MAX),
-    sha256: Sha256Hex,
-    expect: PatchPrecondition
-  })
-]);
-var Patch = external_exports.strictObject({
-  v: external_exports.literal(1),
-  target: ChangeTarget,
-  ops: external_exports.array(PatchOp).min(1).max(5)
-}).superRefine((patch, ctx) => {
-  patch.ops.forEach((op, i) => {
-    let ok;
-    if (patch.target === "user") ok = op.op === "create_file" && USER_SKILL_PATH_RE.test(op.path);
-    else if (patch.target === "local") ok = op.op === "managed_block";
-    else ok = op.op === "create_file" ? PROJECT_SKILL_PATH_RE.test(op.path) : op.file === "AGENTS.md";
-    if (!ok) ctx.addIssue({ code: "custom", path: ["ops", i], message: `op not allowed for target ${patch.target}` });
-  });
-});
-var PatchPreview = external_exports.object({
-  patch_hash: Sha256Hex,
-  files: external_exports.array(
-    external_exports.object({
-      path: external_exports.string().max(200),
-      op: external_exports.enum(["create_file", "managed_block"]),
-      lines: Count,
-      bytes: Count
-    })
-  ).max(5)
-});
-var SetupSuggestion = external_exports.object({
-  id: SuggestionId,
-  kind: SuggestionKind,
-  component: external_exports.object({
-    name: ComponentName,
-    version_hash: Sha256Hex,
-    author: Handle,
-    capability_tags: external_exports.array(CapabilityTag).max(8),
-    applies_to_intents: external_exports.array(TaskIntent).max(6)
-  }),
-  evidence: SuggestionEvidence,
-  risk: external_exports.object({
-    static: StaticOutcome,
-    verdict: Label
-  }),
-  targets: external_exports.array(ChangeTarget).min(1).max(3),
-  patch_preview: PatchPreview
-});
-var ChangeRequestState = external_exports.enum([
-  "pending_approval",
-  "approved",
-  "applied",
-  "failed",
-  "rejected",
-  "rolled_back",
-  "expired"
-]);
-var ChangeFile = external_exports.object({
-  path: external_exports.string().max(200),
-  op: external_exports.enum(["create_file", "managed_block"]),
-  before: external_exports.string().max(PATCH_CONTENT_MAX * 4).optional(),
-  after: external_exports.string().max(PATCH_CONTENT_MAX * 4)
-});
-var ChangeRequest = external_exports.object({
-  id: ChangeRequestId,
-  agent: AgentRef,
-  state: ChangeRequestState,
-  target: ChangeTarget,
-  suggestion: external_exports.object({
-    id: SuggestionId,
-    kind: SuggestionKind,
-    component: external_exports.object({
-      name: ComponentName,
-      author: AgentRef,
-      versionHash: Sha256Hex,
-      capabilityTags: external_exports.array(CapabilityTag).max(8)
-    }),
-    evidence: external_exports.object({
-      segment: Slug,
-      sourceSuccess: Probability,
-      sourceN: Count,
-      yourSuccess: Probability,
-      yourN: Count,
-      medianTokensDelta: external_exports.number().min(-1).max(10),
-      distinctOwners: Count,
-      scope: EvidenceScope
-    })
-  }),
-  files: external_exports.array(ChangeFile).max(5),
-  staticFindings: external_exports.array(StaticFinding).max(200),
-  screen: Screen,
-  /** POST this back on approve ("Approve exactly this"). */
-  patchHash: Sha256Hex,
-  /** Non-zero only for `project_pr`. */
-  affects: external_exports.object({ teammates: Count, ci: external_exports.boolean() }),
-  takesEffect: external_exports.enum(["now", "next_session", "after_reload_skills"]),
-  appliedAt: IsoTimestamp.optional(),
-  postHashes: external_exports.record(external_exports.string().max(200), Sha256Hex).optional(),
-  prUrl: external_exports.url().optional()
-});
-var KeyId = external_exports.string().regex(/^[A-Za-z0-9_.-]{1,64}$/);
-var SignedChangePayload = external_exports.strictObject({
-  crId: ChangeRequestId,
-  patchHash: Sha256Hex,
-  agentId: AgentId,
-  repoKey: RepoKey.nullable(),
-  exp: external_exports.int().positive(),
-  kid: KeyId
-});
-var SignedChange = external_exports.object({
-  payload: SignedChangePayload,
-  sig: external_exports.string().regex(/^[A-Za-z0-9_-]{86}$/, { error: "expected a base64url Ed25519 signature" })
-});
-var SignedRollbackPayload = external_exports.strictObject({
-  crId: ChangeRequestId,
-  patchHash: Sha256Hex,
-  agentId: AgentId,
-  reason: external_exports.enum(["takedown", "revoked_key"]),
-  exp: external_exports.int().positive(),
-  kid: KeyId
-});
-var SignedRollback = external_exports.object({
-  payload: SignedRollbackPayload,
-  sig: external_exports.string().regex(/^[A-Za-z0-9_-]{86}$/, { error: "expected a base64url Ed25519 signature" })
-});
-var KeyringEntry = external_exports.object({
-  kid: KeyId,
-  alg: external_exports.literal("Ed25519"),
-  /** Raw 32-byte public key, base64url. */
-  pub: external_exports.string().regex(/^[A-Za-z0-9_-]{43}$/),
-  status: external_exports.enum(["active", "next", "retired", "revoked"])
-});
-var Keyring = external_exports.object({ v: external_exports.literal(1), keys: external_exports.array(KeyringEntry).min(1).max(10) });
-var SIGNED_CHANGE_TTL_S = 7 * 24 * 3600;
-
-// ../../packages/schema/src/events.ts
-var StreamEvent = external_exports.discriminatedUnion("type", [
-  external_exports.object({ type: external_exports.literal("activity.published"), activityId: ActivityId }),
-  external_exports.object({ type: external_exports.literal("activity.updated"), activityId: ActivityId }),
-  external_exports.object({ type: external_exports.literal("message.new"), threadId: ThreadId, messageId: MessageId }),
-  external_exports.object({ type: external_exports.literal("review.new"), reviewId: ReviewItemId }),
-  external_exports.object({ type: external_exports.literal("review.decided"), reviewId: ReviewItemId }),
-  external_exports.object({ type: external_exports.literal("change.updated"), changeRequestId: ChangeRequestId, state: ChangeRequestState }),
-  external_exports.object({ type: external_exports.literal("presence"), agentId: AgentId, presence: Presence }),
-  external_exports.object({ type: external_exports.literal("rollup.updated"), agentId: AgentId, day: IsoDate }),
-  external_exports.object({ type: external_exports.literal("post.new"), postId: PostId }),
-  external_exports.object({ type: external_exports.literal("post.reacted"), postId: PostId }),
-  external_exports.object({ type: external_exports.literal("comment.new"), postId: PostId, commentId: PostCommentId }),
-  external_exports.object({
-    type: external_exports.literal("scroll.step"),
-    scrollId: ScrollId,
-    agentId: AgentId,
-    stepId: ScrollStepId,
-    postId: PostId.optional()
-  }),
-  external_exports.object({ type: external_exports.literal("scroll.ended"), scrollId: ScrollId, agentId: AgentId })
-]);
-var EventType = external_exports.enum([
-  "activity.published",
-  "activity.updated",
-  "message.new",
-  "message.delivered",
-  "review.new",
-  "review.decided",
-  "change.updated",
-  "presence",
-  "rollup.updated",
-  "post.new",
-  "post.reacted",
-  "comment.new",
-  "scroll.step",
-  "scroll.ended",
-  "owner_instruction.new",
-  "suggestion.ready",
-  "thread.escalated",
-  "wake.requested",
-  "kill_switch.changed",
-  "takedown"
-]);
-var EventPayloadValue = external_exports.union([external_exports.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/), external_exports.int(), external_exports.boolean()]);
-var EventPayload = external_exports.record(external_exports.string().regex(/^[a-zA-Z][a-zA-Z0-9]{0,31}$/), EventPayloadValue).refine((p) => Object.keys(p).length <= 16, { error: "at most 16 payload keys" });
-var EventRecord = external_exports.object({
-  /** `events.id` (bigserial) as a decimal string. */
-  id: external_exports.string().regex(/^\d{1,19}$/),
-  type: EventType,
-  audienceAgentIds: external_exports.array(AgentId).max(100),
-  audienceUserIds: external_exports.array(UserId).max(100),
-  payload: EventPayload
-});
-
-// ../../packages/schema/src/hosting.ts
-var HostingMode = external_exports.enum(["server", "serverless"]);
-var EMBEDDING_DIMS = 384;
-var EMBEDDING_MODEL = "gte-small";
-var EMBED_MAX_INPUTS = 32;
-var EMBED_MAX_INPUT_CHARS = 8e3;
-var EmbedInputText = external_exports.string().min(1).max(EMBED_MAX_INPUT_CHARS);
-var EmbedRequest = external_exports.strictObject({
-  input: external_exports.union([EmbedInputText, external_exports.array(EmbedInputText).min(1).max(EMBED_MAX_INPUTS)])
-});
-var EmbedResponse = external_exports.object({
-  model: external_exports.literal(EMBEDDING_MODEL),
-  dims: external_exports.literal(EMBEDDING_DIMS),
-  embeddings: external_exports.array(external_exports.array(external_exports.number()).length(EMBEDDING_DIMS)).min(1).max(EMBED_MAX_INPUTS)
-});
-var RealtimeOwnerKind = external_exports.enum(["agent", "user"]);
-var ChannelSecret = external_exports.string().regex(/^[a-f0-9]{64}$/, { error: "expected a 64-char hex channel secret" });
-var TOPIC_RE = /^(agent|user):([A-Za-z0-9][A-Za-z0-9_-]{0,63}):([a-f0-9]{64})$/;
-var RealtimeTopic = external_exports.string().regex(TOPIC_RE, { error: "expected agent|user:<id>:<64-hex secret>" });
-var RealtimeChannel = external_exports.discriminatedUnion("provider", [
-  external_exports.object({
-    provider: external_exports.literal("supabase"),
-    url: external_exports.url({ protocol: /^https?$/ }),
-    apiKey: external_exports.string().regex(/^[A-Za-z0-9._-]{20,2048}$/, { error: "expected a publishable key" }),
-    topic: RealtimeTopic,
-    secret: ChannelSecret
-  }),
-  external_exports.object({
-    provider: external_exports.literal("local"),
-    topic: RealtimeTopic,
-    secret: ChannelSecret
-  })
-]);
-var RealtimeBroadcast = external_exports.strictObject({
-  /** `events.id` (bigserial) as a decimal string; usable as an SSE / pulse cursor. */
-  id: external_exports.string().regex(/^\d{1,19}$/),
-  type: EventType,
-  payload: EventPayload
-});
-var JobsTickSource = external_exports.enum(["pg_cron", "after", "manual"]);
-var JobsTickRequest = external_exports.object({
-  source: JobsTickSource,
-  due: Count.optional()
-});
-var JobsTickResponse = external_exports.object({
-  ok: external_exports.literal(true),
-  mode: HostingMode,
-  claimed: Count,
-  completed: Count,
-  failed: Count,
-  remaining: Count.nullable(),
-  durationMs: Count
-});
-
-// ../../packages/schema/src/pointers.ts
-var POINTER_TEMPLATE_IDS = ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"];
-var PointerTemplateId = external_exports.enum(POINTER_TEMPLATE_IDS);
-var SmallCount = external_exports.int().min(1).max(999);
-var P0Params = external_exports.strictObject({});
-var P1Params = external_exports.strictObject({
-  count: SmallCount,
-  handle: Handle.optional(),
-  thread_id: ThreadId.optional()
-});
-var P2Params = external_exports.strictObject({
-  highlight_id: HighlightId,
-  score: external_exports.int().min(60).max(100),
-  scope: external_exports.enum(["team", "public"])
-});
-var P3Params = external_exports.strictObject({
-  change_request_id: ChangeRequestId,
-  state: external_exports.enum(["approved", "applied", "rolled_back", "failed", "conflict"])
-});
-var P4Params = external_exports.strictObject({
-  count: SmallCount,
-  thread_id: ThreadId.optional()
-});
-var P5Params = external_exports.strictObject({
-  count: SmallCount
-});
-var P6Params = external_exports.strictObject({
-  count: SmallCount
-});
-var P7Params = external_exports.strictObject({
-  dep_index: external_exports.int().min(0).max(9999),
-  product_id: ProductId
-});
-var P8Params = external_exports.strictObject({
-  change_request_id: ChangeRequestId
-});
-var P9Params = external_exports.strictObject({
-  item_id: external_exports.union([HighlightId, SharedComponentId, ChangeRequestId, ActivityId]),
-  rollback: external_exports.enum(["scheduled", "none"])
-});
-var POINTER_PARAMS = {
-  P0: P0Params,
-  P1: P1Params,
-  P2: P2Params,
-  P3: P3Params,
-  P4: P4Params,
-  P5: P5Params,
-  P6: P6Params,
-  P7: P7Params,
-  P8: P8Params,
-  P9: P9Params
-};
-var variant = (id2) => external_exports.strictObject({ template_id: external_exports.literal(id2), params: POINTER_PARAMS[id2] });
-var Pointer = external_exports.discriminatedUnion("template_id", [
-  variant("P0"),
-  variant("P1"),
-  variant("P2"),
-  variant("P3"),
-  variant("P4"),
-  variant("P5"),
-  variant("P6"),
-  variant("P7"),
-  variant("P8"),
-  variant("P9")
-]);
-
-// ../../packages/schema/src/brief.ts
-var TokenState = external_exports.enum(["ok", "revoked", "expired", "unknown_install"]);
-var PulseToken = external_exports.object({
-  token: external_exports.string().regex(/^[A-Za-z0-9_.-]{16,2048}$/),
-  expiresAt: IsoTimestamp
-});
-var DistillerMode = external_exports.enum(["local", "server", "off"]);
-var BriefPolicy = external_exports.object({
-  shareMode: ShareMode,
-  holdMinutes: external_exports.int().min(0).max(1440),
-  capture: external_exports.enum(["on", "off"]),
-  wakeOnDm: WakeOnDm,
-  policyAccepted: external_exports.boolean(),
-  distiller: DistillerMode,
-  teamId: TeamId.optional(),
-  repoKeySalt: external_exports.string().regex(/^[A-Za-z0-9_-]{16,128}$/).optional()
-});
-var ClaimedPackage = external_exports.object({
-  ecosystem: external_exports.enum(["npm", "pypi", "github"]),
-  name: PackageName,
-  productId: ProductId
-});
-var HumanNotice = external_exports.object({
-  kind: external_exports.enum([
-    "drafts_pending",
-    "reviews_pending",
-    "token_revoked",
-    "token_expired",
-    "unknown_install",
-    "upgrade_required",
-    "policy_pending",
-    "doctor_recommended"
-  ]),
-  count: Count.optional(),
-  url: external_exports.url()
-});
-var AgentBrief = external_exports.object({
-  v: external_exports.literal(1),
-  tokenState: TokenState,
-  agent: external_exports.object({ id: AgentId, handle: Handle, harness: Harness }).optional(),
-  minPluginVersion: Semver,
-  killSwitches: KillSwitches,
-  pointers: external_exports.array(Pointer).max(10),
-  pulseToken: PulseToken.optional(),
-  realtime: RealtimeChannel.optional(),
-  policy: BriefPolicy,
-  claimedPackages: external_exports.array(ClaimedPackage).max(2e4).optional(),
-  /** Version tag of the claimed-packages list; send back as `claimsEtag` to skip an unchanged list. */
-  claimsEtag: external_exports.string().max(128).optional(),
-  humanNotices: external_exports.array(HumanNotice).max(5),
-  serverTime: IsoTimestamp
-}).superRefine((b, ctx) => {
-  if (b.tokenState === "ok") {
-    if (!b.agent) ctx.addIssue({ code: "custom", path: ["agent"], message: "required when tokenState is ok" });
-    if (!b.pulseToken) ctx.addIssue({ code: "custom", path: ["pulseToken"], message: "required when tokenState is ok" });
-  } else {
-    if (b.pointers.length > 0) {
-      ctx.addIssue({ code: "custom", path: ["pointers"], message: "must be empty unless tokenState is ok" });
-    }
-    if (b.realtime) {
-      ctx.addIssue({ code: "custom", path: ["realtime"], message: "must be absent unless tokenState is ok" });
-    }
-  }
-  if (b.policy.repoKeySalt !== void 0 && b.policy.teamId === void 0) {
-    ctx.addIssue({ code: "custom", path: ["policy", "teamId"], message: "required with repoKeySalt" });
-  }
-});
-var AgentBriefQuery = external_exports.object({
-  pluginVersion: Semver,
-  harnessVersion: external_exports.string().max(40).optional(),
-  sessionId: external_exports.string().max(128).optional(),
-  /** ETag of the claimed-packages list the client already has; omitted from the response when unchanged. */
-  claimsEtag: external_exports.string().max(128).optional()
-});
-
-// ../../packages/schema/src/pulse.ts
-var PULSE_MAX_WAIT_S = 25;
-var PulseQuery = external_exports.object({
-  cursor: CursorString.optional(),
-  wait: external_exports.coerce.number().int().min(0).max(PULSE_MAX_WAIT_S).default(20),
-  /** The listening session, so a targeted wake can be addressed to it. */
-  sessionId: HarnessSessionId.optional(),
-  /**
-   * Turn state of that session (presence): `1` while a turn is in progress
-   * (prompt submitted, Stop not yet fired), `0` when idle. Older plugins omit
-   * it; core then falls back to recent ingests.
-   */
-  active: external_exports.enum(["0", "1"]).optional()
-});
-var UnreadCounts = external_exports.object({
-  dm: Count,
-  ownerInstructions: Count,
-  reviews: Count,
-  suggestions: Count,
-  posts: Count.default(0)
-});
-var PulseResponse = external_exports.object({
-  cursor: CursorString,
-  unread: UnreadCounts,
-  wake: external_exports.object({
-    targetSessionId: HarnessSessionId,
-    pointer: Pointer
-  }).optional(),
-  approvedChanges: external_exports.array(external_exports.object({ changeRequestId: ChangeRequestId })).max(20),
-  killSwitches: KillSwitches,
-  /** Back off before polling again (rate limiting / maintenance). */
-  retryAfterS: external_exports.int().min(0).max(3600).optional()
-});
-var WakeAck = external_exports.object({
-  sessionId: HarnessSessionId,
-  cursor: CursorString
-});
-
-// ../../packages/schema/src/errors.ts
-var ErrorCode = external_exports.enum([
-  "RATE_LIMITED",
-  "DM_NOT_PERMITTED",
-  "QUARANTINED",
-  "HELD_FOR_SENDER",
-  "PAUSED_BY_OWNER",
-  "STALE_SUGGESTION",
-  "SCOPE_FORBIDDEN",
-  "NOT_FOUND",
-  "VALIDATION",
-  "UPGRADE_REQUIRED",
-  "UNAUTHORIZED",
-  "STEP_UP_REQUIRED",
-  "CONFLICT",
-  "INTERNAL"
-]);
-var HumanAction = external_exports.enum([
-  "review_in_web",
-  "step_up",
-  "reconnect",
-  "upgrade_plugin",
-  "accept_policy",
-  "grant_permission",
-  "wait_for_owner"
-]);
-var ErrorNext = external_exports.union([
-  external_exports.strictObject({
-    tool: ToolName,
-    args: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
-  }),
-  external_exports.strictObject({
-    humanAction: HumanAction,
-    url: external_exports.url()
-  })
-]);
-var McpErrorNext = external_exports.union([
-  external_exports.strictObject({
-    tool: ToolName,
-    args: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
-  }),
-  external_exports.strictObject({
-    human_action: HumanAction,
-    url: external_exports.url()
-  })
-]);
-var ErrorDetail = external_exports.object({
-  code: ErrorCode,
-  message: external_exports.string().min(1).max(1e3),
-  retryable: external_exports.boolean(),
-  retryAfterS: external_exports.int().min(0).max(86400).optional(),
-  next: ErrorNext.optional(),
-  fields: external_exports.record(external_exports.string().max(200), external_exports.string().max(500)).optional()
-});
-var ErrorBody = external_exports.object({ error: ErrorDetail });
-var McpErrorDetail = external_exports.object({
-  code: ErrorCode,
-  message: external_exports.string().min(1).max(1e3),
-  retryable: external_exports.boolean(),
-  retry_after_s: external_exports.int().min(0).max(86400).optional(),
-  next: McpErrorNext.optional(),
-  fields: external_exports.record(external_exports.string().max(200), external_exports.string().max(500)).optional()
-});
-var McpErrorBody = external_exports.object({ error: McpErrorDetail });
-
-// ../../packages/schema/src/messaging.ts
-var ThreadKind = external_exports.enum(["dm", "group", "comment", "support"]);
-var ThreadState = external_exports.enum(["request", "open", "paused_by_owner", "resolved", "archived"]);
-var MessageState = external_exports.enum([
-  "queued",
-  "request_pending",
-  "screening",
-  "delivered",
-  "quarantined",
-  "held_for_sender",
-  "blocked",
-  "released",
-  "rejected",
-  "expired"
-]);
-var MessageIntent = external_exports.enum([
-  "coordinate",
-  "question",
-  "answer",
-  "bug_report",
-  "claim",
-  "comment",
-  "handoff",
-  "fyi"
-]);
-var Urgency = external_exports.enum(["normal", "wake"]);
-var DeliveryState = external_exports.enum(["pending", "pointer_sent", "seen", "handled", "expired"]);
-var DeliveryPath = external_exports.enum(["inbox", "hook_pointer", "stop_nudge", "wake", "monitor", "owner_notification"]);
-var MESSAGE_BODY_MAX = 4e3;
-var INTRO_MAX = 280;
-var Delivery = external_exports.object({
-  recipient: AgentRef,
-  state: DeliveryState,
-  path: DeliveryPath.optional(),
-  seenAt: IsoTimestamp.optional()
-});
-var MessageSender = external_exports.object({
-  kind: external_exports.enum(["agent", "user", "system"]),
-  agent: AgentRef.optional(),
-  user: UserRef.optional()
-}).refine(
-  (s) => s.kind === "agent" && !!s.agent && !s.user || s.kind === "user" && !!s.user && !s.agent || s.kind === "system" && !s.agent && !s.user,
-  { error: "sender must carry exactly the ref matching its kind" }
-);
-var Message = external_exports.object({
-  id: MessageId,
-  threadId: ThreadId,
-  sender: MessageSender,
-  trust: Trust,
-  intent: MessageIntent,
-  urgency: Urgency,
-  body: multiLine(MESSAGE_BODY_MAX),
-  state: MessageState,
-  screen: Screen.optional(),
-  createdAt: IsoTimestamp,
-  deliveries: external_exports.array(Delivery).max(50)
-});
-var AreaGlob = external_exports.string().regex(/^[A-Za-z0-9_.*?/{}[\],!@+-]{1,200}$/, { error: "invalid area glob" });
-var WorkClaim = external_exports.object({
-  id: WorkClaimId,
-  agent: AgentRef,
-  areaGlob: AreaGlob,
-  note: singleLine(200).optional(),
-  until: IsoTimestamp
-});
-var ThreadParticipant = external_exports.object({
-  agent: AgentRef.optional(),
-  user: UserRef.optional(),
-  role: external_exports.enum(["member", "owner", "builder", "customer", "observer"]),
-  presence: Presence.optional()
-});
-var Thread = external_exports.object({
-  id: ThreadId,
-  kind: ThreadKind,
-  subject: singleLine(120),
-  state: ThreadState,
-  participants: external_exports.array(ThreadParticipant).max(50),
-  anchor: external_exports.object({
-    kind: external_exports.enum(["activity", "highlight", "component"]),
-    id: external_exports.union([ActivityId, HighlightId, SharedComponentId]),
-    title: singleLine(120)
-  }).optional(),
-  product: external_exports.object({ id: ProductId.optional(), slug: Slug, name: singleLine(64, 1) }).optional(),
-  claims: external_exports.array(WorkClaim).max(50),
-  lastMessageAt: IsoTimestamp,
-  /**
-   * First 280 characters of the latest delivered or released message the
-   * viewer may read. UNTRUSTED: plain text only. Never taken from a
-   * quarantined or request_pending message.
-   */
-  lastPreview: external_exports.string().max(280).optional(),
-  /** A quarantined message is newer than the preview (show a warning, not its text). */
-  lastPreviewQuarantined: external_exports.boolean().optional(),
-  unread: Count,
-  viewer: external_exports.object({
-    canInstruct: external_exports.boolean(),
-    remoteInstructionsOn: external_exports.boolean(),
-    needsStepUp: external_exports.boolean()
-  })
-});
-var VerifiedVia = external_exports.enum(["web", "slack"]);
-var CoreSignature = external_exports.object({
-  alg: external_exports.literal("Ed25519"),
-  kid: external_exports.string().regex(/^[A-Za-z0-9_.-]{1,64}$/),
-  /** 64-byte Ed25519 signature, unpadded base64url (86 chars). */
-  sig: external_exports.string().regex(/^[A-Za-z0-9_-]{86}$/, { error: "expected a base64url Ed25519 signature" })
-});
-var OwnerInstruction = external_exports.object({
-  id: OwnerInstructionId,
-  agent_id: AgentId,
-  thread_id: ThreadId.optional(),
-  body: multiLine(MESSAGE_BODY_MAX, 1),
-  verified_via: VerifiedVia,
-  created_at: IsoTimestamp,
-  delivered_at: IsoTimestamp.optional(),
-  signature: CoreSignature
-});
-var OWNER_INSTRUCTION_NOTE = "From your owner, verified by Y. It cannot authorize setup changes or credential operations.";
-var DmPolicy = external_exports.enum(["allow", "request", "deny"]);
-var DmDelivery = external_exports.enum(["wake", "next_turn", "digest"]);
-var SenderRelationship = external_exports.enum(["self", "teammate", "contact", "followed", "customer", "stranger"]);
-var DmPermission = external_exports.object({
-  subjectKind: external_exports.enum(["agent", "user", "team", "product", "relationship"]),
-  /** Agent/user/team/product id, or a {@link SenderRelationship} when `subjectKind` is `relationship`. */
-  subjectId: EntityId,
-  policy: DmPolicy,
-  delivery: DmDelivery
-});
 
 // ../../packages/schema/src/posts.ts
 var PostKind = external_exports.enum(["tip", "workflow", "question", "discussion", "setup"]);
@@ -21796,6 +21414,175 @@ var EnvelopeItemId = external_exports.union([
   LearningId
 ]);
 
+// ../../packages/schema/src/scroll.ts
+var SuggestionKind = external_exports.enum(["add_skill", "claude_md_block", "workflow_tip"]);
+var ChangeTarget = external_exports.enum(["user", "local", "project_pr"]);
+var EvidenceScope = external_exports.enum(["team", "public-aggregate"]);
+var SuggestionEvidence = external_exports.object({
+  segment: Slug,
+  source_success_wilson: Probability,
+  source_n: Count,
+  your_success: Probability,
+  your_n: Count,
+  median_tokens_delta: external_exports.number().min(-1).max(10),
+  distinct_owners: Count,
+  scope: EvidenceScope
+});
+var SKILL_SLUG = "[a-z0-9][a-z0-9-]{1,63}";
+var USER_SKILL_PATH_RE = new RegExp(`^~/\\.(?:claude|codex)/skills/${SKILL_SLUG}/SKILL\\.md$`);
+var PROJECT_SKILL_PATH_RE = new RegExp(`^\\.claude/skills/${SKILL_SLUG}/SKILL\\.md$`);
+var AllowedCreatePath = external_exports.string().refine((p) => USER_SKILL_PATH_RE.test(p) || PROJECT_SKILL_PATH_RE.test(p), {
+  error: "create_file path must be a SKILL.md under ~/.claude/skills, ~/.codex/skills or .claude/skills"
+});
+var ManagedBlockFile = external_exports.enum(["CLAUDE.local.md", "AGENTS.md"]);
+var PatchPrecondition = external_exports.union([external_exports.literal("absent"), external_exports.object({ sha256: Sha256Hex })]);
+var PATCH_CONTENT_MAX = 32e3;
+var PatchOp = external_exports.discriminatedUnion("op", [
+  external_exports.strictObject({
+    op: external_exports.literal("create_file"),
+    path: AllowedCreatePath,
+    content: multiLine(PATCH_CONTENT_MAX, 1),
+    sha256: Sha256Hex,
+    expect: PatchPrecondition
+  }),
+  external_exports.strictObject({
+    op: external_exports.literal("managed_block"),
+    file: ManagedBlockFile,
+    blockId: Slug,
+    content: multiLine(PATCH_CONTENT_MAX),
+    sha256: Sha256Hex,
+    expect: PatchPrecondition
+  })
+]);
+var Patch = external_exports.strictObject({
+  v: external_exports.literal(1),
+  target: ChangeTarget,
+  ops: external_exports.array(PatchOp).min(1).max(5)
+}).superRefine((patch, ctx) => {
+  patch.ops.forEach((op, i) => {
+    let ok;
+    if (patch.target === "user") ok = op.op === "create_file" && USER_SKILL_PATH_RE.test(op.path);
+    else if (patch.target === "local") ok = op.op === "managed_block";
+    else ok = op.op === "create_file" ? PROJECT_SKILL_PATH_RE.test(op.path) : op.file === "AGENTS.md";
+    if (!ok) ctx.addIssue({ code: "custom", path: ["ops", i], message: `op not allowed for target ${patch.target}` });
+  });
+});
+var PatchPreview = external_exports.object({
+  patch_hash: Sha256Hex,
+  files: external_exports.array(
+    external_exports.object({
+      path: external_exports.string().max(200),
+      op: external_exports.enum(["create_file", "managed_block"]),
+      lines: Count,
+      bytes: Count
+    })
+  ).max(5)
+});
+var SetupSuggestion = external_exports.object({
+  id: SuggestionId,
+  kind: SuggestionKind,
+  component: external_exports.object({
+    name: ComponentName,
+    version_hash: Sha256Hex,
+    author: Handle,
+    capability_tags: external_exports.array(CapabilityTag).max(8),
+    applies_to_intents: external_exports.array(TaskIntent).max(6)
+  }),
+  evidence: SuggestionEvidence,
+  risk: external_exports.object({
+    static: StaticOutcome,
+    verdict: Label
+  }),
+  targets: external_exports.array(ChangeTarget).min(1).max(3),
+  patch_preview: PatchPreview
+});
+var ChangeRequestState = external_exports.enum([
+  "pending_approval",
+  "approved",
+  "applied",
+  "failed",
+  "rejected",
+  "rolled_back",
+  "expired"
+]);
+var ChangeFile = external_exports.object({
+  path: external_exports.string().max(200),
+  op: external_exports.enum(["create_file", "managed_block"]),
+  before: external_exports.string().max(PATCH_CONTENT_MAX * 4).optional(),
+  after: external_exports.string().max(PATCH_CONTENT_MAX * 4)
+});
+var ChangeRequest = external_exports.object({
+  id: ChangeRequestId,
+  agent: AgentRef,
+  state: ChangeRequestState,
+  target: ChangeTarget,
+  suggestion: external_exports.object({
+    id: SuggestionId,
+    kind: SuggestionKind,
+    component: external_exports.object({
+      name: ComponentName,
+      author: AgentRef,
+      versionHash: Sha256Hex,
+      capabilityTags: external_exports.array(CapabilityTag).max(8)
+    }),
+    evidence: external_exports.object({
+      segment: Slug,
+      sourceSuccess: Probability,
+      sourceN: Count,
+      yourSuccess: Probability,
+      yourN: Count,
+      medianTokensDelta: external_exports.number().min(-1).max(10),
+      distinctOwners: Count,
+      scope: EvidenceScope
+    })
+  }),
+  files: external_exports.array(ChangeFile).max(5),
+  staticFindings: external_exports.array(StaticFinding).max(200),
+  screen: Screen,
+  /** POST this back on approve ("Approve exactly this"). */
+  patchHash: Sha256Hex,
+  /** Non-zero only for `project_pr`. */
+  affects: external_exports.object({ teammates: Count, ci: external_exports.boolean() }),
+  takesEffect: external_exports.enum(["now", "next_session", "after_reload_skills"]),
+  appliedAt: IsoTimestamp.optional(),
+  postHashes: external_exports.record(external_exports.string().max(200), Sha256Hex).optional(),
+  prUrl: external_exports.url().optional()
+});
+var KeyId = external_exports.string().regex(/^[A-Za-z0-9_.-]{1,64}$/);
+var SignedChangePayload = external_exports.strictObject({
+  crId: ChangeRequestId,
+  patchHash: Sha256Hex,
+  agentId: AgentId,
+  repoKey: RepoKey.nullable(),
+  exp: external_exports.int().positive(),
+  kid: KeyId
+});
+var SignedChange = external_exports.object({
+  payload: SignedChangePayload,
+  sig: external_exports.string().regex(/^[A-Za-z0-9_-]{86}$/, { error: "expected a base64url Ed25519 signature" })
+});
+var SignedRollbackPayload = external_exports.strictObject({
+  crId: ChangeRequestId,
+  patchHash: Sha256Hex,
+  agentId: AgentId,
+  reason: external_exports.enum(["takedown", "revoked_key"]),
+  exp: external_exports.int().positive(),
+  kid: KeyId
+});
+var SignedRollback = external_exports.object({
+  payload: SignedRollbackPayload,
+  sig: external_exports.string().regex(/^[A-Za-z0-9_-]{86}$/, { error: "expected a base64url Ed25519 signature" })
+});
+var KeyringEntry = external_exports.object({
+  kid: KeyId,
+  alg: external_exports.literal("Ed25519"),
+  /** Raw 32-byte public key, base64url. */
+  pub: external_exports.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  status: external_exports.enum(["active", "next", "retired", "revoked"])
+});
+var Keyring = external_exports.object({ v: external_exports.literal(1), keys: external_exports.array(KeyringEntry).min(1).max(10) });
+var SIGNED_CHANGE_TTL_S = 7 * 24 * 3600;
+
 // ../../packages/schema/src/segments.ts
 var SegmentKind = external_exports.enum(["organic", "verified"]);
 var Interval = external_exports.tuple([external_exports.number(), external_exports.number()]).refine(([lo, hi]) => lo <= hi, { error: "interval lower bound must be <= upper bound" });
@@ -21942,6 +21729,238 @@ var DecisionInput = external_exports.object({
   edits: DecisionEdits.optional()
 });
 
+// ../../packages/schema/src/events.ts
+var StreamEvent = external_exports.discriminatedUnion("type", [
+  external_exports.object({ type: external_exports.literal("activity.published"), activityId: ActivityId }),
+  external_exports.object({ type: external_exports.literal("activity.updated"), activityId: ActivityId }),
+  external_exports.object({ type: external_exports.literal("message.new"), threadId: ThreadId, messageId: MessageId }),
+  external_exports.object({ type: external_exports.literal("review.new"), reviewId: ReviewItemId }),
+  external_exports.object({ type: external_exports.literal("review.decided"), reviewId: ReviewItemId }),
+  external_exports.object({ type: external_exports.literal("change.updated"), changeRequestId: ChangeRequestId, state: ChangeRequestState }),
+  external_exports.object({ type: external_exports.literal("presence"), agentId: AgentId, presence: Presence }),
+  external_exports.object({ type: external_exports.literal("rollup.updated"), agentId: AgentId, day: IsoDate }),
+  external_exports.object({ type: external_exports.literal("post.new"), postId: PostId }),
+  external_exports.object({ type: external_exports.literal("post.reacted"), postId: PostId }),
+  external_exports.object({ type: external_exports.literal("comment.new"), postId: PostId, commentId: PostCommentId }),
+  external_exports.object({
+    type: external_exports.literal("scroll.step"),
+    scrollId: ScrollId,
+    agentId: AgentId,
+    stepId: ScrollStepId,
+    postId: PostId.optional()
+  }),
+  external_exports.object({ type: external_exports.literal("scroll.ended"), scrollId: ScrollId, agentId: AgentId })
+]);
+var EventType = external_exports.enum([
+  "activity.published",
+  "activity.updated",
+  "message.new",
+  "message.delivered",
+  "review.new",
+  "review.decided",
+  "change.updated",
+  "presence",
+  "rollup.updated",
+  "post.new",
+  "post.reacted",
+  "comment.new",
+  "scroll.step",
+  "scroll.ended",
+  "owner_instruction.new",
+  "suggestion.ready",
+  "thread.escalated",
+  "wake.requested",
+  "kill_switch.changed",
+  "takedown"
+]);
+var EventPayloadValue = external_exports.union([external_exports.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/), external_exports.int(), external_exports.boolean()]);
+var EventPayload = external_exports.record(external_exports.string().regex(/^[a-zA-Z][a-zA-Z0-9]{0,31}$/), EventPayloadValue).refine((p) => Object.keys(p).length <= 16, { error: "at most 16 payload keys" });
+var EventRecord = external_exports.object({
+  /** `events.id` (bigserial) as a decimal string. */
+  id: external_exports.string().regex(/^\d{1,19}$/),
+  type: EventType,
+  audienceAgentIds: external_exports.array(AgentId).max(100),
+  audienceUserIds: external_exports.array(UserId).max(100),
+  payload: EventPayload
+});
+
+// ../../packages/schema/src/hosting.ts
+var HostingMode = external_exports.enum(["server", "serverless"]);
+var EMBEDDING_DIMS = 384;
+var EMBEDDING_MODEL = "gte-small";
+var EMBED_MAX_INPUTS = 32;
+var EMBED_MAX_INPUT_CHARS = 8e3;
+var EmbedInputText = external_exports.string().min(1).max(EMBED_MAX_INPUT_CHARS);
+var EmbedRequest = external_exports.strictObject({
+  input: external_exports.union([EmbedInputText, external_exports.array(EmbedInputText).min(1).max(EMBED_MAX_INPUTS)])
+});
+var EmbedResponse = external_exports.object({
+  model: external_exports.literal(EMBEDDING_MODEL),
+  dims: external_exports.literal(EMBEDDING_DIMS),
+  embeddings: external_exports.array(external_exports.array(external_exports.number()).length(EMBEDDING_DIMS)).min(1).max(EMBED_MAX_INPUTS)
+});
+var RealtimeOwnerKind = external_exports.enum(["agent", "user"]);
+var ChannelSecret = external_exports.string().regex(/^[a-f0-9]{64}$/, { error: "expected a 64-char hex channel secret" });
+var TOPIC_RE = /^(agent|user):([A-Za-z0-9][A-Za-z0-9_-]{0,63}):([a-f0-9]{64})$/;
+var RealtimeTopic = external_exports.string().regex(TOPIC_RE, { error: "expected agent|user:<id>:<64-hex secret>" });
+var RealtimeChannel = external_exports.discriminatedUnion("provider", [
+  external_exports.object({
+    provider: external_exports.literal("supabase"),
+    url: external_exports.url({ protocol: /^https?$/ }),
+    apiKey: external_exports.string().regex(/^[A-Za-z0-9._-]{20,2048}$/, { error: "expected a publishable key" }),
+    topic: RealtimeTopic,
+    secret: ChannelSecret
+  }),
+  external_exports.object({
+    provider: external_exports.literal("local"),
+    topic: RealtimeTopic,
+    secret: ChannelSecret
+  })
+]);
+var RealtimeBroadcast = external_exports.strictObject({
+  /** `events.id` (bigserial) as a decimal string; usable as an SSE / pulse cursor. */
+  id: external_exports.string().regex(/^\d{1,19}$/),
+  type: EventType,
+  payload: EventPayload
+});
+var JobsTickSource = external_exports.enum(["pg_cron", "after", "manual"]);
+var JobsTickRequest = external_exports.object({
+  source: JobsTickSource,
+  due: Count.optional()
+});
+var JobsTickResponse = external_exports.object({
+  ok: external_exports.literal(true),
+  mode: HostingMode,
+  claimed: Count,
+  completed: Count,
+  failed: Count,
+  remaining: Count.nullable(),
+  durationMs: Count
+});
+
+// ../../packages/schema/src/brief.ts
+var TokenState = external_exports.enum(["ok", "revoked", "expired", "unknown_install"]);
+var PulseToken = external_exports.object({
+  token: external_exports.string().regex(/^[A-Za-z0-9_.-]{16,2048}$/),
+  expiresAt: IsoTimestamp
+});
+var DistillerMode = external_exports.enum(["local", "server", "off"]);
+var BriefPolicy = external_exports.object({
+  shareMode: ShareMode,
+  holdMinutes: external_exports.int().min(0).max(1440),
+  capture: external_exports.enum(["on", "off"]),
+  wakeOnDm: WakeOnDm,
+  policyAccepted: external_exports.boolean(),
+  distiller: DistillerMode,
+  teamId: TeamId.optional(),
+  repoKeySalt: external_exports.string().regex(/^[A-Za-z0-9_-]{16,128}$/).optional(),
+  /**
+   * Repo gating: the salted keys of the repos linked to the posting team. When present, the plugin
+   * captures and uploads nothing for a session whose repo key is not in the list (empty: nothing).
+   * Absent: an older core without gating.
+   */
+  allowedRepoKeys: external_exports.array(RepoKey).max(100).optional(),
+  /** Changes when the posting team or its linked repos change; the pulse carries it so listeners refresh the brief. */
+  policyVersion: external_exports.string().regex(/^[0-9a-f]{16}$/).optional()
+});
+var ClaimedPackage = external_exports.object({
+  ecosystem: external_exports.enum(["npm", "pypi", "github"]),
+  name: PackageName,
+  productId: ProductId
+});
+var HumanNotice = external_exports.object({
+  kind: external_exports.enum([
+    "drafts_pending",
+    "reviews_pending",
+    "token_revoked",
+    "token_expired",
+    "unknown_install",
+    "upgrade_required",
+    "policy_pending",
+    "doctor_recommended"
+  ]),
+  count: Count.optional(),
+  url: external_exports.url()
+});
+var AgentBrief = external_exports.object({
+  v: external_exports.literal(1),
+  tokenState: TokenState,
+  agent: external_exports.object({ id: AgentId, handle: Handle, harness: Harness }).optional(),
+  minPluginVersion: Semver,
+  killSwitches: KillSwitches,
+  pointers: external_exports.array(Pointer).max(10),
+  pulseToken: PulseToken.optional(),
+  realtime: RealtimeChannel.optional(),
+  policy: BriefPolicy,
+  claimedPackages: external_exports.array(ClaimedPackage).max(2e4).optional(),
+  /** Version tag of the claimed-packages list; send back as `claimsEtag` to skip an unchanged list. */
+  claimsEtag: external_exports.string().max(128).optional(),
+  humanNotices: external_exports.array(HumanNotice).max(5),
+  serverTime: IsoTimestamp
+}).superRefine((b, ctx) => {
+  if (b.tokenState === "ok") {
+    if (!b.agent) ctx.addIssue({ code: "custom", path: ["agent"], message: "required when tokenState is ok" });
+    if (!b.pulseToken) ctx.addIssue({ code: "custom", path: ["pulseToken"], message: "required when tokenState is ok" });
+  } else {
+    if (b.pointers.length > 0) {
+      ctx.addIssue({ code: "custom", path: ["pointers"], message: "must be empty unless tokenState is ok" });
+    }
+    if (b.realtime) {
+      ctx.addIssue({ code: "custom", path: ["realtime"], message: "must be absent unless tokenState is ok" });
+    }
+  }
+  if (b.policy.repoKeySalt !== void 0 && b.policy.teamId === void 0) {
+    ctx.addIssue({ code: "custom", path: ["policy", "teamId"], message: "required with repoKeySalt" });
+  }
+});
+var AgentBriefQuery = external_exports.object({
+  pluginVersion: Semver,
+  harnessVersion: external_exports.string().max(40).optional(),
+  sessionId: external_exports.string().max(128).optional(),
+  /** ETag of the claimed-packages list the client already has; omitted from the response when unchanged. */
+  claimsEtag: external_exports.string().max(128).optional()
+});
+
+// ../../packages/schema/src/pulse.ts
+var PULSE_MAX_WAIT_S = 25;
+var PulseQuery = external_exports.object({
+  cursor: CursorString.optional(),
+  wait: external_exports.coerce.number().int().min(0).max(PULSE_MAX_WAIT_S).default(20),
+  /** The listening session, so a targeted wake can be addressed to it. */
+  sessionId: HarnessSessionId.optional(),
+  /**
+   * Turn state of that session (presence): `1` while a turn is in progress
+   * (prompt submitted, Stop not yet fired), `0` when idle. Older plugins omit
+   * it; core then falls back to recent ingests.
+   */
+  active: external_exports.enum(["0", "1"]).optional()
+});
+var UnreadCounts = external_exports.object({
+  dm: Count,
+  ownerInstructions: Count,
+  reviews: Count,
+  suggestions: Count,
+  posts: Count.default(0)
+});
+var PulseResponse = external_exports.object({
+  cursor: CursorString,
+  unread: UnreadCounts,
+  wake: external_exports.object({
+    targetSessionId: HarnessSessionId,
+    pointer: Pointer
+  }).optional(),
+  approvedChanges: external_exports.array(external_exports.object({ changeRequestId: ChangeRequestId })).max(20),
+  killSwitches: KillSwitches,
+  /** Back off before polling again (rate limiting / maintenance). */
+  retryAfterS: external_exports.int().min(0).max(3600).optional(),
+  /** The brief's `policy.policyVersion` now; a listener holding another version re-fetches the brief. */
+  policyVersion: external_exports.string().regex(/^[0-9a-f]{16}$/).optional()
+});
+var WakeAck = external_exports.object({
+  sessionId: HarnessSessionId,
+  cursor: CursorString
+});
+
 // ../../packages/schema/src/hook.ts
 var HookMatchRequest = external_exports.object({
   v: external_exports.literal(1),
@@ -22018,7 +22037,9 @@ var GithubRepoName = external_exports.string().max(140).regex(/^[A-Za-z0-9](?:[A
 var CreateTeamRequest = external_exports.object({
   name: TeamName,
   slug: Slug.optional(),
-  postHere: external_exports.boolean().optional()
+  postHere: external_exports.boolean().optional(),
+  /** Repos to link at creation (the web always sends the team's first repo). */
+  repos: external_exports.array(GithubRepoName).min(1).max(10).optional()
 });
 var TeamMember = external_exports.object({
   user: UserRef,
@@ -23106,6 +23127,89 @@ var SlackLinkPreview = external_exports.object({
   expiresAt: IsoTimestamp
 });
 
+// ../../packages/capture/src/stats.ts
+var IDLE_GAP_MS = 5 * 60 * 1e3;
+
+// ../../packages/capture/src/digest.ts
+var SECRET_NAME = "(?:[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?)[A-Za-z0-9_]*|(?:[A-Za-z0-9_]*_)?(?:PASS|PW)(?:_[A-Za-z0-9_]*)?)";
+var ENV_ASSIGN_RE = new RegExp(`(^|[\\s;&|(])((?:export\\s+)?${SECRET_NAME})=("[^"]*"|'[^']*'|\\S+)`, "gi");
+
+// ../../packages/redact/src/rules.ts
+var secret = (id2, description) => ({
+  id: id2,
+  kind: "secret",
+  description,
+  marker: `<REDACTED:${id2}>`
+});
+var RULES = [
+  { id: "env_dump", kind: "env_dump", description: "Output of env/printenv/set/cat .env* (redacted wholesale)", marker: "<REDACTED:env_dump>" },
+  { id: "pem_private_key", kind: "secret", description: "PEM private key blocks", marker: "<REDACTED:pem_private_key>" },
+  secret("aws_access_key", "AWS access key ids (AKIA/ASIA…)"),
+  secret("aws_secret_key", "AWS secret access keys next to an aws_secret_access_key label"),
+  secret("github_pat", "GitHub fine-grained tokens (github_pat_…)"),
+  secret("github_token", "GitHub tokens (ghp_, gho_, ghu_, ghs_, ghr_)"),
+  secret("anthropic_key", "Anthropic API keys (sk-ant-…)"),
+  secret("openai_key", "OpenAI-style keys (sk-…, sk-proj-…)"),
+  secret("stripe_key", "Stripe keys (sk_live_, rk_live_, sk_test_, pk_live_)"),
+  secret("stripe_webhook", "Stripe webhook secrets (whsec_…)"),
+  secret("slack_token", "Slack tokens (xoxb-, xoxp-, xoxa-, xoxr-, xoxs-)"),
+  secret("slack_webhook", "Slack incoming webhook URLs"),
+  secret("google_api_key", "Google API keys (AIza…)"),
+  secret("jwt", "JSON Web Tokens (three base64url segments starting eyJ)"),
+  secret("y_token", "Y install tokens (pcl_agt_…)"),
+  secret("npm_token", "npm tokens (npm_…)"),
+  secret("bearer_token", "Authorization: Bearer <token> values"),
+  secret("generic_assignment", 'password/secret/token/api_key = "<value>" assignments'),
+  { id: "url_credentials", kind: "url_credential", description: "Credentials in URLs (scheme://user:pass@host)", marker: "<REDACTED:url_credentials>" },
+  { id: "entropy", kind: "entropy", description: "High-entropy tokens not caught by a specific rule", marker: "<REDACTED:entropy>" },
+  { id: "identity_email", kind: "identity", description: "Email addresses", marker: "<EMAIL>" },
+  { id: "identity_user", kind: "identity", description: "Git user name and login", marker: "<USER>" },
+  { id: "identity_host", kind: "identity", description: "Machine hostname", marker: "<HOST>" },
+  { id: "identity_org", kind: "identity", description: "Repository owner / org / package scope", marker: "<ORG>" },
+  { id: "identity_project", kind: "identity", description: "Repository, package or directory name", marker: "<PROJECT>" },
+  { id: "identity_term", kind: "identity", description: "User-configured denylist terms", marker: "<TERM>" },
+  { id: "identity_ip", kind: "identity", description: "IPv4 addresses", marker: "<IP>" }
+];
+var ENV_PREFIX = String.raw`(?:(?:sudo|command|exec|builtin|nohup)(?:\s+-[^\s;&|()\n⏎]+)*\s+)*`;
+var ENV_CMD_START = String.raw`(?:^|[;&|(\n⏎])\s*`;
+var ENV_CMD_DIR = String.raw`(?:[^\s;&|()\n⏎<>'"` + "`" + String.raw`]*\/)?`;
+var ENV_READERS = "cat|less|more|head|tail|bat|grep|egrep|rg|awk|sed|sort|tac|nl|xxd|od|strings|cut|uniq|base64";
+var ENV_READER_ARGS = String.raw`(?:[^\n⏎|;&()'"]|'[^'\n⏎|;&()]*'|"[^"\n⏎|;&()]*")*?`;
+var NOT_DOTENV = String.raw`(?!\.(?:example|sample|template|dist|[cm]?[jt]sx?|d\.ts|py|rb|go|rs|java|kt|php)(?![\w-]))`;
+var ENV_DUMP_COMMAND_RE = new RegExp(
+  [
+    // The original rule, minus its `cat … .env` branch (below).
+    String.raw`(?:^|[;&|(]\s*)(?:(?:env|set)(?=\s*(?:$|[|;&>)]))|printenv\b|export\s+-p\b|docker\s+inspect\b|kubectl\s+get\s+secrets?\b)`,
+    // The original `cat … .env` branch: the first `cat|less|… ` at a command start, then `.env` anywhere after it.
+    String.raw`^(?=(?<catStart>[\s\S]*?(?:^|[;&|(]\s*)(?:cat|less|more|head|tail|bat)\s))\k<catStart>[\s\S]*\.env`,
+    // A bare dump at a command start (also after a newline / ⏎), behind optional prefix commands.
+    ENV_CMD_START + ENV_PREFIX + ENV_CMD_DIR + String.raw`(?:env(?:\s+(?:-0|--null|-u\s*[^\s;&|()\n⏎]+|--unset=[^\s;&|()\n⏎]+))*|printenv(?:\s+-0)?|set|export|(?:declare|typeset)\s+-(?=[A-Za-z]*[xp])[A-Za-z]+)(?=\s*(?:$|[|;&>)\n⏎]))`,
+    ENV_CMD_START + ENV_PREFIX + ENV_CMD_DIR + String.raw`printenv\b`,
+    // Any reader of a `.env*` file operand (after whitespace, `<` or `/`; not quoted).
+    ENV_CMD_START + ENV_PREFIX + String.raw`(?:${ENV_READERS})\b` + ENV_READER_ARGS + String.raw`[\s<\/]\.env` + NOT_DOTENV + String.raw`[\w.-]*(?=$|[\s|;&)>⏎])`,
+    // An interpreter one-liner printing the whole environment.
+    String.raw`\b(?:node|deno|bun|python[0-9.]*)\s+(?:-[A-Za-z]+\s+)*-[ecp]\s+['"][^'"\n⏎]*\b(?:console\.(?:log|dir)|print|pprint|JSON\.stringify)\((?:dict\()?(?:process\.env|os\.environ)\)`
+  ].join("|")
+);
+
+// ../../packages/redact/src/redact.ts
+var MARKER_BY_ID = Object.fromEntries(RULES.map((r) => [r.id, r.marker]));
+var KIND_BY_ID = Object.fromEntries(RULES.map((r) => [r.id, r.kind]));
+var GENERIC_TAIL_SRC = String.raw`["']?\s*(?::=|=>|=|:)\s*(["']?)([^\s"'` + "`" + String.raw`,;()[\]{}<>]{8,})\1`;
+var QUOTED_TAIL_RE = new RegExp(
+  String.raw`(?:\\?["'])?[ \t]*(?::=|=>|=(?![=~])|:(?!:))[ \t]*(?:"((?:[^"\\\n\r⏎]|\\.){1,512})"|'([^'\n\r⏎]{1,512})'|\\"((?:[^"\\\n\r⏎]|\\(?!")){1,512})\\")`,
+  "dy"
+);
+var ENV_TAIL_RE = new RegExp(String.raw`=(?![=~])([^\s"'` + "`" + String.raw`⏎]{1,512})(?=$|[\s⏎])`, "dy");
+
+// src/redaction.ts
+var COMMON_NAME_WORDS = new Set(
+  "will mark grant bill hope faith rose june april august frank jack earl dean lane chase cash gene hunter king miles page penny rich rusty sandy summer wade ward young brown green white black gray grey long little short small case cook bell hall hill wood stone field ford park price reed rice rock shaw snow storm west north south east love star best fox lamb day may ray max art joy guy win pat sue rob bob don ben dan tom ken roy sam lee kim van von de la le del der bay cole drew nick crystal amber ivy jade pearl ruby dawn eve autumn river sky skye rain clay glen dale hazel heath holly iris lily violet basil sage carter cooper porter mason taylor turner walker baker butler fisher fletcher miller parker potter sawyer shepherd smith tanner thatcher weaver wright archer bishop booth brook brooks burns bush cross dale dick dock duke fair fry gill hart hawk hay hood horn hunt keen knight lake land leach lord lucky major marsh mayor moon more moss nash noble oak pace pike pool pope rush salt sharp shields short silver steel sweet swift thorn trout wall wells wild wise wolf worth bond chance christian joy major victor angel august barley bear blue cloud coin dash echo free gold honey ice jet joy legend link lion lucky lux mars meadow mercy ocean phoenix poppy rebel royal saint scout shadow sonny spring sterling sunny tiger trinity unity wren zen test user admin root build main node".split(/\s+/)
+);
+var TECH_WORDS = new Set(
+  "claude code codex copilot cursor devin agent agents bot bots github gitlab bitbucket actions action workflow workflows docker compose kubernetes server servers client data deploy deployer deployment release releases bump automation auto runner runners pipeline service services system sync merge renovate dependabot ci cd ops devops infra platform cloud web app apps api core lib src test tests main dev local localhost repo project docs packages users home tmp www com org the and node user admin root build builder".split(/\s+/)
+);
+
 // ../../packages/pointers/src/templates.ts
 var src = (re) => re.source.replace(/^\^/, "").replace(/\$$/, "");
 var id = (...kinds) => `(?:${kinds.map((k) => src(prefixedIdRegex(k))).join("|")})`;
@@ -23139,10 +23243,15 @@ function parsePolicy(raw) {
   if (!capture.success) return void 0;
   const salt = BriefPolicy.shape.repoKeySalt.safeParse(r.repoKeySalt);
   const wake = BriefPolicy.shape.wakeOnDm.safeParse(r.wakeOnDm);
+  const allowed = BriefPolicy.shape.allowedRepoKeys.safeParse(r.allowedRepoKeys);
+  const version2 = BriefPolicy.shape.policyVersion.safeParse(r.policyVersion);
   return {
     capture: capture.data,
     ...salt.success && salt.data ? { repoKeySalt: salt.data } : {},
-    ...wake.success ? { wakeOnDm: wake.data } : {}
+    ...wake.success ? { wakeOnDm: wake.data } : {},
+    // A present but malformed list fails closed (nothing allowed); an absent one means no gating.
+    ...r.allowedRepoKeys !== void 0 ? { allowedRepoKeys: allowed.success && allowed.data ? allowed.data : [] } : {},
+    ...version2.success && version2.data ? { policyVersion: version2.data } : {}
   };
 }
 var ALL_ENGAGED = { pushPaths: true, networkContent: true, apply: true, ingest: true };
@@ -23225,6 +23334,13 @@ function readPulse(p) {
 function updatePulse(p, patch, now) {
   const cur = readPulse(p);
   writeJsonAtomic(p.pulse, { ...cur, ...patch, updatedAt: now });
+}
+
+// src/gating.ts
+function repoAllowed(brief, repoKey) {
+  const allowed = brief?.policy?.allowedRepoKeys;
+  if (allowed === void 0) return true;
+  return !!repoKey && allowed.includes(repoKey);
 }
 
 // src/uploader.ts
@@ -23400,6 +23516,12 @@ async function drainOutbox(o) {
       } catch {
         moveToDead(o.paths, next, "invalid", now());
         summary.dead++;
+        continue;
+      }
+      const chunkRepo = body && typeof body === "object" ? body.repoKey : void 0;
+      if (!repoAllowed(readBrief(o.paths), typeof chunkRepo === "string" ? chunkRepo : void 0)) {
+        fs3.rmSync(next, { force: true });
+        fs3.rmSync(attemptsFile(next), { force: true });
         continue;
       }
       let status = 0;

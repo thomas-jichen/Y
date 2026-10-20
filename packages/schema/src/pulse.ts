@@ -67,6 +67,8 @@ export const PulseResponse = z.object({
   killSwitches: KillSwitches,
   /** Back off before polling again (rate limiting / maintenance). */
   retryAfterS: z.int().min(0).max(3600).optional(),
+  /** The brief's `policy.policyVersion` now; a listener holding another version re-fetches the brief. */
+  policyVersion: z.string().regex(/^[0-9a-f]{16}$/).optional(),
 });
 export type PulseResponse = z.infer<typeof PulseResponse>;
 

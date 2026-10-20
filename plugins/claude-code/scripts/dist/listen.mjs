@@ -20306,7 +20306,9 @@ var PulseResponse = external_exports.object({
   approvedChanges: external_exports.array(external_exports.object({ changeRequestId: ChangeRequestId })).max(20),
   killSwitches: KillSwitches,
   /** Back off before polling again (rate limiting / maintenance). */
-  retryAfterS: external_exports.int().min(0).max(3600).optional()
+  retryAfterS: external_exports.int().min(0).max(3600).optional(),
+  /** The brief's `policy.policyVersion` now; a listener holding another version re-fetches the brief. */
+  policyVersion: external_exports.string().regex(/^[0-9a-f]{16}$/).optional()
 });
 var WakeAck = external_exports.object({
   sessionId: HarnessSessionId,
@@ -21305,7 +21307,15 @@ var BriefPolicy = external_exports.object({
   policyAccepted: external_exports.boolean(),
   distiller: DistillerMode,
   teamId: TeamId.optional(),
-  repoKeySalt: external_exports.string().regex(/^[A-Za-z0-9_-]{16,128}$/).optional()
+  repoKeySalt: external_exports.string().regex(/^[A-Za-z0-9_-]{16,128}$/).optional(),
+  /**
+   * Repo gating: the salted keys of the repos linked to the posting team. When present, the plugin
+   * captures and uploads nothing for a session whose repo key is not in the list (empty: nothing).
+   * Absent: an older core without gating.
+   */
+  allowedRepoKeys: external_exports.array(RepoKey).max(100).optional(),
+  /** Changes when the posting team or its linked repos change; the pulse carries it so listeners refresh the brief. */
+  policyVersion: external_exports.string().regex(/^[0-9a-f]{16}$/).optional()
 });
 var ClaimedPackage = external_exports.object({
   ecosystem: external_exports.enum(["npm", "pypi", "github"]),
@@ -22118,7 +22128,9 @@ var IngestResponse = external_exports.object({
   accepted: external_exports.boolean(),
   duplicate: external_exports.boolean().optional(),
   activityId: ActivityId.optional(),
-  pulse: PulseSummary
+  pulse: PulseSummary,
+  /** Repo gating: nothing was stored because the session's repo is not linked to the posting team. */
+  dropped: external_exports.enum(["repo_not_linked"]).optional()
 });
 
 // ../../packages/schema/src/hook.ts
@@ -22197,7 +22209,9 @@ var GithubRepoName = external_exports.string().max(140).regex(/^[A-Za-z0-9](?:[A
 var CreateTeamRequest = external_exports.object({
   name: TeamName,
   slug: Slug.optional(),
-  postHere: external_exports.boolean().optional()
+  postHere: external_exports.boolean().optional(),
+  /** Repos to link at creation (the web always sends the team's first repo). */
+  repos: external_exports.array(GithubRepoName).min(1).max(10).optional()
 });
 var TeamMember = external_exports.object({
   user: UserRef,
@@ -23459,10 +23473,15 @@ function parsePolicy(raw) {
   if (!capture.success) return void 0;
   const salt = BriefPolicy.shape.repoKeySalt.safeParse(r.repoKeySalt);
   const wake = BriefPolicy.shape.wakeOnDm.safeParse(r.wakeOnDm);
+  const allowed = BriefPolicy.shape.allowedRepoKeys.safeParse(r.allowedRepoKeys);
+  const version2 = BriefPolicy.shape.policyVersion.safeParse(r.policyVersion);
   return {
     capture: capture.data,
     ...salt.success && salt.data ? { repoKeySalt: salt.data } : {},
-    ...wake.success ? { wakeOnDm: wake.data } : {}
+    ...wake.success ? { wakeOnDm: wake.data } : {},
+    // A present but malformed list fails closed (nothing allowed); an absent one means no gating.
+    ...r.allowedRepoKeys !== void 0 ? { allowedRepoKeys: allowed.success && allowed.data ? allowed.data : [] } : {},
+    ...version2.success && version2.data ? { policyVersion: version2.data } : {}
   };
 }
 var ALL_ENGAGED = { pushPaths: true, networkContent: true, apply: true, ingest: true };
@@ -23505,6 +23524,9 @@ function readBrief(p) {
   if (!again) return void 0;
   const live = readLiveKillSwitches(p);
   return live && live.at >= again.fetchedAt ? { ...again, killSwitches: live.killSwitches } : again;
+}
+function writeBrief(p, b) {
+  writeJsonAtomic(p.brief, b);
 }
 function killSwitchesFile(p) {
   return path2.join(p.state, "kill-switches.json");
@@ -23665,6 +23687,114 @@ function parkPendingWake(p, sid, pointer, now) {
   const v = Pointer.safeParse(pointer);
   if (!v.success) return;
   writeJsonAtomic(pendingFile(p, sid), { pointer: v.data, at: now });
+}
+
+// ../../packages/capture/src/types.ts
+var SEGMENT_IDLE_MS = 30 * 60 * 1e3;
+var SEGMENT_CAP_MS = 4 * 60 * 60 * 1e3;
+
+// ../../packages/capture/src/transcript.ts
+var DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
+
+// ../../packages/capture/src/stats.ts
+var IDLE_GAP_MS = 5 * 60 * 1e3;
+
+// ../../packages/capture/src/digest.ts
+var SECRET_NAME = "(?:[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?)[A-Za-z0-9_]*|(?:[A-Za-z0-9_]*_)?(?:PASS|PW)(?:_[A-Za-z0-9_]*)?)";
+var ENV_ASSIGN_RE = new RegExp(`(^|[\\s;&|(])((?:export\\s+)?${SECRET_NAME})=("[^"]*"|'[^']*'|\\S+)`, "gi");
+
+// ../../packages/redact/src/rules.ts
+var secret = (id2, description) => ({
+  id: id2,
+  kind: "secret",
+  description,
+  marker: `<REDACTED:${id2}>`
+});
+var RULES = [
+  { id: "env_dump", kind: "env_dump", description: "Output of env/printenv/set/cat .env* (redacted wholesale)", marker: "<REDACTED:env_dump>" },
+  { id: "pem_private_key", kind: "secret", description: "PEM private key blocks", marker: "<REDACTED:pem_private_key>" },
+  secret("aws_access_key", "AWS access key ids (AKIA/ASIA…)"),
+  secret("aws_secret_key", "AWS secret access keys next to an aws_secret_access_key label"),
+  secret("github_pat", "GitHub fine-grained tokens (github_pat_…)"),
+  secret("github_token", "GitHub tokens (ghp_, gho_, ghu_, ghs_, ghr_)"),
+  secret("anthropic_key", "Anthropic API keys (sk-ant-…)"),
+  secret("openai_key", "OpenAI-style keys (sk-…, sk-proj-…)"),
+  secret("stripe_key", "Stripe keys (sk_live_, rk_live_, sk_test_, pk_live_)"),
+  secret("stripe_webhook", "Stripe webhook secrets (whsec_…)"),
+  secret("slack_token", "Slack tokens (xoxb-, xoxp-, xoxa-, xoxr-, xoxs-)"),
+  secret("slack_webhook", "Slack incoming webhook URLs"),
+  secret("google_api_key", "Google API keys (AIza…)"),
+  secret("jwt", "JSON Web Tokens (three base64url segments starting eyJ)"),
+  secret("y_token", "Y install tokens (pcl_agt_…)"),
+  secret("npm_token", "npm tokens (npm_…)"),
+  secret("bearer_token", "Authorization: Bearer <token> values"),
+  secret("generic_assignment", 'password/secret/token/api_key = "<value>" assignments'),
+  { id: "url_credentials", kind: "url_credential", description: "Credentials in URLs (scheme://user:pass@host)", marker: "<REDACTED:url_credentials>" },
+  { id: "entropy", kind: "entropy", description: "High-entropy tokens not caught by a specific rule", marker: "<REDACTED:entropy>" },
+  { id: "identity_email", kind: "identity", description: "Email addresses", marker: "<EMAIL>" },
+  { id: "identity_user", kind: "identity", description: "Git user name and login", marker: "<USER>" },
+  { id: "identity_host", kind: "identity", description: "Machine hostname", marker: "<HOST>" },
+  { id: "identity_org", kind: "identity", description: "Repository owner / org / package scope", marker: "<ORG>" },
+  { id: "identity_project", kind: "identity", description: "Repository, package or directory name", marker: "<PROJECT>" },
+  { id: "identity_term", kind: "identity", description: "User-configured denylist terms", marker: "<TERM>" },
+  { id: "identity_ip", kind: "identity", description: "IPv4 addresses", marker: "<IP>" }
+];
+var ENV_PREFIX = String.raw`(?:(?:sudo|command|exec|builtin|nohup)(?:\s+-[^\s;&|()\n⏎]+)*\s+)*`;
+var ENV_CMD_START = String.raw`(?:^|[;&|(\n⏎])\s*`;
+var ENV_CMD_DIR = String.raw`(?:[^\s;&|()\n⏎<>'"` + "`" + String.raw`]*\/)?`;
+var ENV_READERS = "cat|less|more|head|tail|bat|grep|egrep|rg|awk|sed|sort|tac|nl|xxd|od|strings|cut|uniq|base64";
+var ENV_READER_ARGS = String.raw`(?:[^\n⏎|;&()'"]|'[^'\n⏎|;&()]*'|"[^"\n⏎|;&()]*")*?`;
+var NOT_DOTENV = String.raw`(?!\.(?:example|sample|template|dist|[cm]?[jt]sx?|d\.ts|py|rb|go|rs|java|kt|php)(?![\w-]))`;
+var ENV_DUMP_COMMAND_RE = new RegExp(
+  [
+    // The original rule, minus its `cat … .env` branch (below).
+    String.raw`(?:^|[;&|(]\s*)(?:(?:env|set)(?=\s*(?:$|[|;&>)]))|printenv\b|export\s+-p\b|docker\s+inspect\b|kubectl\s+get\s+secrets?\b)`,
+    // The original `cat … .env` branch: the first `cat|less|… ` at a command start, then `.env` anywhere after it.
+    String.raw`^(?=(?<catStart>[\s\S]*?(?:^|[;&|(]\s*)(?:cat|less|more|head|tail|bat)\s))\k<catStart>[\s\S]*\.env`,
+    // A bare dump at a command start (also after a newline / ⏎), behind optional prefix commands.
+    ENV_CMD_START + ENV_PREFIX + ENV_CMD_DIR + String.raw`(?:env(?:\s+(?:-0|--null|-u\s*[^\s;&|()\n⏎]+|--unset=[^\s;&|()\n⏎]+))*|printenv(?:\s+-0)?|set|export|(?:declare|typeset)\s+-(?=[A-Za-z]*[xp])[A-Za-z]+)(?=\s*(?:$|[|;&>)\n⏎]))`,
+    ENV_CMD_START + ENV_PREFIX + ENV_CMD_DIR + String.raw`printenv\b`,
+    // Any reader of a `.env*` file operand (after whitespace, `<` or `/`; not quoted).
+    ENV_CMD_START + ENV_PREFIX + String.raw`(?:${ENV_READERS})\b` + ENV_READER_ARGS + String.raw`[\s<\/]\.env` + NOT_DOTENV + String.raw`[\w.-]*(?=$|[\s|;&)>⏎])`,
+    // An interpreter one-liner printing the whole environment.
+    String.raw`\b(?:node|deno|bun|python[0-9.]*)\s+(?:-[A-Za-z]+\s+)*-[ecp]\s+['"][^'"\n⏎]*\b(?:console\.(?:log|dir)|print|pprint|JSON\.stringify)\((?:dict\()?(?:process\.env|os\.environ)\)`
+  ].join("|")
+);
+
+// ../../packages/redact/src/redact.ts
+var MARKER_BY_ID = Object.fromEntries(RULES.map((r) => [r.id, r.marker]));
+var KIND_BY_ID = Object.fromEntries(RULES.map((r) => [r.id, r.kind]));
+var GENERIC_TAIL_SRC = String.raw`["']?\s*(?::=|=>|=|:)\s*(["']?)([^\s"'` + "`" + String.raw`,;()[\]{}<>]{8,})\1`;
+var QUOTED_TAIL_RE = new RegExp(
+  String.raw`(?:\\?["'])?[ \t]*(?::=|=>|=(?![=~])|:(?!:))[ \t]*(?:"((?:[^"\\\n\r⏎]|\\.){1,512})"|'([^'\n\r⏎]{1,512})'|\\"((?:[^"\\\n\r⏎]|\\(?!")){1,512})\\")`,
+  "dy"
+);
+var ENV_TAIL_RE = new RegExp(String.raw`=(?![=~])([^\s"'` + "`" + String.raw`⏎]{1,512})(?=$|[\s⏎])`, "dy");
+
+// src/redaction.ts
+var COMMON_NAME_WORDS = new Set(
+  "will mark grant bill hope faith rose june april august frank jack earl dean lane chase cash gene hunter king miles page penny rich rusty sandy summer wade ward young brown green white black gray grey long little short small case cook bell hall hill wood stone field ford park price reed rice rock shaw snow storm west north south east love star best fox lamb day may ray max art joy guy win pat sue rob bob don ben dan tom ken roy sam lee kim van von de la le del der bay cole drew nick crystal amber ivy jade pearl ruby dawn eve autumn river sky skye rain clay glen dale hazel heath holly iris lily violet basil sage carter cooper porter mason taylor turner walker baker butler fisher fletcher miller parker potter sawyer shepherd smith tanner thatcher weaver wright archer bishop booth brook brooks burns bush cross dale dick dock duke fair fry gill hart hawk hay hood horn hunt keen knight lake land leach lord lucky major marsh mayor moon more moss nash noble oak pace pike pool pope rush salt sharp shields short silver steel sweet swift thorn trout wall wells wild wise wolf worth bond chance christian joy major victor angel august barley bear blue cloud coin dash echo free gold honey ice jet joy legend link lion lucky lux mars meadow mercy ocean phoenix poppy rebel royal saint scout shadow sonny spring sterling sunny tiger trinity unity wren zen test user admin root build main node".split(/\s+/)
+);
+var TECH_WORDS = new Set(
+  "claude code codex copilot cursor devin agent agents bot bots github gitlab bitbucket actions action workflow workflows docker compose kubernetes server servers client data deploy deployer deployment release releases bump automation auto runner runners pipeline service services system sync merge renovate dependabot ci cd ops devops infra platform cloud web app apps api core lib src test tests main dev local localhost repo project docs packages users home tmp www com org the and node user admin root build builder".split(/\s+/)
+);
+
+// src/gating.ts
+async function refreshBrief(ctx) {
+  if (!ctx.config.token) return false;
+  try {
+    const res = await httpJson(ctx.fetch, "GET", `${ctx.config.apiUrl}/api/v1/agent/brief?${new URLSearchParams({ pluginVersion: PLUGIN_VERSION })}`, {
+      token: ctx.config.token,
+      timeoutMs: 5e3
+    });
+    if (res.status < 200 || res.status >= 300) return false;
+    const b = sanitizeBrief(res.body, ctx.now());
+    if (!b || b.tokenState !== "ok") return false;
+    writeBrief(ctx.paths, b);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // src/listener.ts
@@ -23866,6 +23996,8 @@ function listen(ctx, o = {}) {
             updatePulse(ctx.paths, { ...newCursor ? { cursor: newCursor } : {}, ...unread.success ? { unread: unread.data } : {} }, ctx.now());
             if (newCursor) writeJsonAtomic(cursorFile(ctx, sid), { cursor: newCursor });
             if (ks.success) mergeKillSwitches(ctx.paths, ks.data, ctx.now());
+            const pv = typeof r.policyVersion === "string" && /^[0-9a-f]{16}$/.test(r.policyVersion) ? r.policyVersion : void 0;
+            if (pv && pv !== readBrief(ctx.paths)?.policy?.policyVersion) await refreshBrief(ctx);
             const wake = r.wake;
             const pushOk = ks.success && !ks.data.pushPaths;
             if (superseded(ctx, sid, mine)) return OK;

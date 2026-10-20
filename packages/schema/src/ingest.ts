@@ -188,5 +188,7 @@ export const IngestResponse = z.object({
   duplicate: z.boolean().optional(),
   activityId: ActivityId.optional(),
   pulse: PulseSummary,
+  /** Repo gating: nothing was stored because the session's repo is not linked to the posting team. */
+  dropped: z.enum(['repo_not_linked']).optional(),
 });
 export type IngestResponse = z.infer<typeof IngestResponse>;

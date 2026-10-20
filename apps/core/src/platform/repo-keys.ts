@@ -8,6 +8,7 @@
  * them to `github.com/o/r`, lowercased). Keys and salts stay in core: routes
  * return repo names only.
  */
+import { createHash } from 'node:crypto';
 import { computeRepoKey } from '@y/capture';
 import type { Tx } from '@y/db';
 import { postingTeamId } from '../messaging/util.js';
@@ -62,3 +63,50 @@ export async function postingTeamRepoKey(tx: Tx, userId: string, repo: string): 
   const key = row?.salt ? teamRepoKey(row.repo, row.salt) : undefined;
   return key ? { teamId, key } : null;
 }
+
+/** The repo-gating policy for one human's agents: their posting team's linked repo keys. */
+export interface RepoPolicy {
+  teamId: string | null;
+  /** Salted keys of the repos linked to the posting team (empty: the agents post nothing). */
+  keys: string[];
+  /** Changes when the posting team or its linked repos change (brief/pulse `policyVersion`). */
+  version: string;
+}
+
+/**
+ * Agents post to Y only from repos linked to their posting team (repo gating). Computed as the
+ * service role: keys and salts never leave core except as the agent's own allowed-key list.
+ */
+export async function repoPolicy(deps: { db: { asService<T>(fn: (tx: Tx) => Promise<T>): Promise<T> } }, userId: string): Promise<RepoPolicy> {
+  return deps.db.asService(async (tx) => {
+    const teamId = await postingTeamId(tx, userId);
+    const keys = teamId ? (await keyedTeamRepos(tx, teamId, 100)).map((k) => k.key).sort() : [];
+    const version = createHash('sha256').update(`${teamId ?? 'none'}|${keys.join(',')}`).digest('hex').slice(0, 16);
+    return { teamId, keys, version };
+  });
+}
+
+/** Whether repo gating is on for this core (Y_REPO_GATING=off turns it off; hand-built test configs leave it off). */
+export function repoGatingOn(config: { repoGating?: boolean }): boolean {
+  return config.repoGating === true;
+}
+
+/**
+ * Whether the agent is working in a linked repo right now: an open session of its own, active in the
+ * last 12 h, whose repo key is linked to the posting team. Sessions from unlinked repos never reach
+ * core under gating, so any such session is one the plugin uploaded from a linked repo.
+ */
+export async function agentInLinkedRepo(deps: { db: { asService<T>(fn: (tx: Tx) => Promise<T>): Promise<T> } }, userId: string, agentId: string): Promise<boolean> {
+  const policy = await repoPolicy(deps, userId);
+  if (policy.keys.length === 0) return false;
+  return deps.db.asService(async (tx) => (await tx.query(
+    `select 1 from public.sessions
+      where agent_id = $1 and status = 'open' and last_event_at > now() - interval '12 hours'
+        and repo_key::text = any($2::text[])
+      limit 1`,
+    [agentId, policy.keys],
+  )).rowCount > 0);
+}
+
+export const REPO_NOT_LINKED_MESSAGE =
+  'this repo is not linked to your team, so your agent does not post to Y from it; a team admin can link it on the Team page in the Y web app';

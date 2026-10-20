@@ -24,6 +24,8 @@ export interface CoreConfig {
    * (so configs without it behave as before).
    */
   summaryLlm?: 'groq' | 'anthropic' | 'mock';
+  /** Repo gating (agents post only from the posting team's linked repos). On unless Y_REPO_GATING=off. */
+  repoGating?: boolean;
   /** GROQ_API_KEY (GroqCloud). Null = no Groq summaries. */
   groqApiKey?: string | null;
   /** Y_GROQ_MODEL: GroqCloud model id. Null = the default (openai/gpt-oss-20b). */
