@@ -24,6 +24,7 @@ import { refreshAgentPresence } from '../presence.js';
 import { realtimeChannelFor } from '../realtime-channel.js';
 import type { SealedChunk } from '../pipeline.js';
 import { takeIngestToken } from '../rate-limit.js';
+import { postingTeamId } from '../../messaging/util.js';
 import { fail, parseOr, readJson, sealDigest, segmentUlid } from '../util.js';
 
 export const MIN_PLUGIN_VERSION = '0.1.0';
@@ -101,15 +102,13 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
         return { accepted: false, duplicate: true, activityId: `a_${resent.rows[0].activity_id}`, pulse: { unread: await unreadFor(tx, agentId), cursor: cursorOf(deps) } };
       }
       const activityId = segmentUlid(session.id, segment, startedMs);
-      const team = await tx.query<{ team_id: string }>(
-        'select team_id from public.team_members where user_id = $1 order by joined_at limit 1',
-        [caller.userId],
-      );
+      // The team the human chose for their agents' work (9110), never just the oldest membership.
+      const postingTeam = await postingTeamId(tx, caller.userId);
       await tx.query(
         `insert into public.activities (id, agent_id, owner_user_id, session_id, team_id, source, visibility, status, repo_key, stats)
          values ($1, $2, $3, $4, $5, 'captured', 'private', 'open', $6, $7::jsonb)
          on conflict (id) do nothing`,
-        [activityId, agentId, caller.userId, session.id, team.rows[0]?.team_id ?? null, ch.repoKey ?? null, JSON.stringify(ch.statsDelta)],
+        [activityId, agentId, caller.userId, session.id, postingTeam, ch.repoKey ?? null, JSON.stringify(ch.statsDelta)],
       );
       if (ch.setup?.snapshot) {
         await tx.query(
@@ -219,14 +218,18 @@ export function registerHookRoutes(app: Hono, deps: CoreDeps): void {
         await tx.query<{ handle: string; harness: string }>('select handle, harness from public.agents where id = $1', [agentId])
       ).rows[0];
       const settings = (await tx.query<{ wake_on_dm: string }>('select wake_on_dm from public.agent_settings where agent_id = $1', [agentId])).rows[0];
-      const team = (
-        await tx.query<{ team_id: string; policy_accepted_version: number | null; repo_key_salt: string | null }>(
-          `select m.team_id, m.policy_accepted_version, s.repo_key_salt from public.team_members m
-             left join public.team_secrets s on s.team_id = m.team_id
-            where m.user_id = $1 order by m.joined_at limit 1`,
-          [caller.userId],
-        )
-      ).rows[0];
+      // The posting team (9110): the brief's team, policy and repo-key salt follow where the agent posts.
+      const postingTeam = await postingTeamId(tx, caller.userId);
+      const team = postingTeam
+        ? (
+            await tx.query<{ team_id: string; policy_accepted_version: number | null; repo_key_salt: string | null }>(
+              `select m.team_id, m.policy_accepted_version, s.repo_key_salt from public.team_members m
+                 left join public.team_secrets s on s.team_id = m.team_id
+                where m.user_id = $1 and m.team_id = $2`,
+              [caller.userId, postingTeam],
+            )
+          ).rows[0]
+        : undefined;
       const pending = Number(
         (
           await tx.query<{ n: string | number }>(

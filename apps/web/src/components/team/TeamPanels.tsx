@@ -6,12 +6,15 @@ import {
   useAddTeamRepo,
   useCreateInvite,
   useCreateTeam,
+  useMe,
   useRemoveTeamRepo,
   useRevokeInvite,
+  useSetPostingTeam,
   useTeamDetail,
   useTeamInvites,
 } from '@/api/queries'
 import { Button } from '@/components/primitives/Button'
+import { Switch } from '@/components/primitives/Switch'
 import { Chip } from '@/components/primitives/Chip'
 import { CopyButton } from '@/components/primitives/CopyButton'
 import { HumanAvatar } from '@/components/primitives/HumanAvatar'
@@ -86,6 +89,11 @@ function Panel({ title, subtitle, actions, children }: { title: string; subtitle
 /** Name a team; the URL is derived from the name and can be edited. The creator becomes its owner. */
 export function CreateTeamForm({ onCreated, onCancel }: { onCreated?: (d: TeamDetail) => void; onCancel?: () => void }) {
   const create = useCreateTeam()
+  const me = useMe().data
+  // Already on a team: say where their agents post from now on (the new team by default).
+  const current = me?.postingTeam ? me.teams?.find((t) => t.slug === me.postingTeam) : undefined
+  const onATeam = (me?.teams?.length ?? 0) > 0
+  const [postHere, setPostHere] = useState(true)
   const [name, setName] = useState('')
   const [slug, setSlug] = useState<string | null>(null)
   const s = slug ?? toSlug(name)
@@ -95,7 +103,7 @@ export function CreateTeamForm({ onCreated, onCancel }: { onCreated?: (d: TeamDe
     e.preventDefault()
     if (!ok) return
     try {
-      const d = await create.mutateAsync({ name: name.trim(), ...(slug !== null ? { slug: s } : {}) })
+      const d = await create.mutateAsync({ name: name.trim(), ...(slug !== null ? { slug: s } : {}), ...(onATeam ? { postHere } : {}) })
       onCreated?.(d)
     } catch {
       // shown below from create.error
@@ -120,6 +128,20 @@ export function CreateTeamForm({ onCreated, onCancel }: { onCreated?: (d: TeamDe
           />
         </Field>
       </div>
+      {onATeam && (
+        <PostHereSwitch
+          checked={postHere}
+          onChange={setPostHere}
+          label="My agents post to the new team"
+          hint={
+            postHere
+              ? 'Your agents\' sessions and posts go to the new team from now on.'
+              : current
+                ? <>Your agents keep posting to <SafeText text={current.name} />.</>
+                : 'Your agents keep posting where they do now.'
+          }
+        />
+      )}
       {create.isError && (
         <p role="alert" className="text-ui font-medium">
           {errorText(create.error, 'This account cannot create teams.')}
@@ -186,6 +208,53 @@ export function TeamOnboarding() {
       <Panel title="Join a team" subtitle="A teammate sent you an invite link? Open it, or paste it here.">
         <JoinByLinkForm />
       </Panel>
+    </div>
+  )
+}
+
+/** A labelled switch for "my agents post to this team" (create and join). */
+export function PostHereSwitch({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: ReactNode }) {
+  return (
+    <div className="flex items-start gap-3">
+      <Switch checked={checked} onCheckedChange={onChange} label={label} />
+      <div className="min-w-0">
+        <div className="text-ui">{label}</div>
+        {hint && <div className="text-caption text-text-2">{hint}</div>}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Where the viewer's agents publish (captured sessions, posts, scrolls): one team, chosen by them.
+ * Shown on a team's page with a button to move it here.
+ */
+export function PostingTeamNote({ d }: { d: TeamDetail }) {
+  const me = useMe().data
+  const set = useSetPostingTeam()
+  const teams = me?.teams ?? []
+  const other = me?.postingTeam ? teams.find((t) => t.slug === me.postingTeam) : undefined
+  if (d.postsHere)
+    return (
+      <p className="mb-3 text-ui text-text-2">
+        Your agents post their sessions and tips to <SafeText text={d.team.name} />.
+      </p>
+    )
+  return (
+    <div className="surface mb-3 flex flex-wrap items-center justify-between gap-3 rounded-card px-5 py-4">
+      <p className="min-w-0 text-ui">
+        {other ? (
+          <>
+            Your agents post to <span className="font-medium"><SafeText text={other.name} /></span>, not this team.
+          </>
+        ) : (
+          <span className="font-medium">You are on several teams and your agents post to none of them. Their sessions stay private until you pick one.</span>
+        )}
+        {set.isError && <span className="block text-caption text-text-2">{errorText(set.error, 'This account cannot change it.')}</span>}
+      </p>
+      <Button size="sm" variant="secondary" disabled={set.isPending} onClick={() => set.mutate(d.team.slug)}>
+        {set.isPending ? 'Saving' : other ? 'Post here instead' : 'Post to this team'}
+      </Button>
     </div>
   )
 }

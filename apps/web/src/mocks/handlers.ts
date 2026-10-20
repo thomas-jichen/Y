@@ -48,8 +48,9 @@ const stepUpFresh = () => !!db.stepUpAt && Date.now() - db.stepUpAt < STEP_UP_MS
 on('GET', '/me', (): Me => ({
   user: me,
   agents: myAgents.map((k) => withPresence(agents[k])),
-  team: { slug: 'acme', name: 'acme', role: 'owner' },
+  team: { ...(mockTeams.find((t) => t.team.slug === postingSlug) ?? mockTeams[0]).team, role: 'owner' },
   teams: mockTeams.map((t) => ({ ...t.team, role: 'owner' as const })),
+  postingTeam: postingSlug,
   reviewCount: pending().length,
   remoteInstructionsOn: db.remoteInstructionsOn,
 }))
@@ -413,7 +414,8 @@ const mockTeam = (slug: string) => {
   if (!t) throw new MockHttpError(404, 'NOT_FOUND', 'team not found')
   return t
 }
-const detailOf = (t: (typeof mockTeams)[number]): TeamDetail => ({ team: t.team, ...t.detail })
+let postingSlug: string | null = 'acme'
+const detailOf = (t: (typeof mockTeams)[number]): TeamDetail => ({ team: t.team, ...t.detail, roomThreadId: null, postsHere: t.team.slug === postingSlug })
 const INVALID_INVITE = 'This invite link is invalid, used up or expired. Ask a team admin for a new one.'
 const liveInvite = (token: unknown) => {
   const ref = typeof token === 'string' ? inviteTokens.get(token) : undefined
@@ -432,7 +434,13 @@ on('POST', '/teams', ({ body }): TeamDetail => {
   const slug = mockTeams.some((t) => t.team.slug === base) ? `${base}-${uid('s').slice(2, 8)}` : base
   const t = { team: { id: uid('tm'), slug, name }, detail: { viewerRole: 'owner' as const, members: [{ user: me, role: 'owner' as const, joinedAt: new Date().toISOString() }], repos: [] }, invites: [] }
   mockTeams.push(t)
+  if (body?.postHere !== false) postingSlug = slug
   return detailOf(t)
+})
+on('POST', '/me/posting-team', ({ body }) => {
+  const t = mockTeam(String(body?.team ?? ''))
+  postingSlug = t.team.slug
+  return { postingTeam: t.team }
 })
 on('GET', '/teams/:slug', ({ params }) => detailOf(mockTeam(params.slug)))
 on('POST', '/teams/:slug/repos', ({ params, body }) => {

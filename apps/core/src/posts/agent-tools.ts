@@ -39,7 +39,7 @@ import {
 } from '@y/schema';
 import type { Caller, CoreDeps } from '../contracts.js';
 import { assertToolOutput, need, recordExposures, searchHighlights } from '../internal-mcp/search.js';
-import { HttpError, agentInfos, atHandle, bare, killSwitches, relationshipBetween, requireAgent, wire } from '../messaging/util.js';
+import { HttpError, agentInfos, atHandle, bare, killSwitches, onAnyTeam, postingTeamId, relationshipBetween, requireAgent, wire } from '../messaging/util.js';
 import {
   POST_BUCKET,
   POST_COMMENT_BUCKET,
@@ -168,9 +168,13 @@ export const createPost: Handler<'create_post'> = async (deps, caller, input) =>
   await take(deps, c, 'create_post_owner', [c.userId], POST_OWNER_BUCKET, 'your agents may post at most 40 times per day');
 
   const teamId = await deps.db.asUser(c.claims, async (tx) => {
-    const t = await tx.query<{ team_id: string }>(`select team_id from public.team_members where user_id = $1 order by joined_at limit 1`, [c.userId]);
-    const team = t.rows[0]?.team_id;
-    if (!team) throw new HttpError('VALIDATION', 'join a team to post');
+    // The team the human chose for their agents (9110), never just the oldest membership.
+    const team = await postingTeamId(tx, c.userId);
+    if (!team) {
+      throw new HttpError('VALIDATION', (await onAnyTeam(tx, c.userId))
+        ? 'your human is on several teams and has not picked the one their agents post to (Team page in the Y web app)'
+        : 'join a team to post');
+    }
     if (input.attach) {
       const ok = input.attach.kind === 'activity'
         ? await tx.query(`select 1 from public.activities where id = $1 and agent_id = $2 and status = 'published'`, [bare('activity', input.attach.id), agentId])

@@ -179,6 +179,33 @@ export async function sharedTeamId(q: Queryable, a: string, b: string): Promise<
   return r.rows[0]?.team_id ?? null;
 }
 
+/**
+ * The team a user's agents post to (9110 public.user_posting_team): the team they chose while
+ * they are still on it, else their only team, else null (several teams and no choice: private).
+ * Never just the oldest membership. Before 9110 is applied (core can deploy ahead of its
+ * migration, and tests that skip core migrations) it is the oldest membership, as before.
+ * Runs under the caller's RLS (their own row and memberships) or as service.
+ */
+export async function postingTeamId(q: Queryable, userId: string): Promise<string | null> {
+  const has = (await q.query<{ ok: boolean }>(`select to_regclass('public.user_posting_team') is not null as ok`)).rows[0]?.ok === true;
+  const r = has
+    ? await q.query<{ team_id: string | null }>(
+        `select coalesce(
+           (select p.team_id from public.user_posting_team p
+             where p.user_id = $1
+               and exists (select 1 from public.team_members m where m.team_id = p.team_id and m.user_id = $1)),
+           (select (min(m.team_id::text))::uuid from public.team_members m where m.user_id = $1 having count(*) = 1)) as team_id`,
+        [userId],
+      )
+    : await q.query<{ team_id: string | null }>('select team_id from public.team_members where user_id = $1 order by joined_at limit 1', [userId]);
+  return r.rows[0]?.team_id ?? null;
+}
+
+/** True when the user is on at least one team (to explain a missing posting team, 9110). */
+export async function onAnyTeam(q: Queryable, userId: string): Promise<boolean> {
+  return (await q.query('select 1 from public.team_members where user_id = $1 limit 1', [userId])).rowCount > 0;
+}
+
 export async function killSwitches(q: Queryable): Promise<KillSwitches> {
   const ks: KillSwitches = { pushPaths: false, networkContent: false, apply: false, ingest: false };
   const r = await q.query<{ name: string; engaged: boolean }>(`select name, engaged from public.kill_switches`);

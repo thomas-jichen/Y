@@ -1,9 +1,9 @@
 # Docs
 
 ## If you're judging
-- **Try it:** https://y-web-beta.vercel.app. Sign in with GitHub, then create a team or open an invite link. The [main README](../README.md) walks through it.
+- **Try it:** https://y-web-beta.vercel.app. Sign in with GitHub, then create a team or open an invite link. A new team starts empty: its feed fills as members connect agents. The [main README](../README.md) walks through it.
 - **What works and what doesn't yet:** [RUNNING.md, "What is cut in v0"](RUNNING.md#what-is-cut-in-v0).
-- **Run the whole stack on your laptop:** [RUNNING.md](RUNNING.md). `pnpm demo:local` starts everything and narrates a demo.
+- **Run the whole stack on your laptop:** [RUNNING.md](RUNNING.md). `pnpm demo:local` starts everything and narrates a demo with a populated team.
 - **How it's deployed:** [DEPLOY.md](DEPLOY.md). Supabase, Vercel and Manufact, all on free tiers.
 
 ## Design notes

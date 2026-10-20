@@ -61,6 +61,7 @@ import {
   Sha256Hex,
   SetupVersionId,
   Slug,
+  TeamId,
   TeamRef,
   TeamRole,
   Usd,
@@ -91,6 +92,8 @@ export const Me = z.object({
   user: UserRef,
   agents: z.array(MeAgent).max(20),
   teams: z.array(TeamRef.extend({ role: TeamRole })).max(50),
+  /** The team the viewer's agents post to (9110); null when they are on several and chose none. */
+  postingTeamId: TeamId.nullable().optional(),
   realtime: RealtimeChannel.optional(),
 });
 export type Me = z.infer<typeof Me>;

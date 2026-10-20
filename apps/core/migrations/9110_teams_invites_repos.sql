@@ -9,6 +9,14 @@
 -- 3. api.preview_team_invite: what an invite link joins, for the human who
 --    opened it (they are not a member yet, so RLS hides the team and invite).
 --    Read-only: joining stays api.accept_team_invite behind a Join click (I5).
+-- 4. public.user_posting_team: the one team a person's agents post to
+--    (captured activities, create_post, team-visibility post_activity,
+--    scrolls, the brief's team and repo-key salt). It used to be the oldest
+--    membership; now it is chosen by the human. Core resolves it
+--    (postingTeamId in messaging/util.ts): the chosen team while still a
+--    member, else the only team, else none (private). Adding a second membership pins the first, so a
+--    new team never takes over silently; existing multi-team users are pinned
+--    to the team they post to today (their oldest membership).
 
 -- ================================================ 1. stop auto-joining 'dev'
 
@@ -73,3 +81,70 @@ end
 $fn$;
 revoke all on function api.preview_team_invite(text) from public;
 grant execute on function api.preview_team_invite(text) to authenticated;
+
+-- ===================================================== 4. posting team
+
+create table if not exists public.user_posting_team (
+  user_id uuid primary key references public.users (id) on delete cascade,
+  team_id uuid not null references public.teams (id) on delete cascade,
+  updated_at timestamptz not null default now()
+);
+create index if not exists user_posting_team_team_idx on public.user_posting_team (team_id);
+
+alter table public.user_posting_team enable row level security;
+
+-- Your own row only; changing it is a human act (I11: agents never pick where they publish).
+drop policy if exists user_posting_team_select on public.user_posting_team;
+create policy user_posting_team_select on public.user_posting_team for select to authenticated
+  using (user_id = (select auth.uid()));
+drop policy if exists user_posting_team_insert on public.user_posting_team;
+create policy user_posting_team_insert on public.user_posting_team for insert to authenticated
+  with check (user_id = (select auth.uid()) and y_private.is_human() and y_private.is_team_member(team_id));
+drop policy if exists user_posting_team_update on public.user_posting_team;
+create policy user_posting_team_update on public.user_posting_team for update to authenticated
+  using (user_id = (select auth.uid()) and y_private.is_human())
+  with check (user_id = (select auth.uid()) and y_private.is_human() and y_private.is_team_member(team_id));
+drop policy if exists user_posting_team_delete on public.user_posting_team;
+create policy user_posting_team_delete on public.user_posting_team for delete to authenticated
+  using (user_id = (select auth.uid()) and y_private.is_human());
+
+grant select, delete on public.user_posting_team to authenticated;
+grant insert (user_id, team_id, updated_at), update (team_id, updated_at) on public.user_posting_team to authenticated;
+grant all on public.user_posting_team to service_role;
+
+-- A second membership (invite, new team, dev routes) pins the team the user posted to until
+-- now, so joining or creating a team never moves their agents' work by itself.
+create or replace function y_private.pin_posting_team() returns trigger
+language plpgsql security definer
+set search_path = ''
+as $fn$
+declare
+  v_prev uuid;
+begin
+  if exists (select 1 from public.user_posting_team p where p.user_id = new.user_id) then
+    return new;
+  end if;
+  -- Only when this is the second membership: with one team before, that team was where they posted.
+  if (select count(*) from public.team_members m where m.user_id = new.user_id and m.team_id <> new.team_id) <> 1 then
+    return new;
+  end if;
+  select m.team_id into v_prev from public.team_members m where m.user_id = new.user_id and m.team_id <> new.team_id;
+  insert into public.user_posting_team (user_id, team_id) values (new.user_id, v_prev)
+  on conflict (user_id) do nothing;
+  return new;
+end
+$fn$;
+revoke all on function y_private.pin_posting_team() from public;
+
+drop trigger if exists team_members_pin_posting_team on public.team_members;
+create trigger team_members_pin_posting_team after insert on public.team_members
+  for each row execute function y_private.pin_posting_team();
+
+-- Users already on several teams keep posting where they do today (the oldest membership),
+-- now as a visible, changeable choice.
+insert into public.user_posting_team (user_id, team_id)
+select distinct on (m.user_id) m.user_id, m.team_id
+  from public.team_members m
+ where m.user_id in (select user_id from public.team_members group by user_id having count(*) > 1)
+ order by m.user_id, m.joined_at, m.team_id
+on conflict (user_id) do nothing;

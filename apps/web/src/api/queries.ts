@@ -10,6 +10,7 @@ import type {
   InvitePreview,
   TeamDetail,
   TeamInvite,
+  TeamSummary,
   ClaimKind,
   Comment,
   ConnectToken,
@@ -318,7 +319,7 @@ export function useCreateTeam() {
   const changed = useTeamsChanged()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (v: { name: string; slug?: string }) => api.post<TeamDetail>('/teams', v),
+    mutationFn: (v: { name: string; slug?: string; postHere?: boolean }) => api.post<TeamDetail>('/teams', v),
     onSuccess: (d) => {
       qc.setQueryData(['team-detail', d.team.slug], d)
       void changed()
@@ -368,7 +369,16 @@ export const useInvitePreview = (token: string | undefined) =>
 export function useAcceptInvite() {
   const changed = useTeamsChanged()
   return useMutation({
-    mutationFn: (token: string) => api.post<AcceptedInvite>('/invites/accept', { token }),
+    mutationFn: (v: { token: string; postHere?: boolean }) => api.post<AcceptedInvite>('/invites/accept', v),
+    onSuccess: () => void changed(),
+  })
+}
+
+/** Where the viewer's agents post (captured sessions, posts, scrolls): one of their teams. */
+export function useSetPostingTeam() {
+  const changed = useTeamsChanged()
+  return useMutation({
+    mutationFn: (slug: string) => api.post<{ postingTeam: TeamSummary | null }>('/me/posting-team', { team: slug }),
     onSuccess: () => void changed(),
   })
 }

@@ -11,19 +11,32 @@
  *   it; joining is a separate POST behind the Join button (no auto-join, I5).
  * - Repos: linked by name (owner/repo, GitHub naming rules), no proof.
  *   Members read; owners and admins add and remove.
+ * - Posting team (9110): the one team a person's agents publish to. Creating
+ *   a team moves it there unless `postHere: false`; accepting an invite moves
+ *   it only with `postHere: true`; POST /me/posting-team changes it. A second
+ *   membership pins the first team (trigger), so nothing moves by itself.
+ * - Admin invite links: the owner only, single use, at most 72 h.
+ * - Team slugs and repo names reach agents outside envelopes (status), so
+ *   they pass the handle label screen (#110, I2) when chosen.
+ * - Step-up (I5): invites, accepting, repos and the posting team need a
+ *   recent sign-in (web-guard.ts STEP_UP_ROUTES).
  * - /dev/demo sessions cannot create, join or change teams (durable grants, #44).
  */
 import { randomBytes } from 'node:crypto';
 import type { Context, Hono } from 'hono';
 import { isSqlState, type Tx } from '@y/db';
 import {
+  ADMIN_INVITE_MAX_HOURS,
+  AcceptInviteRequest,
   AddTeamRepoRequest,
   CreateInviteRequest,
   CreateTeamRequest,
   InviteTokenRequest,
+  SetPostingTeamRequest,
   Slug,
   TEAM_REPOS_MAX,
   type AcceptInviteResponse,
+  type PostingTeamResponse,
   type CreateInviteResponse,
   type InvitePreview,
   type TeamDetail,
@@ -32,9 +45,10 @@ import {
   type TeamRole,
 } from '@y/schema';
 import type { Caller, CoreDeps } from '../../contracts.js';
+import { cleanAsciiLabel, repoLabel } from '../../builders/labels.js';
 import { authenticate } from '../http.js';
 import { takeToken, type BucketSpec } from '../rate-limit.js';
-import { HttpError, userRef } from '../../messaging/util.js';
+import { HttpError, postingTeamId, userRef, wire } from '../../messaging/util.js';
 import { fail, iso, parseOr, readJson, sha256Hex } from '../util.js';
 
 /** Team creation: 10 / hour per human. */
@@ -69,6 +83,15 @@ function inviteUrl(deps: CoreDeps, token: string): string {
   return `${web}/join/${token}`;
 }
 
+/** The caller's agents post to this team from now on (RLS: their own row, a team they are on, as a human). */
+async function setPostingTeam(tx: Tx, caller: Caller, teamId: string): Promise<void> {
+  await tx.query(
+    `insert into public.user_posting_team (user_id, team_id) values ($1, $2)
+     on conflict (user_id) do update set team_id = excluded.team_id, updated_at = now()`,
+    [caller.userId, teamId],
+  );
+}
+
 function assertNotDemo(caller: Caller): void {
   if (caller.demoAccount) throw new HttpError('SCOPE_FORBIDDEN', 'the demo account cannot change teams');
 }
@@ -98,7 +121,7 @@ async function adminTeam(tx: Tx, caller: Caller, slugParam: string, what: string
 
 const ROLE_ORDER = `case m.role when 'owner' then 0 when 'admin' then 1 else 2 end`;
 
-async function teamDetail(tx: Tx, t: TeamRow): Promise<TeamDetail> {
+async function teamDetail(tx: Tx, caller: Caller, t: TeamRow): Promise<TeamDetail> {
   const members = await tx.query<{ user_id: string; role: TeamRole; joined_at: Date | string; handle: string; github_login: string | null; avatar_url: string | null }>(
     `select m.user_id, m.role::text as role, m.joined_at, u.handle::text as handle, u.github_login::text as github_login, u.avatar_url
        from public.team_members m join public.users u on u.id = m.user_id
@@ -113,9 +136,16 @@ async function teamDetail(tx: Tx, t: TeamRow): Promise<TeamDetail> {
       order by lower(r.repo) limit ${TEAM_REPOS_MAX}`,
     [t.id],
   );
+  const room = await tx.query<{ id: string }>(
+    `select id from public.threads where kind = 'group' and team_id = $1 and state <> 'archived' order by created_at limit 1`,
+    [t.id],
+  );
+  const posting = await postingTeamId(tx, caller.userId);
   return {
     team: { id: t.id, slug: t.slug, name: t.name },
     viewerRole: t.role,
+    roomThreadId: room.rows[0] ? wire('thread', room.rows[0].id) : null,
+    postsHere: posting === t.id,
     members: members.rows.map((m) => ({
       user: userRef({ id: m.user_id, handle: m.handle, login: m.github_login, avatar: m.avatar_url }),
       role: m.role,
@@ -188,7 +218,10 @@ export function registerTeamRoutes(app: Hono, deps: CoreDeps): void {
       const name = body.data.name.trim();
       const explicit = body.data.slug;
       if (explicit && RESERVED_SLUGS.has(explicit)) throw new HttpError('VALIDATION', `the team URL '${explicit}' is reserved; pick another`);
-      const base = slugFromName(name);
+      // Agents see slugs as plain labels (status team_rooms / team_repos): screened like handles (#110).
+      if (explicit && !cleanAsciiLabel(explicit)) throw new HttpError('VALIDATION', 'that team URL is not allowed; pick another');
+      const derived = slugFromName(name);
+      const base = cleanAsciiLabel(derived) ? derived : 'team';
       // An explicit slug is taken as is; a derived one gets a short suffix while it collides.
       const candidates = explicit
         ? [explicit]
@@ -200,7 +233,9 @@ export function registerTeamRoutes(app: Hono, deps: CoreDeps): void {
             if (!rl.allowed) throw new HttpError('RATE_LIMITED', 'too many new teams; try again later', { retryable: true, retryAfterS: rl.retryAfterS });
             // The teams_provision trigger adds the caller as owner; the member trigger opens the team room.
             await tx.query('insert into public.teams (slug, name, created_by) values ($1, $2, $3)', [slug, name, caller.userId]);
-            return teamDetail(tx, await memberTeam(tx, caller, slug));
+            const t = await memberTeam(tx, caller, slug);
+            if (body.data.postHere !== false) await setPostingTeam(tx, caller, t.id);
+            return teamDetail(tx, caller, t);
           });
           return c.json(detail);
         } catch (e) {
@@ -216,7 +251,7 @@ export function registerTeamRoutes(app: Hono, deps: CoreDeps): void {
     const caller = await authenticate(c, deps, 'web');
     if (caller instanceof Response) return caller;
     return run(c, deps, async () =>
-      c.json(await deps.db.asUser(caller.claims, async (tx) => teamDetail(tx, await memberTeam(tx, caller, c.req.param('slug'))))),
+      c.json(await deps.db.asUser(caller.claims, async (tx) => teamDetail(tx, caller, await memberTeam(tx, caller, c.req.param('slug'))))),
     );
   });
 
@@ -228,6 +263,8 @@ export function registerTeamRoutes(app: Hono, deps: CoreDeps): void {
     if (!body.ok) return body.res;
     return run(c, deps, async () => {
       assertNotDemo(caller);
+      // Agents see repo names as plain labels in status: screened like handles (#110, I2).
+      if (!repoLabel(body.data.repo)) throw new HttpError('VALIDATION', 'that repo name is not allowed');
       const detail = await deps.db.asUser(caller.claims, async (tx) => {
         const t = await adminTeam(tx, caller, c.req.param('slug'), 'link repos');
         const n = await tx.query<{ n: number; has: boolean }>(
@@ -241,7 +278,7 @@ export function registerTeamRoutes(app: Hono, deps: CoreDeps): void {
             [t.id, body.data.repo, caller.userId],
           );
         }
-        return teamDetail(tx, t);
+        return teamDetail(tx, caller, t);
       });
       return c.json(detail);
     });
@@ -258,7 +295,7 @@ export function registerTeamRoutes(app: Hono, deps: CoreDeps): void {
         const t = await adminTeam(tx, caller, c.req.param('slug') ?? '', 'unlink repos');
         const r = await tx.query('delete from public.team_repos where id = $1 and team_id = $2', [id, t.id]);
         if (r.rowCount === 0) throw new HttpError('NOT_FOUND', 'repo not found');
-        return teamDetail(tx, t);
+        return teamDetail(tx, caller, t);
       });
       return c.json(detail);
     });
@@ -285,6 +322,11 @@ export function registerTeamRoutes(app: Hono, deps: CoreDeps): void {
       const token = mintInviteToken();
       const out = await deps.db.asUser(caller.claims, async (tx) => {
         const t = await adminTeam(tx, caller, c.req.param('slug'), 'invite people');
+        // An admin link grants admin: the owner only, one use, short-lived.
+        const admin = body.data.role === 'admin';
+        if (admin && t.role !== 'owner') throw new HttpError('SCOPE_FORBIDDEN', 'only the team owner can invite admins');
+        const maxUses = admin ? 1 : body.data.maxUses;
+        const hours = admin ? Math.min(body.data.expiresInHours, ADMIN_INVITE_MAX_HOURS) : body.data.expiresInHours;
         const active = await tx.query<{ n: number }>(
           `select count(*)::int as n from public.team_invites
             where team_id = $1 and revoked_at is null and expires_at > now() and uses < max_uses`,
@@ -296,7 +338,7 @@ export function registerTeamRoutes(app: Hono, deps: CoreDeps): void {
         const ins = await tx.query<{ id: string }>(
           `insert into public.team_invites (team_id, token_hash, role, created_by, expires_at, max_uses)
            values ($1, $2, $3, $4, now() + make_interval(hours => $5::int), $6) returning id`,
-          [t.id, sha256Hex(token), body.data.role, caller.userId, body.data.expiresInHours, body.data.maxUses],
+          [t.id, sha256Hex(token), body.data.role, caller.userId, hours, maxUses],
         );
         const id = ins.rows[0]!.id;
         const invite = (await listInvites(tx, t.id)).items.find((i) => i.id === id);
@@ -360,7 +402,7 @@ export function registerTeamRoutes(app: Hono, deps: CoreDeps): void {
   app.post('/api/v1/invites/accept', async (c) => {
     const caller = await authenticate(c, deps, 'web');
     if (caller instanceof Response) return caller;
-    const body = parseOr(c, InviteTokenRequest, await readJson(c));
+    const body = parseOr(c, AcceptInviteRequest, await readJson(c));
     if (!body.ok) return body.res;
     return run(c, deps, async () => {
       assertNotDemo(caller);
@@ -385,7 +427,26 @@ export function registerTeamRoutes(app: Hono, deps: CoreDeps): void {
           [pre.team_id, caller.userId],
         )).rows[0];
         if (!t) throw new HttpError('NOT_FOUND', INVALID);
+        // Joining keeps the joiner's agents posting where they did, unless they asked to move here.
+        if (body.data.postHere === true) await setPostingTeam(tx, caller, t.id);
         return { team: { id: t.id, slug: t.slug, name: t.name, role: t.role }, joined };
+      });
+      return c.json(out);
+    });
+  });
+
+  /* --------------------------------------------------------- posting team */
+  app.post('/api/v1/me/posting-team', async (c) => {
+    const caller = await authenticate(c, deps, 'web');
+    if (caller instanceof Response) return caller;
+    const body = parseOr(c, SetPostingTeamRequest, await readJson(c));
+    if (!body.ok) return body.res;
+    return run(c, deps, async () => {
+      assertNotDemo(caller);
+      const out = await deps.db.asUser(caller.claims, async (tx): Promise<PostingTeamResponse> => {
+        const t = await memberTeam(tx, caller, body.data.team);
+        await setPostingTeam(tx, caller, t.id);
+        return { postingTeam: { id: t.id, slug: t.slug, name: t.name } };
       });
       return c.json(out);
     });

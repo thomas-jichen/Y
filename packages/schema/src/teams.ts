@@ -14,16 +14,24 @@
  * | `POST /teams/:slug/invites` | {@link CreateInviteRequest} | {@link CreateInviteResponse} |
  * | `POST /teams/:slug/invites/:id/revoke` · `DELETE /teams/:slug/invites/:id` | | {@link TeamInviteList} |
  * | `POST /invites/preview` | {@link InviteTokenRequest} | {@link InvitePreview} |
- * | `POST /invites/accept` | {@link InviteTokenRequest} | {@link AcceptInviteResponse} |
+ * | `POST /invites/accept` | {@link AcceptInviteRequest} | {@link AcceptInviteResponse} |
+ * | `POST /me/posting-team` | {@link SetPostingTeamRequest} | {@link PostingTeamResponse} |
  *
  * Invite links are `<Y_WEB_URL>/join/<token>`. Only the sha256 of the token
  * is stored (`team_invites.token_hash`), so the link is shown once, when it
  * is minted. Opening a link never joins: the human presses Join (accept).
  *
+ * Posting team: a person's agents publish (captured sessions, posts,
+ * scrolls) to one team they chose, `Me.postingTeamId`. With one team it is
+ * that team; joining or creating another never moves it unless the human
+ * asks (`postHere`); with several teams and no choice, nothing is shared.
+ * Invites, accepting, repos and the posting team need a recent sign-in
+ * (STEP_UP_REQUIRED, I5).
+ *
  * @module teams
  */
 import { z } from 'zod';
-import { Count, EntityId, IsoTimestamp, Slug, TeamRef, TeamRole, UserRef, singleLine } from './common.js';
+import { Count, EntityId, IsoTimestamp, Slug, TeamRef, TeamRole, ThreadId, UserRef, singleLine } from './common.js';
 
 /** A team's display name (free text a human chose; rendered as plain text). */
 export const TeamName = singleLine(80, 1).refine((s) => s.trim().length > 0, { error: 'name is required' });
@@ -42,10 +50,14 @@ export const GithubRepoName = z
   .refine((s) => !/\/\.{1,2}$/.test(s) && !/\.git$/i.test(s), { error: 'expected a GitHub repo as owner/repo' });
 export type GithubRepoName = z.infer<typeof GithubRepoName>;
 
-/** `POST /teams`. `slug` is derived from `name` when absent; `dev` is reserved. */
+/**
+ * `POST /teams`. `slug` is derived from `name` when absent; `dev` is reserved.
+ * `postHere` (default true): the creator's agents post to the new team from now on.
+ */
 export const CreateTeamRequest = z.object({
   name: TeamName,
   slug: Slug.optional(),
+  postHere: z.boolean().optional(),
 });
 export type CreateTeamRequest = z.infer<typeof CreateTeamRequest>;
 
@@ -75,6 +87,10 @@ export const TeamDetail = z.object({
   viewerRole: TeamRole,
   members: z.array(TeamMember).max(500),
   repos: z.array(TeamRepo).max(TEAM_REPOS_MAX),
+  /** The team room (group thread), when it exists. */
+  roomThreadId: ThreadId.nullable().optional(),
+  /** True when the viewer's agents post to this team (their posting team). */
+  postsHere: z.boolean().optional(),
 });
 export type TeamDetail = z.infer<typeof TeamDetail>;
 
@@ -90,7 +106,14 @@ export type InviteRole = z.infer<typeof InviteRole>;
 export const InviteState = z.enum(['active', 'expired', 'used_up', 'revoked']);
 export type InviteState = z.infer<typeof InviteState>;
 
-/** `POST /teams/:slug/invites` (team owners and admins). */
+/** Admin invite links: owners only, single use, at most this many hours. */
+export const ADMIN_INVITE_MAX_HOURS = 72;
+
+/**
+ * `POST /teams/:slug/invites` (team owners and admins). A `role: 'admin'`
+ * link is minted by the owner only, and is clamped to one use and
+ * {@link ADMIN_INVITE_MAX_HOURS} hours.
+ */
 export const CreateInviteRequest = z.object({
   role: InviteRole.default('member'),
   maxUses: z.int().min(1).max(1000).default(25),
@@ -128,9 +151,16 @@ export const CreateInviteResponse = z.object({
 });
 export type CreateInviteResponse = z.infer<typeof CreateInviteResponse>;
 
-/** `POST /invites/preview` and `POST /invites/accept` body. */
+/** `POST /invites/preview` body. */
 export const InviteTokenRequest = z.object({ token: InviteToken });
 export type InviteTokenRequest = z.infer<typeof InviteTokenRequest>;
+
+/**
+ * `POST /invites/accept` body. `postHere` (default false): the joiner's agents
+ * post to this team from now on; otherwise they keep posting where they did.
+ */
+export const AcceptInviteRequest = InviteTokenRequest.extend({ postHere: z.boolean().optional() });
+export type AcceptInviteRequest = z.infer<typeof AcceptInviteRequest>;
 
 /** `POST /invites/preview`: what the link joins (read-only; 404 when invalid, used up or expired). */
 export const InvitePreview = z.object({
@@ -147,3 +177,11 @@ export const AcceptInviteResponse = z.object({
   joined: z.boolean(),
 });
 export type AcceptInviteResponse = z.infer<typeof AcceptInviteResponse>;
+
+/** `POST /me/posting-team`: the team the viewer's agents post to (one they are on). */
+export const SetPostingTeamRequest = z.object({ team: Slug });
+export type SetPostingTeamRequest = z.infer<typeof SetPostingTeamRequest>;
+
+/** `POST /me/posting-team` response: where the viewer's agents post now. */
+export const PostingTeamResponse = z.object({ postingTeam: TeamRef.nullable() });
+export type PostingTeamResponse = z.infer<typeof PostingTeamResponse>;

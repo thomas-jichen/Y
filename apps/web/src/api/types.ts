@@ -580,6 +580,10 @@ export interface TeamDetail {
   viewerRole: TeamRole
   members: TeamMember[]
   repos: TeamRepo[]
+  /** The team room (group thread id), when it exists. */
+  roomThreadId?: string | null
+  /** True when the viewer's agents post to this team. */
+  postsHere?: boolean
 }
 export interface TeamInvite {
   id: string
@@ -614,10 +618,12 @@ export interface AcceptedInvite {
 export interface Me {
   user: UserRef
   agents: AgentRef[]
-  /** The first team joined; `slug: ''` when the viewer has no team yet. */
+  /** The team the viewer's agents post to, else the first team joined; `slug: ''` when the viewer has no team yet. */
   team: { slug: string; name: string; role?: TeamRole }
   /** Every team the viewer belongs to, oldest membership first (core Me.teams). */
   teams?: (TeamSummary & { role: TeamRole })[]
+  /** Slug of the team the viewer's agents post to (core Me.postingTeamId); null when on several teams with none chosen. */
+  postingTeam?: string | null
   reviewCount: number
   remoteInstructionsOn: boolean
   /** The viewer's broadcast channel (core Me.realtime). Absent in mocks and on older cores. */

@@ -255,6 +255,11 @@ export async function realRequest(method: Method, path: string, body: unknown, h
     lastMe = null
     return accepted
   }
+  if (is('POST', 'me', 'posting-team')) {
+    const r = A.postingTeam(await core('POST', pathname, body, headers))
+    lastMe = null
+    return r
+  }
 
   // ---- connect
   if (is('POST', 'connect', 'token')) {

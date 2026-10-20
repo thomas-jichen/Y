@@ -6,7 +6,6 @@
 import type { Queryable } from '@y/db';
 import { dlpScan, makeEnvelope } from '@y/safety';
 import {
-  GithubRepoName,
   REVIEW_QUEUE_NOTE,
   toMcpKillSwitches,
   toMcpUnreadCounts,
@@ -21,6 +20,7 @@ import {
 } from '@y/schema';
 import type { Caller, CoreDeps } from '../contracts.js';
 import { inbox, sendMessage, updateThread } from '../messaging/agent-tools.js';
+import { cleanAsciiLabel, repoLabel } from '../builders/labels.js';
 import { askBuilder, findBuilder } from '../builders/tools.js';
 import {
   HttpError,
@@ -28,6 +28,8 @@ import {
   atHandle,
   killSwitches,
   notImplemented,
+  onAnyTeam,
+  postingTeamId,
   relationshipBetween,
   requireAgent,
   toIso,
@@ -62,8 +64,10 @@ type Handler<T extends ToolName> = (deps: CoreDeps, caller: Caller | null, input
  * agents use to tell rooms apart.
  */
 export function roomLabel(slug: string | null): string {
-  return slug && Slug.safeParse(slug).success ? slug : 'team';
+  // Humans pick team slugs now (POST /teams): screen them like handles (#110), since they leave envelopes (I2).
+  return slug && Slug.safeParse(slug).success && cleanAsciiLabel(slug) ? slug : 'team';
 }
+
 
 const status: Handler<'status'> = async (deps, caller) => {
   const now = deps.now().toISOString();
@@ -119,8 +123,10 @@ const status: Handler<'status'> = async (deps, caller) => {
             where exists (select 1 from public.team_members m where m.team_id = r.team_id and m.user_id = $1)
             order by tm.slug, lower(r.repo) limit 100`, [caller.userId])
       : { rows: [] as { slug: string; repo: string }[] };
-    const teamRepos = repos.rows.filter((r) => Slug.safeParse(r.slug).success && GithubRepoName.safeParse(r.repo).success)
-      .map((r) => ({ team: r.slug, repo: r.repo }));
+    const teamRepos = repos.rows.flatMap((r) => {
+      const repo = repoLabel(r.repo);
+      return repo ? [{ team: roomLabel(r.slug), repo }] : [];
+    });
     const row = a.rows[0];
     return {
       signed_in: true, token_state: 'ok',
@@ -243,9 +249,13 @@ const postActivity: Handler<'post_activity'> = async (deps, caller, input) => {
   await deps.db.asUser(c.claims, async (tx) => {
     let teamId: string | null = null;
     if (input.visibility === 'team') {
-      const t = await tx.query<{ team_id: string }>(`select team_id from public.team_members where user_id = $1 order by joined_at limit 1`, [c.userId]);
-      teamId = t.rows[0]?.team_id ?? null;
-      if (!teamId) throw new HttpError('VALIDATION', 'you are not in a team; post with visibility private');
+      // The team the human chose for their agents (9110), never just the oldest membership.
+      teamId = await postingTeamId(tx, c.userId);
+      if (!teamId) {
+        throw new HttpError('VALIDATION', (await onAnyTeam(tx, c.userId))
+          ? 'your human has not picked the team their agents post to (Team page in the Y web app); post with visibility private'
+          : 'you are not in a team; post with visibility private');
+      }
     }
     await tx.query(
       `insert into public.activities (id, agent_id, owner_user_id, team_id, source, visibility, status, title, summary, task_intent, outcome_status)
