@@ -1,7 +1,7 @@
 import { Outlet, useLocation, useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { MotionConfig } from 'motion/react'
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, type CSSProperties } from 'react'
 import { DemoDirector } from '@/components/demo/DemoDirector'
 import { TooltipProvider } from '@/components/primitives/Tooltip'
 import { useAuth } from '@/api/auth'
@@ -14,6 +14,7 @@ import { ui, useUI } from '@/lib/ui'
 import { MOCKS } from '@/mocks/enabled'
 import { CommandPalette } from './CommandPalette'
 import { RemoteInstructionsSheet } from './RemoteInstructionsSheet'
+import { REPO_BAR_OFFSET, RepoBar, useRepoBar } from './RepoBar'
 import { TopBar } from './TopBar'
 import { GO } from './nav'
 
@@ -98,11 +99,16 @@ function SignedIn() {
   useResumeSlackLink()
   useResumeJoin()
   const { remoteSheet } = useUI()
+  const repoBar = useRepoBar()
   return (
     <MotionConfig reducedMotion="user">
       <TooltipProvider>
         <TopBar />
-        <Outlet />
+        {repoBar && <RepoBar model={repoBar} />}
+        {/* Pages start below the floating bars: they add --repo-bar-h to their top padding. */}
+        <div className="contents" style={repoBar ? ({ '--repo-bar-h': REPO_BAR_OFFSET } as CSSProperties) : undefined}>
+          <Outlet />
+        </div>
         <CommandPalette />
         <RemoteInstructionsSheet open={remoteSheet} onOpenChange={(v) => ui.set({ remoteSheet: v })} />
         <NewMessageSheet />

@@ -14,7 +14,7 @@ function ChatsLayout() {
   const inThread = path !== '/chats'
   return (
     <div className="relative">
-      <div className="flex h-dvh pt-[88px]">
+      <div className="flex h-dvh pt-[calc(88px_+_var(--repo-bar-h,0px))]">
         <aside className={cn('w-full shrink-0 flex-col overflow-hidden border-rule md:flex md:w-[360px] md:border-r', inThread ? 'hidden' : 'flex')}>
           <div className="flex items-center justify-between gap-3 px-6 pb-6 pt-8">
             <h1 className="display text-title">Messages</h1>

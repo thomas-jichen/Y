@@ -8,6 +8,7 @@ import type {
   CreatedInvite,
   InvitePreview,
   TeamDetail,
+  TeamReposStatus,
   TeamInvite,
   TeamRole,
   TeamSummary,
@@ -270,6 +271,21 @@ export function teamDetail(d: Obj): TeamDetail {
     })),
     roomThreadId: typeof d.roomThreadId === 'string' ? d.roomThreadId : null,
     postsHere: Boolean(d.postsHere),
+  }
+}
+
+const repoNow = (r: Obj | undefined) => ({
+  activeAgents: Math.max(0, Math.floor(Number(r?.activeAgents ?? 0)) || 0),
+  ...(typeof r?.lastActivityAt === 'string' ? { lastActivityAt: r.lastActivityAt } : {}),
+})
+
+/** GET /teams/:slug/repos/status */
+export function teamReposStatus(d: Obj): TeamReposStatus {
+  return {
+    team: teamSummary(d?.team),
+    viewerRole: teamRole(d?.viewerRole),
+    repos: (d?.repos ?? []).flatMap((r: Obj) => (typeof r?.repo === 'string' ? [{ repo: r.repo, ...repoNow(r) }] : [])),
+    all: repoNow(d?.all),
   }
 }
 

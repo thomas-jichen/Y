@@ -1,18 +1,26 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { AnimatePresence, motion } from 'motion/react'
 import { useMemo } from 'react'
-import { useMe, useUpdates, useUpdatesSharing } from '@/api/queries'
-import type { TurnUpdate, UpdatesSharing } from '@/api/types'
+import { useMe, useUpdates } from '@/api/queries'
+import type { TurnUpdate } from '@/api/types'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { AgentName } from '@/components/identity/AgentName'
-import { Switch } from '@/components/primitives/Switch'
 import { Page } from '@/components/shell/Page'
+import { useRepoScope } from '@/components/shell/repoScope'
 import { ScreenChip } from '@/components/trust/TrustBadge'
 import { groupUpdates, type UpdateGroup as Group } from '@/components/updates/group'
 import { fmtAgo, fmtClock } from '@/lib/format'
+import { parseRepo } from '@/lib/repoScope'
 import { SafeText } from '@/lib/safeText'
 
-export const Route = createFileRoute('/updates')({ component: Updates })
+export const Route = createFileRoute('/updates')({
+  // ?repo=owner/repo: the repo bar's choice (only a repo linked to the viewer's posting team filters).
+  validateSearch: (s: Record<string, unknown>): { repo?: string } => {
+    const repo = parseRepo(s.repo)
+    return repo ? { repo } : {}
+  },
+  component: Updates,
+})
 
 /** One response: when, what changed, what it is building. Both lines are untrusted text. */
 function UpdateRow({ u }: { u: TurnUpdate }) {
@@ -72,52 +80,28 @@ function UpdateGroup({ g, mine }: { g: Group; mine: boolean }) {
   )
 }
 
-/** The viewer's sharing switch: on by default; turning it off keeps their agents' updates to themselves. */
-function SharingRow({ sharing }: { sharing: UpdatesSharing }) {
-  const set = useUpdatesSharing()
-  const on = sharing.teamPolicyAccepted || (set.isPending ? set.variables === true : sharing.shareWithTeam)
-  const note = sharing.teamPolicyAccepted
-    ? 'You accepted your team’s policy, so your updates are shared with your team.'
-    : on
-      ? 'Teammates see what your agents changed and are building. Turning this off hides earlier updates from them too.'
-      : 'Only you see your agents’ updates.'
-  return (
-    <label className="mb-10 flex items-center justify-between gap-6 border-y border-rule py-3 text-ui">
-      <span>
-        Share my agents’ updates with my team
-        <span className="block text-caption text-text-2">{note}</span>
-        {set.isError && (
-          <span role="alert" className="block text-caption font-medium">
-            Couldn’t save that. Try again.
-          </span>
-        )}
-      </span>
-      <Switch
-        checked={on}
-        disabled={sharing.teamPolicyAccepted || set.isPending}
-        onCheckedChange={(v) => set.mutate(v)}
-        label="Share my agents’ updates with my team"
-      />
-    </label>
-  )
-}
-
 function Updates() {
-  const { data, isPending, isError, hasNextPage, fetchNextPage, isFetchingNextPage } = useUpdates()
+  const scope = useRepoScope()
+  const { data, isPending, isError, hasNextPage, fetchNextPage, isFetchingNextPage } = useUpdates(scope.repo, scope.ready)
   const { data: me } = useMe()
   const myIds = useMemo(() => new Set(me?.agents.map((a) => a.id)), [me])
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
   const groups = useMemo(() => groupUpdates(items), [items])
-  const sharing = data?.pages[0]?.sharing
 
   return (
     <Page>
       <header className="mb-10">
         <h1 className="display text-headline">What agents are building</h1>
-        <p className="mt-3 text-body text-text-2">A short note after every response from your team's agents: what changed, and where it is heading.</p>
+        <p className="mt-3 text-body text-text-2">
+          A short note after every response from your team's agents: what changed, and where it is heading.
+          {scope.repo && (
+            <>
+              {' '}
+              Showing <span className="font-medium text-text">{scope.repo}</span> only.
+            </>
+          )}
+        </p>
       </header>
-
-      {sharing && <SharingRow sharing={sharing} />}
 
       <div className="divide-y divide-rule">
         {isPending &&
@@ -143,7 +127,15 @@ function Updates() {
             <div className="mt-1 text-body text-text-2">Something went wrong on our side. Try again in a moment.</div>
           </div>
         )}
-        {!isPending && !isError && items.length === 0 && (
+        {!isPending && !isError && items.length === 0 && scope.repo && (
+          <div className="py-16">
+            <div className="text-body font-medium">No updates in {scope.repo} yet</div>
+            <div className="mt-1 text-body text-text-2">
+              Updates show up here once an agent works in a clone of this repo. Pick All repos in the bar above to see everything.
+            </div>
+          </div>
+        )}
+        {!isPending && !isError && items.length === 0 && !scope.repo && (
           <div className="py-16">
             <div className="text-body font-medium">No updates yet</div>
             <div className="mt-1 text-body text-text-2">
@@ -151,7 +143,8 @@ function Updates() {
               <Link to="/connect" className="underline decoration-1 underline-offset-4">
                 Connect a machine
               </Link>{' '}
-              to start. Agents that share stats only send no updates, and teammates' updates show up once they share them.
+              to start. Agents that share stats only send no updates, and teammates' updates show up once they share them. Whether
+              your own agents' updates reach your team is a switch in your account menu (your avatar, top right).
             </div>
           </div>
         )}

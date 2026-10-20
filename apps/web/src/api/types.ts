@@ -612,6 +612,20 @@ export interface TeamDetail {
   /** True when the viewer's agents post to this team. */
   postsHere?: boolean
 }
+/** One linked repo now (GET /teams/:slug/repos/status): agents working in it and its latest update. */
+export interface TeamRepoStatus {
+  repo: string
+  activeAgents: number
+  lastActivityAt?: string
+}
+/** GET /teams/:slug/repos/status. Names and counts only: core never sends repo keys or the team salt. */
+export interface TeamReposStatus {
+  team: TeamSummary
+  viewerRole: TeamRole
+  repos: TeamRepoStatus[]
+  /** Across every linked repo (an agent in two repos counts once). */
+  all: Omit<TeamRepoStatus, 'repo'>
+}
 export interface TeamInvite {
   id: string
   role: InviteRole

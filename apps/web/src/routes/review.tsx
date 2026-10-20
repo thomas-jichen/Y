@@ -11,7 +11,7 @@ function ReviewLayout() {
   const inItem = path !== '/review'
   return (
     <div className="relative">
-      <div className="flex h-dvh pt-[88px]">
+      <div className="flex h-dvh pt-[calc(88px_+_var(--repo-bar-h,0px))]">
         <aside className={cn('w-full shrink-0 overflow-hidden border-rule md:block md:w-[360px] md:border-r', inItem ? 'hidden' : 'block')}>
           <ReviewList items={data?.items} />
         </aside>

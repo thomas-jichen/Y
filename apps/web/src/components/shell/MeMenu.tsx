@@ -5,13 +5,14 @@ import type { Me } from '@/api/types'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { PRESENCE } from '@/components/identity/PresenceDot'
 import { HumanAvatar } from '@/components/primitives/HumanAvatar'
-import { useActiveScroll, useSendForScroll, useTeam } from '@/api/queries'
+import { useActiveScroll, useSendForScroll, useTeam, useUpdatesSharing, useUpdatesSharingState } from '@/api/queries'
 import { auth } from '@/api/auth'
 import { HttpError } from '@/api/client'
 import { cn } from '@/lib/cn'
 import { MOCKS } from '@/lib/env'
 import { useThemePref, type ThemePref } from '@/lib/theme'
 import { ui } from '@/lib/ui'
+import { SharingSetting } from './SharingSetting'
 
 const THEMES: { value: ThemePref; label: string }[] = [
   { value: 'system', label: 'System' },
@@ -19,7 +20,22 @@ const THEMES: { value: ThemePref; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ]
 
-/** The one place your agents are listed. Portaled, because glass traps fixed children. */
+/** Settings: whether your agents' updates reach your team. Loads only while the menu is open. */
+function Sharing() {
+  const state = useUpdatesSharingState()
+  const set = useUpdatesSharing()
+  return (
+    <SharingSetting
+      sharing={state.data}
+      pending={set.isPending ? set.variables : undefined}
+      saveFailed={set.isError}
+      loadFailed={state.isError}
+      onChange={(v) => set.mutate(v)}
+    />
+  )
+}
+
+/** The one place your agents are listed, and your settings. Portaled, because glass traps fixed children. */
 export function MeMenu({ me }: { me: Me }) {
   const [open, setOpen] = useState(false)
   const { data: team } = useTeam()
@@ -50,7 +66,7 @@ export function MeMenu({ me }: { me: Me }) {
         <HumanAvatar user={me.user} size={32} />
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content align="end" sideOffset={10} className="glass-pop z-50 w-[300px] rounded-glass p-2 text-ui data-[state=open]:animate-[fade-in_140ms_ease-out]">
+        <Popover.Content align="end" sideOffset={10} className="glass-pop z-50 w-[min(320px,calc(100vw-24px))] rounded-glass p-2 text-ui data-[state=open]:animate-[fade-in_140ms_ease-out]">
           <div className="px-3 pb-3 pt-2">
             <div className="font-medium">{me.user.name}</div>
             <div className="font-mono text-caption">@{me.user.login}</div>
@@ -97,6 +113,8 @@ export function MeMenu({ me }: { me: Me }) {
               </button>
             ))}
           </div>
+          <div className="my-2 h-px bg-[var(--glass-edge)]" />
+          <Sharing />
           {!MOCKS && (
             <>
               <div className="my-2 h-px bg-[var(--glass-edge)]" />

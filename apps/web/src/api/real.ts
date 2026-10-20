@@ -199,17 +199,25 @@ export async function realRequest(method: Method, path: string, body: unknown, h
 
   // ---- feed (stats cards): core's default tab is highlights-only, so the web asks for tab=all
   if (is('GET', 'feed')) {
-    const tab = FEED_TAB[q.get('tab') ?? 'all'] ?? 'all'
+    const p = new URLSearchParams({ tab: FEED_TAB[q.get('tab') ?? 'all'] ?? 'all' })
     const cursor = q.get('cursor')
-    return A.feed(await core('GET', `/feed?tab=${tab}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`))
+    if (cursor) p.set('cursor', cursor)
+    const repo = q.get('repo')
+    if (repo) p.set('repo', repo)
+    return A.feed(await core('GET', `/feed?${p}`))
   }
   if (is('GET', 'activities', null)) return A.activity(await core('GET', pathname))
 
   // ---- updates: per-response summaries of the team's agents (newest first)
   if (is('GET', 'updates')) {
+    const p = new URLSearchParams()
     const cursor = q.get('cursor')
-    return A.updatesPage(await core('GET', `/updates${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`))
+    if (cursor) p.set('cursor', cursor)
+    const repo = q.get('repo')
+    if (repo) p.set('repo', repo)
+    return A.updatesPage(await core('GET', `/updates${p.toString() ? `?${p}` : ''}`))
   }
+  if (is('GET', 'updates', 'sharing')) return core('GET', '/updates/sharing')
   if (is('POST', 'updates', 'sharing')) {
     const shareWithTeam = Boolean((body as { shareWithTeam?: boolean } | undefined)?.shareWithTeam)
     return core('PUT', '/updates/sharing', { shareWithTeam }, headers)
@@ -256,6 +264,7 @@ export async function realRequest(method: Method, path: string, body: unknown, h
   }
   if (is('GET', 'teams', null) || is('POST', 'teams', null, 'repos') || is('POST', 'teams', null, 'repos', null, 'remove'))
     return A.teamDetail(await core(method, pathname, method === 'GET' ? undefined : body, headers))
+  if (is('GET', 'teams', null, 'repos', 'status')) return A.teamReposStatus(await core('GET', pathname))
   if (is('GET', 'teams', null, 'invites') || is('POST', 'teams', null, 'invites', null, 'revoke'))
     return A.inviteList(await core(method, pathname, method === 'GET' ? undefined : {}, headers))
   if (is('POST', 'teams', null, 'invites')) return A.createdInvite(await core('POST', pathname, body, headers))

@@ -9,6 +9,7 @@ import type {
   CreatedInvite,
   InvitePreview,
   TeamDetail,
+  TeamReposStatus,
   TeamInvite,
   TeamSummary,
   ClaimKind,
@@ -42,23 +43,42 @@ export const useStories = () => useQuery({ queryKey: ['stories'], queryFn: () =>
 export const usePosts = (tab: string) =>
   useQuery({ queryKey: ['posts', tab], queryFn: () => api.get<{ items: Post[]; nextCursor?: string }>(`/posts?tab=${tab}`), placeholderData: keepPreviousData })
 /** Core's feed of stats cards (real mode). Tabs map onto core tabs in api/real.ts (default: all). */
-export const useFeed = (tab: string, enabled = true) =>
+export const useFeed = (tab: string, enabled = true, repo?: string | null) =>
   useQuery({
-    queryKey: ['feed', tab],
-    queryFn: () => api.get<{ items: Activity[]; nextCursor?: string }>(`/feed?tab=${tab}`),
+    queryKey: repo ? ['feed', tab, repo] : ['feed', tab],
+    queryFn: () => api.get<{ items: Activity[]; nextCursor?: string }>(`/feed?tab=${tab}${repo ? `&repo=${encodeURIComponent(repo)}` : ''}`),
     placeholderData: keepPreviousData,
     enabled,
   })
 /** How often the open Updates page polls (core sends no push event per response). */
 export const UPDATES_POLL_MS = 15_000
 /** Per-response summaries from the team's agents, newest first; older pages load on demand. Polls only while mounted. */
-export const useUpdates = () =>
+export const useUpdates = (repo?: string | null, enabled = true) =>
   useInfiniteQuery({
-    queryKey: ['updates'],
-    queryFn: ({ pageParam }) => api.get<UpdatesPage>(`/updates${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`),
+    queryKey: repo ? ['updates', repo] : ['updates'],
+    queryFn: ({ pageParam }) => {
+      const p = new URLSearchParams()
+      if (pageParam) p.set('cursor', pageParam)
+      if (repo) p.set('repo', repo)
+      return api.get<UpdatesPage>(`/updates${p.toString() ? `?${p}` : ''}`)
+    },
     initialPageParam: '' as string,
     getNextPageParam: (last) => last.nextCursor,
     refetchInterval: UPDATES_POLL_MS,
+    enabled,
+  })
+/** The viewer's update-sharing setting alone (the account menu), without loading the Updates feed. */
+export const useUpdatesSharingState = (enabled = true) =>
+  useQuery({ queryKey: ['updates-sharing'], queryFn: () => api.get<UpdatesSharing>('/updates/sharing'), enabled })
+/** How often the repo bar refreshes who is working where. */
+export const REPO_STATUS_POLL_MS = 30_000
+/** Linked repos of a team with agents working in each now and the latest update (the bar under the top nav). */
+export const useRepoStatus = (slug: string | null | undefined) =>
+  useQuery({
+    queryKey: ['repo-status', slug],
+    queryFn: () => api.get<TeamReposStatus>(`/teams/${encodeURIComponent(slug!)}/repos/status`),
+    enabled: !!slug,
+    refetchInterval: REPO_STATUS_POLL_MS,
   })
 export const usePost = (id: string) => useQuery({ queryKey: ['post', id], queryFn: () => api.get<{ post: Post; comments: Comment[] }>(`/posts/${id}`) })
 export const useActivity = (id: string) => useQuery({ queryKey: ['activity', id], queryFn: () => api.get<Activity>(`/activities/${id}`) })
@@ -236,7 +256,12 @@ export function useUpdatesSharing() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (shareWithTeam: boolean) => api.post<UpdatesSharing>('/updates/sharing', { shareWithTeam }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['updates'] }),
+    onSuccess: (sharing) => {
+      qc.setQueryData(['updates-sharing'], sharing)
+      void qc.invalidateQueries({ queryKey: ['updates'] })
+      // Teammates who stop sharing drop out of the bar's counts.
+      void qc.invalidateQueries({ queryKey: ['repo-status'] })
+    },
   })
 }
 

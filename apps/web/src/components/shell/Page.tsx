@@ -2,13 +2,14 @@ import type { ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 
 /**
- * One reading column on the plain page, starting below the floating bar.
+ * One reading column on the plain page, starting below the floating bar (and the repo bar under
+ * it, when shown: AppShell sets --repo-bar-h).
  * `aside` is an optional second column for wide screens: not sticky, no material.
  */
 export function Page({ children, aside, rail, kind = 'feed', className }: { children: ReactNode; aside?: ReactNode; rail?: ReactNode; kind?: 'feed' | 'wide' | 'full'; className?: string }) {
   const side = aside ?? rail
   return (
-    <div className="relative pb-24 pt-24 md:pt-32">
+    <div className="relative pb-24 pt-[calc(6rem_+_var(--repo-bar-h,0px))] md:pt-[calc(8rem_+_var(--repo-bar-h,0px))]">
       <div
         className={cn(
           'mx-auto flex gap-16 px-4 md:px-8',

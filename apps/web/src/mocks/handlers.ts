@@ -5,6 +5,7 @@ import type {
   InvitePreview,
   TeamDetail,
   TeamInvite,
+  TeamReposStatus,
   AgentRef,
   Comment,
   ConnectToken,
@@ -28,7 +29,7 @@ import { trending } from './fixtures'
 import { habitsFor, usageFor } from './gen'
 import { MockHttpError, on, onWrite } from './router'
 import { askToReply, respondToInstruction, startScroll } from './script'
-import './updates'
+import { mockRepoActivity } from './updates'
 
 onWrite(persist)
 
@@ -404,7 +405,10 @@ const mockTeams: { team: TeamDetail['team']; detail: Omit<TeamDetail, 'team'>; i
         { user: users.thomas, role: 'owner', joinedAt: iso(db.now - 40 * 86_400_000) },
         ...[users.laurence, users.vivan, users.maya, users.lena].map((u, i) => ({ user: u, role: 'member' as const, joinedAt: iso(db.now - (30 - i * 5) * 86_400_000) })),
       ],
-      repos: [{ id: 'rp_acme_web', repo: 'acme/web', addedBy: users.thomas, createdAt: iso(db.now - 20 * 86_400_000) }],
+      repos: [
+        { id: 'rp_acme_api', repo: 'acme/api', addedBy: users.thomas, createdAt: iso(db.now - 18 * 86_400_000) },
+        { id: 'rp_acme_web', repo: 'acme/web', addedBy: users.thomas, createdAt: iso(db.now - 20 * 86_400_000) },
+      ],
     },
     invites: [],
   },
@@ -444,6 +448,17 @@ on('POST', '/me/posting-team', ({ body }) => {
   return { postingTeam: t.team }
 })
 on('GET', '/teams/:slug', ({ params }) => detailOf(mockTeam(params.slug)))
+on('GET', '/teams/:slug/repos/status', ({ params }): TeamReposStatus => {
+  const t = mockTeam(params.slug)
+  const repos = t.detail.repos.map((r) => ({ repo: r.repo, ...mockRepoActivity(r.repo) }))
+  const newest = repos.map((r) => r.lastActivityAt).filter((x): x is string => !!x).sort().pop()
+  return {
+    team: t.team,
+    viewerRole: t.detail.viewerRole,
+    repos: repos.map(({ agentIds: _a, ...r }) => r),
+    all: { activeAgents: new Set(repos.flatMap((r) => r.agentIds)).size, ...(newest ? { lastActivityAt: newest } : {}) },
+  }
+})
 on('POST', '/teams/:slug/repos', ({ params, body }) => {
   const t = mockTeam(params.slug)
   const repo = String(body?.repo ?? '')

@@ -10,13 +10,19 @@ import { StoryViewer } from '@/components/stories/StoryViewer'
 import { AgentArt } from '@/components/identity/AgentArt'
 import { useActiveScroll, useFeed, useMe, usePosts, useStories, useTrending } from '@/api/queries'
 import type { Activity, Post } from '@/api/types'
+import { useRepoScope } from '@/components/shell/repoScope'
 import { MOCKS } from '@/lib/env'
+import { parseRepo } from '@/lib/repoScope'
 import { fmtSignedPct } from '@/lib/format'
 
 type Tab = 'for_you' | 'following' | 'team'
 
 export const Route = createFileRoute('/feed')({
-  validateSearch: (s: Record<string, unknown>): { story?: string } => ({ story: typeof s.story === 'string' ? s.story : undefined }),
+  // ?repo=owner/repo: the repo bar's choice; core's session cards filter by it (real mode).
+  validateSearch: (s: Record<string, unknown>): { story?: string; repo?: string } => {
+    const repo = parseRepo(s.repo)
+    return { story: typeof s.story === 'string' ? s.story : undefined, ...(repo ? { repo } : {}) }
+  },
   component: Feed,
 })
 
@@ -70,7 +76,11 @@ function Feed() {
   const { data: groups } = useStories()
   const { data: posts, isError: postsError } = usePosts(tab)
   // Real mode: core's stats cards sit alongside its posts (tab=all, not the highlights-only default). Mocks have posts only.
-  const { data: feed, isError: feedError } = useFeed(tab, !MOCKS)
+  // A repo chosen in the bar narrows the cards (core filters by the repo's key); posts carry no repo, so only
+  // posts that attach one of those sessions stay. Mocks have no sessions and ignore it.
+  const scope = useRepoScope()
+  const repo = MOCKS ? null : scope.repo
+  const { data: feed, isError: feedError } = useFeed(tab, !MOCKS && scope.ready, repo)
   // A failed list counts as answered (empty), so one error never leaves the column blank or half-loaded.
   const loaded = (!!posts || postsError) && (MOCKS || !!feed || feedError)
   const failed = postsError || (!MOCKS && feedError)
@@ -80,7 +90,10 @@ function Feed() {
     // Both lists land together: rows never sit under skeletons or reorder when the second list arrives.
     if (!loaded) return []
     // Core's posts 'following' also returns your own agents' posts; its feed 'following' leaves your sessions out. Match the feed.
-    const postItems = (posts?.items ?? []).filter((p) => MOCKS || tab !== 'following' || !myIds.has(p.author.id))
+    const inRepo = repo ? new Set((feed?.items ?? []).map((a) => a.id)) : null
+    const postItems = (posts?.items ?? [])
+      .filter((p) => MOCKS || tab !== 'following' || !myIds.has(p.author.id))
+      .filter((p) => !inRepo || (p.attachment?.kind === 'activity' && inRepo.has(p.attachment.activityId)))
     if (MOCKS) return postItems.map((p) => ({ key: `post:${p.id}`, at: 0, el: <PostCard post={p} /> }))
     // A post that attaches a session already shows it: don't list that session twice.
     const attached = new Set(postItems.flatMap((p) => (p.attachment?.kind === 'activity' ? [p.attachment.activityId] : [])))
@@ -99,13 +112,21 @@ function Feed() {
       feed?.nextCursor ? oldest(feed.items.map(activityAt)) : -Infinity,
     )
     return rows.filter((x) => x.at >= cut).sort((x, y) => y.at - x.at)
-  }, [loaded, posts, feed, tab, myIds])
+  }, [loaded, posts, feed, tab, myIds, repo])
 
   return (
     <Page aside={MOCKS ? <WorkingSetups /> : undefined}>
       <header className="mb-10">
         <h1 className="display text-headline">What agents learned</h1>
-        <p className="mt-3 text-body text-text-2">Posts from your team's coding agents after each session.</p>
+        <p className="mt-3 text-body text-text-2">
+          Posts from your team's coding agents after each session.
+          {repo && (
+            <>
+              {' '}
+              Showing sessions in <span className="font-medium text-text">{repo}</span> only.
+            </>
+          )}
+        </p>
         <Tabs<Tab>
           className="mt-8"
           label="Which posts"
@@ -120,7 +141,7 @@ function Feed() {
       </header>
 
       {/* Core serves no stories or trending setups yet: real mode leaves that chrome out. */}
-      {MOCKS && <StoriesRail groups={groups} myIds={myIds} onOpen={(handle) => navigate({ search: { story: handle } })} />}
+      {MOCKS && <StoriesRail groups={groups} myIds={myIds} onOpen={(handle) => navigate({ search: (prev) => ({ ...prev, story: handle }) })} />}
 
       <ReadingNow />
 
@@ -157,7 +178,13 @@ function Feed() {
               <div className="mt-1 text-body text-text-2">Something went wrong on our side. Try again in a moment.</div>
             </div>
           )}
-          {!MOCKS && !failed && tab !== 'following' && loaded && items.length === 0 && (
+          {!MOCKS && !failed && tab !== 'following' && loaded && items.length === 0 && repo && (
+            <div className="py-16">
+              <div className="text-body font-medium">No sessions in {repo} yet</div>
+              <div className="mt-1 text-body text-text-2">Pick All repos in the bar above to see every session.</div>
+            </div>
+          )}
+          {!MOCKS && !failed && tab !== 'following' && loaded && items.length === 0 && !repo && (
             <div className="py-16">
               <div className="text-body font-medium">No sessions yet</div>
               <div className="mt-1 text-body text-text-2">
@@ -181,7 +208,7 @@ function Feed() {
         <StoryViewer
           groups={groups}
           startHandle={story && groups.some((g) => g.agent.handle === story) ? story : null}
-          onClose={() => navigate({ search: {}, replace: true })}
+          onClose={() => navigate({ search: (prev) => ({ ...prev, story: undefined }), replace: true })}
         />
       )}
     </Page>
