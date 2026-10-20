@@ -16,7 +16,9 @@
  * for gpt-oss, strict json_schema output where the model supports it (else
  * json_object), no tools, no viewer data. A 429 never hot-retries: the job is
  * rescheduled after retry-after, or the turn is skipped when the reset (a
- * free-tier daily cap) is far away. Errors carry only status codes.
+ * free-tier daily cap) is far away. A timeout or reset mid-body is retryable.
+ * A run of identical rejected requests warns once. Errors and logs carry only
+ * status codes (and Groq's short error code), never the key or the digest.
  *
  * Whatever a summarizer returns is untrusted: the job normalizes, redacts,
  * L0-screens and DLP-checks it before storing (job.ts).
@@ -169,6 +171,29 @@ export function groqRetryAfterSeconds(headers: Headers, nowMs: number): number |
   return resets.length ? Math.max(...resets) : null;
 }
 
+/** Identical rejected requests in a row (same status and error code) before core warns once. */
+export const GROQ_REJECT_RUN_WARN = 3;
+
+function isTimeout(e: unknown): boolean {
+  return e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
+}
+
+/**
+ * Groq's short `error.code` enum (e.g. `json_validate_failed`) from an error response, or null.
+ * Only a bounded identifier-shaped code is kept: the message and the rest of the body (which can
+ * echo the digest) are never returned or logged.
+ */
+async function groqErrorCode(res: Response): Promise<string | null> {
+  try {
+    const text = await res.text();
+    if (text.length > 64_000) return null;
+    const code = (JSON.parse(text) as { error?: { code?: unknown } } | null)?.error?.code;
+    return typeof code === 'string' && /^[a-z0-9_]{1,64}$/.test(code) ? code : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Options for {@link createGroqTurnSummarizer}. */
 export interface GroqSummarizerOptions {
   apiKey: string;
@@ -192,6 +217,9 @@ export function createGroqTurnSummarizer(opts: GroqSummarizerOptions): TurnSumma
   /** Rate limited until (epoch ms): calls before then don't reach Groq. */
   let blockedUntil = 0;
   let warnedConfig = false;
+  /** The current run of identical client errors (`status:code`) and the runs already warned about. */
+  let rejectRun = { key: '', count: 0 };
+  const warnedRejects = new Set<string>();
 
   const retryLater = (waitS: number): never => {
     // Spread rescheduled jobs a little so they don't all hit the reset at once.
@@ -231,8 +259,7 @@ export function createGroqTurnSummarizer(opts: GroqSummarizerOptions): TurnSumma
           signal: AbortSignal.timeout(timeoutMs),
         });
       } catch (e) {
-        const timedOut = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
-        throw new SummaryRetryLaterError(timedOut ? 'groq request timed out' : 'groq request failed');
+        throw new SummaryRetryLaterError(isTimeout(e) ? 'groq request timed out' : 'groq request failed');
       }
 
       if (res.status === 429) {
@@ -251,18 +278,43 @@ export function createGroqTurnSummarizer(opts: GroqSummarizerOptions): TurnSumma
         throw new SummaryRetryLaterError(`groq http ${res.status}`);
       }
       if (!res.ok) {
-        void res.body?.cancel().catch(() => undefined);
         // Bad key, no access or unknown model: every turn would fail the same way, so say so once.
-        if ((res.status === 401 || res.status === 403 || res.status === 404) && !warnedConfig) {
-          warnedConfig = true;
-          log('warn', 'turn summary: GroqCloud rejected the request; check GROQ_API_KEY and Y_GROQ_MODEL', { status: res.status });
+        if (res.status === 401 || res.status === 403 || res.status === 404) {
+          void res.body?.cancel().catch(() => undefined);
+          if (!warnedConfig) {
+            warnedConfig = true;
+            log('warn', 'turn summary: GroqCloud rejected the request; check GROQ_API_KEY and Y_GROQ_MODEL', { status: res.status });
+          }
+          return null;
         }
-        return null; // other 4xx (e.g. json_validate_failed, too large): skip this turn
+        // Other 4xx (e.g. json_validate_failed, too large) skip this turn. One now and then is the
+        // model; a run of identical ones (a model that rejects response_format, a schema Groq refuses)
+        // drops every turn, so warn once per run with the status and Groq's error code only.
+        const code = await groqErrorCode(res);
+        const key = `${res.status}:${code ?? ''}`;
+        rejectRun = rejectRun.key === key ? { key, count: rejectRun.count + 1 } : { key, count: 1 };
+        if (rejectRun.count >= GROQ_REJECT_RUN_WARN && !warnedRejects.has(key)) {
+          warnedRejects.add(key);
+          log('warn', 'turn summary: GroqCloud keeps rejecting requests; turns get no summary (check Y_GROQ_MODEL)', {
+            status: res.status,
+            ...(code ? { code } : {}),
+          });
+        }
+        return null;
       }
+      rejectRun = { key: '', count: 0 };
 
+      // The timeout signal also covers the body: a timeout or reset mid-body is retryable, and only
+      // a body that isn't JSON skips the turn.
+      let text: string;
+      try {
+        text = await res.text();
+      } catch (e) {
+        throw new SummaryRetryLaterError(isTimeout(e) ? 'groq request timed out' : 'groq request failed');
+      }
       let json: unknown;
       try {
-        json = await res.json();
+        json = JSON.parse(text);
       } catch {
         return null;
       }

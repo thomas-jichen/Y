@@ -246,6 +246,61 @@ describe('GroqCloud summarizer', () => {
   });
 });
 
+describe('GroqCloud summarizer: review follow-ups', () => {
+  it('a run of identical rejected requests warns once with the status and error code only', async () => {
+    const logs: unknown[][] = [];
+    const bad = () => new Response(JSON.stringify({ error: { message: `${FAKE_KEY} ${DIGEST}`, type: 'invalid_request_error', code: 'json_validate_failed' } }), { status: 400 });
+    const { fetch, calls } = mockFetch(bad, bad, bad, bad, bad, completion(JSON.stringify(GOOD)), bad, bad, bad, new Response('{}', { status: 422 }));
+    const s = createGroqTurnSummarizer({ apiKey: FAKE_KEY, fetch, log: (...a) => logs.push(a) });
+    for (let i = 0; i < 2; i++) expect(await s.summarize(DIGEST)).toBeNull();
+    expect(logs).toEqual([]); // an occasional rejection stays silent
+    for (let i = 0; i < 3; i++) expect(await s.summarize(DIGEST)).toBeNull();
+    expect(await s.summarize(DIGEST)).toEqual(GOOD);
+    for (let i = 0; i < 3; i++) expect(await s.summarize(DIGEST)).toBeNull();
+    expect(calls).toHaveLength(9);
+    expect(logs).toEqual([['warn', expect.stringContaining('Y_GROQ_MODEL'), { status: 400, code: 'json_validate_failed' }]]);
+    expect(JSON.stringify(logs)).not.toContain(FAKE_KEY);
+    expect(JSON.stringify(logs)).not.toContain('checkout');
+    // A different status starts its own run; three of them warn once (no code in a bodyless error).
+    for (let i = 0; i < 3; i++) expect(await s.summarize(DIGEST)).toBeNull();
+    expect(logs).toHaveLength(2);
+    expect(logs[1]).toEqual(['warn', expect.any(String), { status: 422 }]);
+  });
+
+  it('only an identifier-shaped error code is logged, never free text', async () => {
+    const logs: unknown[][] = [];
+    const { fetch } = mockFetch(new Response(`{"error":{"code":"Bearer ${FAKE_KEY} leaked"}}`, { status: 400 }));
+    const s = createGroqTurnSummarizer({ apiKey: FAKE_KEY, fetch, log: (...a) => logs.push(a) });
+    for (let i = 0; i < 3; i++) expect(await s.summarize(DIGEST)).toBeNull();
+    expect(logs).toEqual([['warn', expect.any(String), { status: 400 }]]);
+  });
+
+  it('a timeout or reset while reading the body is retryable; only a non-JSON body is null', async () => {
+    const erroring = (err: Error) => () =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode('{"choices":['));
+          },
+          pull(c) {
+            c.error(err);
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const timedOut = mockFetch(erroring(new DOMException('The operation was aborted due to timeout', 'TimeoutError')));
+    const t = (await createGroqTurnSummarizer({ apiKey: FAKE_KEY, fetch: timedOut.fetch }).summarize(DIGEST).catch((x: unknown) => x)) as Error;
+    expect(t).toBeInstanceOf(SummaryRetryLaterError);
+    expect(t.message).toBe('groq request timed out');
+    const reset = mockFetch(erroring(new TypeError('terminated')));
+    const r = (await createGroqTurnSummarizer({ apiKey: FAKE_KEY, fetch: reset.fetch }).summarize(DIGEST).catch((x: unknown) => x)) as Error;
+    expect(r).toBeInstanceOf(SummaryRetryLaterError);
+    expect(r.message).toBe('groq request failed');
+    const notJson = mockFetch(new Response('<html>oops</html>', { status: 200 }));
+    expect(await createGroqTurnSummarizer({ apiKey: FAKE_KEY, fetch: notJson.fetch }).summarize(DIGEST)).toBeNull();
+  });
+});
+
 describe('Y_SUMMARY_LLM selection', () => {
   it('unset follows Y_LLM exactly as before (mock / anthropic, key rules, production)', () => {
     const mock = baseConfig({ Y_LLM: 'mock' });
