@@ -8,7 +8,9 @@
  * - Demo gate: when Y_DEMO_SECRET is set, /api/v1/dev/* needs X-Demo-Secret.
  * - Step-up (I5): review decisions and owner instructions (thread instruct,
  *   post ask, send to scroll) need a web login younger than 12 h
- *   (STEP_UP_REQUIRED otherwise).
+ *   (STEP_UP_REQUIRED otherwise). So do the team changes that grant or move
+ *   access (routes/teams.ts): minting and revoking invite links, accepting
+ *   one, linking and unlinking repos, and choosing the posting team.
  */
 import type { Context, Hono, MiddlewareHandler } from 'hono';
 import { cors } from 'hono/cors';
@@ -26,7 +28,19 @@ const STEP_UP_ROUTES = [
   /^\/api\/v1\/posts\/[^/]+\/ask$/,
   /^\/api\/v1\/agents\/[^/]+\/scroll$/,
 ];
+/** Team access changes (POST, and DELETE where the route has it). */
+const TEAM_STEP_UP_ROUTES = [
+  /^\/api\/v1\/teams\/[^/]+\/invites(\/[^/]+(\/revoke)?)?$/,
+  /^\/api\/v1\/teams\/[^/]+\/repos(\/[^/]+(\/remove)?)?$/,
+  /^\/api\/v1\/invites\/accept$/,
+  /^\/api\/v1\/me\/posting-team$/,
+];
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function needsStepUp(method: string, path: string): boolean {
+  if (method === 'POST' && STEP_UP_ROUTES.some((r) => r.test(path))) return true;
+  return (method === 'POST' || method === 'DELETE') && TEAM_STEP_UP_ROUTES.some((r) => r.test(path));
+}
 
 export const CORS_ALLOW_HEADERS = [
   'authorization',
@@ -90,7 +104,7 @@ export function registerWebGuards(app: Hono, deps: CoreDeps): void {
   }
 
   app.use('/api/*', async (c, next) => {
-    if (c.req.method !== 'POST' || !STEP_UP_ROUTES.some((r) => r.test(c.req.path))) return next();
+    if (!needsStepUp(c.req.method, c.req.path)) return next();
     const res = await requireRecentLogin(c, deps);
     return res ?? next();
   });

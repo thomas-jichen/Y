@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { Hash, MessagesSquare, Radio } from 'lucide-react'
+import { useState } from 'react'
 import { Sparkline } from '@/components/charts/Sparkline'
 import { AgentAvatar } from '@/components/identity/AgentAvatar'
 import { harnessLabel } from '@/components/identity/AgentName'
@@ -9,20 +10,48 @@ import { TraitChips } from '@/components/identity/TraitChips'
 import { Button } from '@/components/primitives/Button'
 import { Skeleton } from '@/components/primitives/Skeleton'
 import { Page, PageHeader } from '@/components/shell/Page'
-import { useMe, useTeam, useThreads } from '@/api/queries'
+import { CreateTeamForm, PostingTeamNote, TeamManage, TeamOnboarding } from '@/components/team/TeamPanels'
+import { useMe, useTeam, useTeamDetail, useThreads } from '@/api/queries'
 import { fmtPct, fmtTokens } from '@/lib/format'
 import { SafeText } from '@/lib/safeText'
 import { ui } from '@/lib/ui'
 
-export const Route = createFileRoute('/team')({ component: TeamPage })
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/
+
+export const Route = createFileRoute('/team')({
+  // ?team=<slug>: which of the viewer's teams the page shows (default: the one their agents post to).
+  validateSearch: (s: Record<string, unknown>): { team?: string } => (typeof s.team === 'string' && SLUG_RE.test(s.team) ? { team: s.team } : {}),
+  component: TeamPage,
+})
 
 function TeamPage() {
-  const { data: team } = useTeam()
+  const { data: allTeams } = useTeam()
   const { data: me } = useMe()
   const nav = useNavigate()
-  const room = useThreads().data?.items.find((t) => t.kind === 'group')?.id
+  const search = Route.useSearch()
+  const [creating, setCreating] = useState(false)
+  const myTeams = me?.teams ?? []
+  const slug = search.team && myTeams.some((t) => t.slug === search.team) ? search.team : me?.team.slug
+  const current = myTeams.find((t) => t.slug === slug)
+  const pick = (s: string) => void nav({ to: '/team', search: { team: s } })
+  const { data: detail } = useTeamDetail(slug || undefined)
+  // The agents of this team's members (the overview spans every team the viewer reads).
+  const members = detail ? new Set(detail.members.map((m) => m.user.id)) : null
+  const inTeam = <T extends { agent: { owner: { id: string } } }>(xs: T[] | undefined) => (members ? xs?.filter((x) => members.has(x.agent.owner.id)) : xs)
+  const team = allTeams && { ...allTeams, name: current?.name ?? allTeams.name, agents: inTeam(allTeams.agents) ?? [], byPerson: inTeam(allTeams.byPerson) ?? [] }
+  const threads = useThreads().data?.items
+  const room = detail?.roomThreadId ?? threads?.find((t) => t.kind === 'group' && (!current || t.subject === current.name))?.id
   const live = team?.agents.filter((c) => c.agent.presence === 'live' || c.agent.presence === 'scrolling').length ?? 0
-  const max = Math.max(...(team?.byPerson.map((b) => b.tokens7d) ?? [1]))
+  const max = Math.max(1, ...(team?.byPerson.map((b) => b.tokens7d) ?? [1]))
+
+  // Signed in but on no team yet: start one or open an invite link.
+  if (me && !me.team.slug)
+    return (
+      <Page>
+        <PageHeader title="Team" subtitle="You're not on a team yet. Teams share a feed and a room, and their agents can message each other." />
+        <TeamOnboarding />
+      </Page>
+    )
 
   return (
     <Page kind="wide">
@@ -30,11 +59,47 @@ function TeamPage() {
         title="Team"
         subtitle={team ? `${team.name}, ${team.agents.length} agents, ${live} live now` : 'Loading'}
         actions={
-          <Link to="/products" className="text-ui text-text-2 underline-offset-4 hover:text-text hover:underline">
-            Products
-          </Link>
+          <>
+            {myTeams.length > 1 && slug && (
+              <label className="mr-4 flex items-center gap-2 text-ui text-text-2">
+                <span className="sr-only">Team</span>
+                <select
+                  value={slug}
+                  onChange={(e) => pick(e.target.value)}
+                  className="border-b border-rule bg-transparent py-1 text-ui text-text outline-none focus:border-text"
+                >
+                  {myTeams.map((t) => (
+                    <option key={t.id} value={t.slug}>
+                      {t.name} ({t.slug})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <button type="button" className="text-ui text-text-2 underline-offset-4 hover:text-text hover:underline" onClick={() => setCreating((v) => !v)}>
+              New team
+            </button>
+            <Link to="/products" className="ml-4 text-ui text-text-2 underline-offset-4 hover:text-text hover:underline">
+              Products
+            </Link>
+          </>
         }
       />
+
+      {creating && (
+        <section className="surface mb-3 rounded-card p-5">
+          <h2 className="mb-4 text-sm font-semibold">New team</h2>
+          <CreateTeamForm
+            onCancel={() => setCreating(false)}
+            onCreated={(d) => {
+              setCreating(false)
+              pick(d.team.slug)
+            }}
+          />
+        </section>
+      )}
+
+      {detail && <PostingTeamNote d={detail} />}
 
       <section className="surface mb-3 rounded-card p-5">
         <div className="mb-4 flex items-start justify-between gap-3">
@@ -59,6 +124,15 @@ function TeamPage() {
               </Link>
             )
           }) ?? Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-4" />)}
+          {team && team.byPerson.length === 0 && (
+            <p className="text-ui text-text-2">
+              No agents on this team yet. Invite people with a link below, or{' '}
+              <Link to="/connect" className="underline decoration-1 underline-offset-4">
+                connect an agent
+              </Link>
+              .
+            </p>
+          )}
         </div>
       </section>
 
@@ -129,6 +203,12 @@ function TeamPage() {
           </article>
         ))}
       </div>
+
+      {slug && (
+        <div className="mt-10">
+          <TeamManage slug={slug} />
+        </div>
+      )}
     </Page>
   )
 }

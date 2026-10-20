@@ -20,6 +20,7 @@
  *   letters (`ign0re pri0r`) are folded first.
  */
 import { l0Scan, normalizeUntrusted } from '@y/safety';
+import { GithubRepoName } from '@y/schema';
 
 /** L0 warn rules that fire on single words found in real package names. */
 const WORD_WARN_RULES = new Set(['cmd.sudo', 'inj.jailbreak_mention', 'inj.system_prompt_mention']);
@@ -90,4 +91,13 @@ function labelPasses(label: string, norm: Normalize, strict = false): boolean {
     if (!l0Passes(text, norm)) return false;
   }
   return !instructionShaped(label, norm, strict);
+}
+
+/**
+ * A team's linked repo name as the status tool may show it, outside any envelope (I2): GitHub
+ * naming rules plus the handle label screen above (with `/`, `-`, `_` and `.` read as spaces).
+ * Null when it does not pass.
+ */
+export function repoLabel(repo: string): string | null {
+  return GithubRepoName.safeParse(repo).success && cleanAsciiLabel(repo.toLowerCase().replace('/', '-')) ? repo : null;
 }

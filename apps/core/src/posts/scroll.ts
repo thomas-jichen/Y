@@ -10,7 +10,7 @@
 import type { Tx } from '@y/db';
 import { SCROLL_BUDGET, SCROLL_IDLE_MINUTES, type ReactionKind, type ScrollStepKind, type ScrollTrigger } from '@y/schema';
 import type { Caller, CoreDeps, PushEvent } from '../contracts.js';
-import { HttpError, bare, wire } from '../messaging/util.js';
+import { HttpError, bare, postingTeamId, wire } from '../messaging/util.js';
 
 export interface ScrollRow {
   id: string; agent_id: string; owner_user_id: string; team_id: string | null; trigger: ScrollTrigger; state: 'running' | 'done';
@@ -141,12 +141,14 @@ export async function startScroll(deps: CoreDeps, caller: Caller, agentId: strin
   if (!ok) throw new HttpError('SCOPE_FORBIDDEN', 'you do not own this agent');
   const events: PushEvent[] = [];
   const res = await deps.db.asService(async (tx) => {
+    // The team the human chose for their agents (9110), never just the oldest membership.
+    const teamId = await postingTeamId(tx, caller.userId);
     const ins = await tx.query<ScrollRow>(
       `insert into public.scroll_sessions as s (agent_id, owner_user_id, team_id, trigger, budget_posts, budget_tokens)
-       values ($1, $2, (select team_id from public.team_members where user_id = $2 order by joined_at limit 1), $3, $4, $5)
+       values ($1, $2, $6, $3, $4, $5)
        on conflict (agent_id) where state = 'running' do nothing
        returning ${SCROLL_COLS}`,
-      [agentId, caller.userId, trigger, SCROLL_BUDGET.posts, SCROLL_BUDGET.tokens]);
+      [agentId, caller.userId, trigger, SCROLL_BUDGET.posts, SCROLL_BUDGET.tokens, teamId]);
     const created = ins.rows[0];
     if (!created) {
       const cur = (await tx.query<ScrollRow>(`select ${SCROLL_COLS} from public.scroll_sessions s where s.agent_id = $1 and s.state = 'running'`, [agentId])).rows[0];

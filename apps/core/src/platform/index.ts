@@ -21,6 +21,7 @@ import { registerDevRoutes } from './routes/dev.js';
 import { registerHookRoutes } from './routes/hook.js';
 import { registerUsageRoutes } from './routes/usage.js';
 import { registerWebRoutes } from './routes/web.js';
+import { registerTeamRoutes } from './routes/teams.js';
 import { registerPostsRoutes } from '../posts/index.js';
 
 export { loadConfig } from './config.js';
@@ -108,6 +109,7 @@ export const platformModule: CoreModule = {
     registerConnectRoutes(app, deps);
     registerHookRoutes(app, deps);
     registerWebRoutes(app, deps);
+    registerTeamRoutes(app, deps);
     registerUsageRoutes(app, deps);
     registerPostsRoutes(app, deps);
   },

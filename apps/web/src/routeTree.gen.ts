@@ -21,6 +21,7 @@ import { Route as AHandleRouteImport } from './routes/a.$handle'
 import { Route as ActivityIdRouteImport } from './routes/activity.$id'
 import { Route as ChatsIndexRouteImport } from './routes/chats.index'
 import { Route as ChatsIdRouteImport } from './routes/chats.$id'
+import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as PIdRouteImport } from './routes/p.$id'
 import { Route as ReviewIndexRouteImport } from './routes/review.index'
 import { Route as ReviewIdRouteImport } from './routes/review.$id'
@@ -87,6 +88,11 @@ const ChatsIdRoute = ChatsIdRouteImport.update({
   path: '/$id',
   getParentRoute: () => ChatsRoute,
 } as any)
+const JoinTokenRoute = JoinTokenRouteImport.update({
+  id: '/join/$token',
+  path: '/join/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PIdRoute = PIdRouteImport.update({
   id: '/p/$id',
   path: '/p/$id',
@@ -125,6 +131,7 @@ export interface FileRoutesByFullPath {
   '/a/$handle': typeof AHandleRoute
   '/activity/$id': typeof ActivityIdRoute
   '/chats/$id': typeof ChatsIdRoute
+  '/join/$token': typeof JoinTokenRoute
   '/p/$id': typeof PIdRoute
   '/review/$id': typeof ReviewIdRoute
   '/scrolls/$id': typeof ScrollsIdRoute
@@ -142,6 +149,7 @@ export interface FileRoutesByTo {
   '/a/$handle': typeof AHandleRoute
   '/activity/$id': typeof ActivityIdRoute
   '/chats/$id': typeof ChatsIdRoute
+  '/join/$token': typeof JoinTokenRoute
   '/p/$id': typeof PIdRoute
   '/review/$id': typeof ReviewIdRoute
   '/scrolls/$id': typeof ScrollsIdRoute
@@ -162,6 +170,7 @@ export interface FileRoutesById {
   '/a/$handle': typeof AHandleRoute
   '/activity/$id': typeof ActivityIdRoute
   '/chats/$id': typeof ChatsIdRoute
+  '/join/$token': typeof JoinTokenRoute
   '/p/$id': typeof PIdRoute
   '/review/$id': typeof ReviewIdRoute
   '/scrolls/$id': typeof ScrollsIdRoute
@@ -183,6 +192,7 @@ export interface FileRouteTypes {
     | '/a/$handle'
     | '/activity/$id'
     | '/chats/$id'
+    | '/join/$token'
     | '/p/$id'
     | '/review/$id'
     | '/scrolls/$id'
@@ -200,6 +210,7 @@ export interface FileRouteTypes {
     | '/a/$handle'
     | '/activity/$id'
     | '/chats/$id'
+    | '/join/$token'
     | '/p/$id'
     | '/review/$id'
     | '/scrolls/$id'
@@ -219,6 +230,7 @@ export interface FileRouteTypes {
     | '/a/$handle'
     | '/activity/$id'
     | '/chats/$id'
+    | '/join/$token'
     | '/p/$id'
     | '/review/$id'
     | '/scrolls/$id'
@@ -238,6 +250,7 @@ export interface RootRouteChildren {
   UsageRoute: typeof UsageRoute
   AHandleRoute: typeof AHandleRoute
   ActivityIdRoute: typeof ActivityIdRoute
+  JoinTokenRoute: typeof JoinTokenRoute
   PIdRoute: typeof PIdRoute
   ScrollsIdRoute: typeof ScrollsIdRoute
   SlackLinkRoute: typeof SlackLinkRoute
@@ -329,6 +342,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatsIdRouteImport
       parentRoute: typeof ChatsRoute
     }
+    '/join/$token': {
+      id: '/join/$token'
+      path: '/join/$token'
+      fullPath: '/join/$token'
+      preLoaderRoute: typeof JoinTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/p/$id': {
       id: '/p/$id'
       path: '/p/$id'
@@ -403,6 +423,7 @@ const rootRouteChildren: RootRouteChildren = {
   UsageRoute: UsageRoute,
   AHandleRoute: AHandleRoute,
   ActivityIdRoute: ActivityIdRoute,
+  JoinTokenRoute: JoinTokenRoute,
   PIdRoute: PIdRoute,
   ScrollsIdRoute: ScrollsIdRoute,
   SlackLinkRoute: SlackLinkRoute,

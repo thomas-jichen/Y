@@ -1,5 +1,10 @@
 import type {
+  AcceptedInvite,
   AgentProfile,
+  CreatedInvite,
+  InvitePreview,
+  TeamDetail,
+  TeamInvite,
   AgentRef,
   Comment,
   ConnectToken,
@@ -17,7 +22,7 @@ import { deriveBio, deriveTraits } from '@/lib/identity'
 import { fmtUsd } from '@/lib/format'
 import { uid } from '@/lib/hash'
 import { bus } from './bus'
-import { agents, beacons, me, myAgents, personalities, team } from './cast'
+import { agents, beacons, me, myAgents, personalities, team, users } from './cast'
 import { db, persist } from './db'
 import { trending } from './fixtures'
 import { habitsFor, usageFor } from './gen'
@@ -43,7 +48,9 @@ const stepUpFresh = () => !!db.stepUpAt && Date.now() - db.stepUpAt < STEP_UP_MS
 on('GET', '/me', (): Me => ({
   user: me,
   agents: myAgents.map((k) => withPresence(agents[k])),
-  team: { slug: 'acme', name: 'acme' },
+  team: { ...(mockTeams.find((t) => t.team.slug === postingSlug) ?? mockTeams[0]).team, role: 'owner' },
+  teams: mockTeams.map((t) => ({ ...t.team, role: 'owner' as const })),
+  postingTeam: postingSlug,
   reviewCount: pending().length,
   remoteInstructionsOn: db.remoteInstructionsOn,
 }))
@@ -383,6 +390,110 @@ on('GET', '/team', (): Team => {
 })
 
 on('GET', '/trending', () => trending)
+
+// ---------- teams: create, invite links, linked repos (packages/schema teams.ts). In memory only. ----------
+const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}\/[A-Za-z0-9._-]{1,100}$/
+const iso = (ms: number) => new Date(ms).toISOString()
+const mockTeams: { team: TeamDetail['team']; detail: Omit<TeamDetail, 'team'>; invites: TeamInvite[] }[] = [
+  {
+    team: { id: 'tm_acme', slug: 'acme', name: 'acme' },
+    detail: {
+      viewerRole: 'owner',
+      members: [
+        { user: users.thomas, role: 'owner', joinedAt: iso(db.now - 40 * 86_400_000) },
+        ...[users.laurence, users.vivan, users.maya, users.lena].map((u, i) => ({ user: u, role: 'member' as const, joinedAt: iso(db.now - (30 - i * 5) * 86_400_000) })),
+      ],
+      repos: [{ id: 'rp_acme_web', repo: 'acme/web', addedBy: users.thomas, createdAt: iso(db.now - 20 * 86_400_000) }],
+    },
+    invites: [],
+  },
+]
+const inviteTokens = new Map<string, { slug: string; id: string }>()
+const mockTeam = (slug: string) => {
+  const t = mockTeams.find((x) => x.team.slug === slug)
+  if (!t) throw new MockHttpError(404, 'NOT_FOUND', 'team not found')
+  return t
+}
+let postingSlug: string | null = 'acme'
+const detailOf = (t: (typeof mockTeams)[number]): TeamDetail => ({ team: t.team, ...t.detail, roomThreadId: null, postsHere: t.team.slug === postingSlug })
+const INVALID_INVITE = 'This invite link is invalid, used up or expired. Ask a team admin for a new one.'
+const liveInvite = (token: unknown) => {
+  const ref = typeof token === 'string' ? inviteTokens.get(token) : undefined
+  const t = ref && mockTeams.find((x) => x.team.slug === ref.slug)
+  const inv = t?.invites.find((i) => i.id === ref?.id)
+  if (!t || !inv || inv.state !== 'active') throw new MockHttpError(404, 'NOT_FOUND', INVALID_INVITE)
+  return { t, inv }
+}
+
+on('POST', '/teams', ({ body }): TeamDetail => {
+  const name = String(body?.name ?? '').trim()
+  if (!name || name.length > 80) throw new MockHttpError(400, 'VALIDATION', 'name is required')
+  const base = (body?.slug as string | undefined) ?? (name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'team')
+  if (base === 'dev') throw new MockHttpError(400, 'VALIDATION', "the team URL 'dev' is reserved; pick another")
+  if (body?.slug && mockTeams.some((t) => t.team.slug === base)) throw new MockHttpError(409, 'CONFLICT', 'that team URL is taken; pick another')
+  const slug = mockTeams.some((t) => t.team.slug === base) ? `${base}-${uid('s').slice(2, 8)}` : base
+  const t = { team: { id: uid('tm'), slug, name }, detail: { viewerRole: 'owner' as const, members: [{ user: me, role: 'owner' as const, joinedAt: new Date().toISOString() }], repos: [] }, invites: [] }
+  mockTeams.push(t)
+  if (body?.postHere !== false) postingSlug = slug
+  return detailOf(t)
+})
+on('POST', '/me/posting-team', ({ body }) => {
+  const t = mockTeam(String(body?.team ?? ''))
+  postingSlug = t.team.slug
+  return { postingTeam: t.team }
+})
+on('GET', '/teams/:slug', ({ params }) => detailOf(mockTeam(params.slug)))
+on('POST', '/teams/:slug/repos', ({ params, body }) => {
+  const t = mockTeam(params.slug)
+  const repo = String(body?.repo ?? '')
+  if (!REPO_RE.test(repo) || /\/\.{1,2}$/.test(repo) || /\.git$/i.test(repo)) throw new MockHttpError(400, 'VALIDATION', 'expected a GitHub repo as owner/repo')
+  if (!t.detail.repos.some((r) => r.repo.toLowerCase() === repo.toLowerCase())) {
+    t.detail.repos = [...t.detail.repos, { id: uid('rp'), repo, addedBy: me, createdAt: new Date().toISOString() }].sort((a, b) => a.repo.toLowerCase().localeCompare(b.repo.toLowerCase()))
+  }
+  return detailOf(t)
+})
+on('POST', '/teams/:slug/repos/:id/remove', ({ params }) => {
+  const t = mockTeam(params.slug)
+  if (!t.detail.repos.some((r) => r.id === params.id)) throw new MockHttpError(404, 'NOT_FOUND', 'repo not found')
+  t.detail.repos = t.detail.repos.filter((r) => r.id !== params.id)
+  return detailOf(t)
+})
+on('GET', '/teams/:slug/invites', ({ params }) => ({ items: mockTeam(params.slug).invites }))
+on('POST', '/teams/:slug/invites', ({ params, body }): CreatedInvite => {
+  const t = mockTeam(params.slug)
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  const token = `yti_${btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`
+  const now = Date.now()
+  const invite: TeamInvite = {
+    id: uid('inv'),
+    role: body?.role === 'admin' ? 'admin' : 'member',
+    maxUses: Number(body?.maxUses ?? 25),
+    uses: 0,
+    expiresAt: iso(now + Number(body?.expiresInHours ?? 168) * 3_600_000),
+    createdAt: iso(now),
+    createdBy: me,
+    state: 'active',
+  }
+  t.invites = [invite, ...t.invites]
+  inviteTokens.set(token, { slug: t.team.slug, id: invite.id })
+  return { invite, token, url: `${location.origin}/join/${token}` }
+})
+on('POST', '/teams/:slug/invites/:id/revoke', ({ params }) => {
+  const t = mockTeam(params.slug)
+  const inv = t.invites.find((i) => i.id === params.id)
+  if (!inv) throw new MockHttpError(404, 'NOT_FOUND', 'invite not found')
+  inv.state = 'revoked'
+  return { items: [...t.invites].sort((a, b) => Number(b.state === 'active') - Number(a.state === 'active')) }
+})
+// The signed-in mock user is on every mock team, so a mock link always reads as already joined.
+on('POST', '/invites/preview', ({ body }): InvitePreview => {
+  const { t, inv } = liveInvite(body?.token)
+  return { team: t.team, role: inv.role, expiresAt: inv.expiresAt, alreadyMember: true }
+})
+on('POST', '/invites/accept', ({ body }): AcceptedInvite => {
+  const { t } = liveInvite(body?.token)
+  return { team: { ...t.team, role: 'owner' }, joined: false }
+})
 
 // ---------- review ----------
 on('GET', '/review', () => {

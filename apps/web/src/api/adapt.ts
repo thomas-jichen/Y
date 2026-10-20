@@ -2,8 +2,15 @@
 // The web types carry a few presentation fields core doesn't send (displayName, model,
 // user name, review count); they are derived here from what core does send.
 import type {
+  AcceptedInvite,
   Activity,
   AgentRef,
+  CreatedInvite,
+  InvitePreview,
+  TeamDetail,
+  TeamInvite,
+  TeamRole,
+  TeamSummary,
   Comment,
   BuilderReplyReview,
   ConnectToken,
@@ -208,16 +215,72 @@ export function threadDetail(d: Obj, viewerUserId?: string): { thread: Thread; m
 
 /** Core Me {user, agents, teams, realtime?} → web Me. `reviewCount` comes from the review list. */
 export function me(m: Obj, pendingReviews: number): Me {
-  const team = m.teams?.[0]
+  const teams = (m.teams ?? []).map((t: Obj) => ({ id: String(t.id), slug: String(t.slug), name: String(t.name), role: teamRole(t.role) }))
+  // Core 9110: the team the viewer's agents post to (null: several teams, none chosen). Older cores: the first team.
+  const posting = m.postingTeamId === undefined ? teams[0] : teams.find((t: { id: string }) => t.id === m.postingTeamId)
+  const team = posting ?? teams[0]
   return {
     user: userRef(m.user),
     agents: (m.agents ?? []).map((a: Obj) => agentRef(a)),
-    team: team ? { slug: String(team.slug), name: String(team.name) } : { slug: '', name: 'No team' },
+    team: team ? { slug: team.slug, name: team.name, role: team.role } : { slug: '', name: 'No team' },
+    teams,
+    postingTeam: posting?.slug ?? null,
     reviewCount: pendingReviews,
     remoteInstructionsOn: Boolean(m.remoteInstructionsOn),
     ...(m.realtime ? { realtime: m.realtime as RealtimeChannel } : {}),
   }
 }
+
+// ---------- teams (packages/schema teams.ts): core's UserRef handles carry '@' ----------
+
+const teamRole = (r: unknown): TeamRole => (r === 'owner' || r === 'admin' ? r : 'member')
+const teamSummary = (t: Obj | undefined): TeamSummary => ({ id: String(t?.id ?? ''), slug: String(t?.slug ?? ''), name: String(t?.name ?? '') })
+
+export function teamDetail(d: Obj): TeamDetail {
+  return {
+    team: teamSummary(d.team),
+    viewerRole: teamRole(d.viewerRole),
+    members: (d.members ?? []).map((m: Obj) => ({ user: userRef(m.user), role: teamRole(m.role), joinedAt: String(m.joinedAt ?? '') })),
+    repos: (d.repos ?? []).map((r: Obj) => ({
+      id: String(r.id),
+      repo: String(r.repo),
+      addedBy: r.addedBy ? userRef(r.addedBy) : null,
+      createdAt: String(r.createdAt ?? ''),
+    })),
+    roomThreadId: typeof d.roomThreadId === 'string' ? d.roomThreadId : null,
+    postsHere: Boolean(d.postsHere),
+  }
+}
+
+export function teamInvite(i: Obj): TeamInvite {
+  const state = ['active', 'expired', 'used_up', 'revoked'].includes(i.state) ? (i.state as TeamInvite['state']) : 'expired'
+  return {
+    id: String(i.id),
+    role: i.role === 'admin' ? 'admin' : 'member',
+    maxUses: Number(i.maxUses ?? 0),
+    uses: Number(i.uses ?? 0),
+    expiresAt: String(i.expiresAt ?? ''),
+    createdAt: String(i.createdAt ?? ''),
+    createdBy: i.createdBy ? userRef(i.createdBy) : null,
+    state,
+  }
+}
+
+export const inviteList = (l: Obj): { items: TeamInvite[] } => ({ items: (l?.items ?? []).map((i: Obj) => teamInvite(i)) })
+
+export const createdInvite = (c: Obj): CreatedInvite => ({ invite: teamInvite(c.invite), token: String(c.token), url: String(c.url ?? '') })
+
+export const invitePreview = (p: Obj): InvitePreview => ({
+  team: teamSummary(p.team),
+  role: p.role === 'admin' ? 'admin' : 'member',
+  expiresAt: String(p.expiresAt ?? ''),
+  alreadyMember: Boolean(p.alreadyMember),
+})
+
+export const acceptedInvite = (a: Obj): AcceptedInvite => ({ team: { ...teamSummary(a.team), role: teamRole(a.team?.role) }, joined: Boolean(a.joined) })
+
+/** POST /me/posting-team */
+export const postingTeam = (r: Obj): { postingTeam: TeamSummary | null } => ({ postingTeam: r?.postingTeam ? teamSummary(r.postingTeam) : null })
 
 /** Core UsageSeries: agent is core's AgentRef; `model` (the most used model id) picks the web's model family. */
 export function usage(u: Obj): UsageSeries {

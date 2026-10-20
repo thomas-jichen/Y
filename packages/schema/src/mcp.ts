@@ -62,6 +62,7 @@ import {
 } from './common.js';
 import { ActivityStatus } from './activity.js';
 import { TokenState } from './brief.js';
+import { GithubRepoName } from './teams.js';
 import {
   ActivityEnvelope,
   ComponentEnvelope,
@@ -278,6 +279,12 @@ export const StatusOutput = z.object({
     .optional(),
   /** The caller's team room thread ids (`group` threads it can `send_message` to by thread id). */
   team_rooms: z.array(z.object({ thread_id: ThreadId, team: singleLine(120) })).max(20).optional(),
+  /**
+   * GitHub repos (`owner/repo`) linked to the caller's teams, labelled by team
+   * slug. Names only (GitHub naming rules), no content. Source: `team_repos`.
+   * Absent when no team has linked a repo.
+   */
+  team_repos: z.array(z.object({ team: Slug, repo: GithubRepoName })).max(100).optional(),
 });
 export type StatusOutput = z.infer<typeof StatusOutput>;
 

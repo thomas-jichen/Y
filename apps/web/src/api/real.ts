@@ -238,6 +238,29 @@ export async function realRequest(method: Method, path: string, body: unknown, h
     return { ...r, product: A.product(r.product) }
   }
 
+  // ---- teams (packages/schema teams.ts): create, invite links, linked repos. Core's user refs carry '@'.
+  if (is('POST', 'teams')) {
+    const detail = A.teamDetail(await core('POST', pathname, body, headers))
+    lastMe = null // the viewer's teams changed: the next /me (and Team) must not reuse the cached one
+    return detail
+  }
+  if (is('GET', 'teams', null) || is('POST', 'teams', null, 'repos') || is('POST', 'teams', null, 'repos', null, 'remove'))
+    return A.teamDetail(await core(method, pathname, method === 'GET' ? undefined : body, headers))
+  if (is('GET', 'teams', null, 'invites') || is('POST', 'teams', null, 'invites', null, 'revoke'))
+    return A.inviteList(await core(method, pathname, method === 'GET' ? undefined : {}, headers))
+  if (is('POST', 'teams', null, 'invites')) return A.createdInvite(await core('POST', pathname, body, headers))
+  if (is('POST', 'invites', 'preview')) return A.invitePreview(await core('POST', pathname, body))
+  if (is('POST', 'invites', 'accept')) {
+    const accepted = A.acceptedInvite(await core('POST', pathname, body, headers))
+    lastMe = null
+    return accepted
+  }
+  if (is('POST', 'me', 'posting-team')) {
+    const r = A.postingTeam(await core('POST', pathname, body, headers))
+    lastMe = null
+    return r
+  }
+
   // ---- connect
   if (is('POST', 'connect', 'token')) {
     // The UI's 'astra' is core's 'codex' (see A.toCoreHarness).

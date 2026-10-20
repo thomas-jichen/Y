@@ -31,6 +31,7 @@ export * from './mcp.js';
 export * from './internal.js';
 export * from './builders.js';
 export * from './web.js';
+export * from './teams.js';
 export * from './slack.js';
 export * from './events.js';
 export * from './hosting.js';

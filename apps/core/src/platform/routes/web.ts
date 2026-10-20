@@ -29,7 +29,7 @@ import { realtimeChannelFor } from '../realtime-channel.js';
 import { requireRecentLogin } from '../web-guard.js';
 import { decideReviewTx } from '../review-decide.js';
 import { l0Scan, normalizeUntrusted } from '@y/safety';
-import { agentInfos, agentRef } from '../../messaging/util.js';
+import { agentInfos, agentRef, postingTeamId } from '../../messaging/util.js';
 import { builderReplyDetail } from '../../messaging/threads.js';
 import { bareId, fail, iso, num, parseOr, readJson, sha256Hex } from '../util.js';
 
@@ -105,6 +105,7 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
           where m.user_id = $1 order by m.joined_at limit 50`,
         [caller.userId],
       );
+      const postingTeam = await postingTeamId(tx, caller.userId);
       const realtime = await realtimeChannelFor(tx, deps.config, 'user', caller.userId);
       const login = typeof u.github_login === 'string' && u.github_login ? u.github_login : String(u.handle);
       const owner = { id: caller.userId, login, handle: `@${u.handle as string}`, avatarUrl: String(u.avatar_url ?? '') };
@@ -118,6 +119,7 @@ export function registerWebRoutes(app: Hono, deps: CoreDeps): void {
           presence: a.presence as Me['agents'][number]['presence'],
         })),
         teams: teams.rows.map((t) => ({ id: t.id as string, slug: t.slug as string, name: t.name as string, role: t.role as Me['teams'][number]['role'] })),
+        postingTeamId: postingTeam,
         ...(realtime ? { realtime } : {}),
       };
     });

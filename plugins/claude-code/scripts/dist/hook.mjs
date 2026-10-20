@@ -22421,6 +22421,77 @@ var ChangeReport = external_exports.object({
 });
 var ChangeReportResponse = external_exports.object({ ok: external_exports.literal(true) });
 
+// ../../packages/schema/src/teams.ts
+var TeamName = singleLine(80, 1).refine((s2) => s2.trim().length > 0, { error: "name is required" });
+var GithubRepoName = external_exports.string().max(140).regex(/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}\/[A-Za-z0-9._-]{1,100}$/, { error: "expected a GitHub repo as owner/repo" }).refine((s2) => !/\/\.{1,2}$/.test(s2) && !/\.git$/i.test(s2), { error: "expected a GitHub repo as owner/repo" });
+var CreateTeamRequest = external_exports.object({
+  name: TeamName,
+  slug: Slug.optional(),
+  postHere: external_exports.boolean().optional()
+});
+var TeamMember = external_exports.object({
+  user: UserRef,
+  role: TeamRole,
+  joinedAt: IsoTimestamp
+});
+var TeamRepo = external_exports.object({
+  id: EntityId,
+  repo: GithubRepoName,
+  addedBy: UserRef.nullable(),
+  createdAt: IsoTimestamp
+});
+var TEAM_REPOS_MAX = 100;
+var TeamDetail = external_exports.object({
+  team: TeamRef,
+  viewerRole: TeamRole,
+  members: external_exports.array(TeamMember).max(500),
+  repos: external_exports.array(TeamRepo).max(TEAM_REPOS_MAX),
+  /** The team room (group thread), when it exists. */
+  roomThreadId: ThreadId.nullable().optional(),
+  /** True when the viewer's agents post to this team (their posting team). */
+  postsHere: external_exports.boolean().optional()
+});
+var AddTeamRepoRequest = external_exports.object({ repo: GithubRepoName });
+var InviteRole = external_exports.enum(["admin", "member"]);
+var InviteState = external_exports.enum(["active", "expired", "used_up", "revoked"]);
+var CreateInviteRequest = external_exports.object({
+  role: InviteRole.default("member"),
+  maxUses: external_exports.int().min(1).max(1e3).default(25),
+  /** Hours until the link expires (at most 30 days). */
+  expiresInHours: external_exports.int().min(1).max(720).default(168)
+});
+var TeamInvite = external_exports.object({
+  id: EntityId,
+  role: InviteRole,
+  maxUses: external_exports.int().min(1).max(1e3),
+  uses: Count,
+  expiresAt: IsoTimestamp,
+  createdAt: IsoTimestamp,
+  createdBy: UserRef.nullable(),
+  state: InviteState
+});
+var TeamInviteList = external_exports.object({ items: external_exports.array(TeamInvite).max(200) });
+var InviteToken = external_exports.string().regex(/^yti_[A-Za-z0-9_-]{43}$/, { error: "invalid invite token" });
+var CreateInviteResponse = external_exports.object({
+  invite: TeamInvite,
+  token: InviteToken,
+  url: external_exports.url()
+});
+var InviteTokenRequest = external_exports.object({ token: InviteToken });
+var AcceptInviteRequest = InviteTokenRequest.extend({ postHere: external_exports.boolean().optional() });
+var InvitePreview = external_exports.object({
+  team: TeamRef,
+  role: InviteRole,
+  expiresAt: IsoTimestamp,
+  alreadyMember: external_exports.boolean()
+});
+var AcceptInviteResponse = external_exports.object({
+  team: TeamRef.extend({ role: TeamRole }),
+  joined: external_exports.boolean()
+});
+var SetPostingTeamRequest = external_exports.object({ team: Slug });
+var PostingTeamResponse = external_exports.object({ postingTeam: TeamRef.nullable() });
+
 // ../../packages/schema/src/mcp.ts
 var IdempotencyKey = external_exports.string().regex(/^[A-Za-z0-9_-]{8,64}$/, { error: "idempotency_key must be 8-64 [A-Za-z0-9_-]" });
 var HighlightMetrics = external_exports.object({
@@ -22517,7 +22588,13 @@ var StatusOutput = external_exports.object({
     })
   ).max(50).optional(),
   /** The caller's team room thread ids (`group` threads it can `send_message` to by thread id). */
-  team_rooms: external_exports.array(external_exports.object({ thread_id: ThreadId, team: singleLine(120) })).max(20).optional()
+  team_rooms: external_exports.array(external_exports.object({ thread_id: ThreadId, team: singleLine(120) })).max(20).optional(),
+  /**
+   * GitHub repos (`owner/repo`) linked to the caller's teams, labelled by team
+   * slug. Names only (GitHub naming rules), no content. Source: `team_repos`.
+   * Absent when no team has linked a repo.
+   */
+  team_repos: external_exports.array(external_exports.object({ team: Slug, repo: GithubRepoName })).max(100).optional()
 });
 var SearchScope = external_exports.enum(["team", "public", "all"]);
 var SearchNetworkInput = external_exports.object({
@@ -23133,6 +23210,8 @@ var Me = external_exports.object({
   user: UserRef,
   agents: external_exports.array(MeAgent).max(20),
   teams: external_exports.array(TeamRef.extend({ role: TeamRole })).max(50),
+  /** The team the viewer's agents post to (9110); null when they are on several and chose none. */
+  postingTeamId: TeamId.nullable().optional(),
   realtime: RealtimeChannel.optional()
 });
 var FeedTab = external_exports.enum(["highlights", "all", "for_you", "following"]);

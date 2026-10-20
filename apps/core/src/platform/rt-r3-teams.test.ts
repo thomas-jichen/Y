@@ -1,6 +1,6 @@
 /**
- * Red-team round 3 (teams cluster) on PGlite: the default 'dev' team keeps
- * enrolling every sign-up (9003) while only the server creates it and the
+ * Red-team round 3 (teams cluster) on PGlite: the default 'dev' team (which
+ * sign-ups no longer join since 9110) is created only by the server and the
  * hosted demo's dev login does not own it; demo-account sessions cannot mint
  * durable grants (Slack link, /dev/team); sessions minted before 9101 are
  * tagged; pulse fails soft before 9101 is applied; and the commit-order
@@ -79,7 +79,7 @@ describe('default team: one team for everyone (R0, R5, R26, R28, R32)', () => {
     await db?.close();
   });
 
-  it('local dev: GitHub and email sign-ups join a dev-login dev team; dev login still honours `team`; its creator owns it', async () => {
+  it('local dev: GitHub and email sign-ups no longer join a dev-login dev team (9110); dev login still honours `team`; its creator owns it', async () => {
     const { req } = await appFor(db, loadConfig(baseEnv()));
     const login = async (githubLogin: string, team?: string | null) => {
       const r = await req('POST', '/api/v1/dev/login', { body: { githubLogin, ...(team === undefined ? {} : { team }) } });
@@ -91,11 +91,11 @@ describe('default team: one team for everyone (R0, R5, R26, R28, R32)', () => {
     expect(await memberships(db, first)).toEqual([{ slug: 'dev', role: 'owner' }]);
     expect(await slugs(db, await login('local-maya'))).toEqual(['dev']);
 
-    // A real GitHub sign-up after a dev login still joins (9003).
-    expect(await slugs(db, await githubSignUp(db, 'late-real', '5550101'))).toEqual(['dev']);
-    // Other providers joined before 9102 and still do, but get no GitHub identity (#10).
+    // A real GitHub sign-up after a dev login no longer joins (9110: create a team or open an invite link).
+    expect(await slugs(db, await githubSignUp(db, 'late-real', '5550101'))).toEqual([]);
+    // Other providers don't either, and get no GitHub identity (#10).
     const email = await createAuthUser(db, { userMetadata: { user_name: 'octocat', full_name: 'Octo' }, appMetadata: { provider: 'email', providers: ['email'] } });
-    expect(await slugs(db, email)).toEqual(['dev']);
+    expect(await slugs(db, email)).toEqual([]);
     const row = (await db.query<{ github_login: string | null; github_id: string | null; display_name: string | null }>(
       'select github_login::text, github_id::text, display_name from public.users where id = $1', [email])).rows[0]!;
     expect(row).toEqual({ github_login: null, github_id: null, display_name: null });
@@ -123,7 +123,7 @@ describe('default team: one team for everyone (R0, R5, R26, R28, R32)', () => {
     }
   });
 
-  it('hosted door-code demo: dev login creates dev with no owner; GitHub sign-ups join it', async () => {
+  it('hosted door-code demo: dev login creates dev with no owner; GitHub sign-ups no longer join it (9110)', async () => {
     const fresh = await createTestDb();
     try {
       await migrateCore(fresh);
@@ -134,7 +134,7 @@ describe('default team: one team for everyone (R0, R5, R26, R28, R32)', () => {
       expect(team.created_by).toBeNull();
       const owners = await fresh.query(`select 1 from public.team_members m join public.teams t on t.id = m.team_id where t.slug = 'dev' and m.role in ('owner', 'admin')`);
       expect(owners.rowCount).toBe(0);
-      expect(await memberships(fresh, await githubSignUp(fresh, 'real-after-demo', '5550103'))).toEqual([{ slug: 'dev', role: 'member' }]);
+      expect(await memberships(fresh, await githubSignUp(fresh, 'real-after-demo', '5550103'))).toEqual([]);
       // A second dev login joins as a member too.
       const two = (await req('POST', '/api/v1/dev/login', { body: { githubLogin: 'judge-two' }, headers: H })).json!.user.id as string;
       expect(await memberships(fresh, two)).toEqual([{ slug: 'dev', role: 'member' }]);
