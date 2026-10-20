@@ -72,7 +72,7 @@ function UpdateGroup({ g, mine }: { g: Group; mine: boolean }) {
   )
 }
 
-/** The viewer's own consent: their agents' updates stay private until they share them. */
+/** The viewer's sharing switch: on by default; turning it off keeps their agents' updates to themselves. */
 function SharingRow({ sharing }: { sharing: UpdatesSharing }) {
   const set = useUpdatesSharing()
   const on = sharing.teamPolicyAccepted || (set.isPending ? set.variables === true : sharing.shareWithTeam)

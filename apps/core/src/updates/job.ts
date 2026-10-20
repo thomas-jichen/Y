@@ -111,17 +111,16 @@ interface ChunkRow {
  * The team a summary may go to, or null (author only). It is the activity's team, i.e. the team
  * ingest files this work under (with the teams feature, the posting team the human chose). An author
  * on several teams shares with none while no posting-team choice exists (no public.user_posting_team
- * table), so work is never broadcast to a team just because it was joined first. Then the author must
- * still be on that team and consent: the update_sharing opt-in or that team's policy accepted.
+ * table), so work is never broadcast to a team just because it was joined first. The author must
+ * still be on that team. Whether teammates see it is decided at read time (shared by default; the
+ * author can switch sharing off, see y_private.turn_summary_shared in 9112).
  */
 export async function shareTeamFor(tx: Tx, ownerUserId: string, activityTeamId: string | null): Promise<string | null> {
   if (!activityTeamId) return null;
   const r = await tx.query<{ ok: boolean }>(
     `select exists (
        select 1 from public.team_members m
-        where m.team_id = $2 and m.user_id = $1
-          and (m.policy_accepted_version is not null
-               or exists (select 1 from public.update_sharing u where u.user_id = $1 and u.share_with_team)))
+        where m.team_id = $2 and m.user_id = $1)
        and (to_regclass('public.user_posting_team') is not null
             or (select count(*) from public.team_members m where m.user_id = $1) = 1) as ok`,
     [ownerUserId, activityTeamId],

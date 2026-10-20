@@ -51,7 +51,8 @@ async function sharingOf(tx: Tx, userId: string): Promise<UpdatesSharing> {
             exists (select 1 from public.team_members m where m.user_id = $1 and m.policy_accepted_version is not null) as accepted`,
     [userId],
   );
-  return { shareWithTeam: r.rows[0]?.share === true, teamPolicyAccepted: r.rows[0]?.accepted === true };
+  // Shared by default: only an explicit opt-out row turns it off (9112).
+  return { shareWithTeam: r.rows[0]?.share !== false, teamPolicyAccepted: r.rows[0]?.accepted === true };
 }
 
 export function registerUpdatesRoutes(app: Hono, deps: CoreDeps): void {

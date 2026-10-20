@@ -157,36 +157,30 @@ describe('turn summaries from ingest', () => {
     expect(ev.rows).toEqual([]);
   });
 
-  it('is owner-only until the author opts in, and opting out hides earlier summaries again', async () => {
+  it('is shared with the team by default, and opting out hides earlier summaries again', async () => {
     const erin = await person('upd-erin');
     const first = chunk();
     await ingest(erin, first);
     await drainAll();
-    const [before] = await summariesOf(first.sessionId);
-    expect(before!.team_id).toBeNull();
     const own = async () => (await updates(erin)).items.filter((x) => x.agent.owner.id === erin.userId);
     expect(await own()).toHaveLength(1);
-    expect((await updates(erin)).sharing).toEqual({ shareWithTeam: false, teamPolicyAccepted: false });
-    const ownerOnly = (await own())[0]!.id;
-    expect((await updates(bob)).items.some((x) => x.id === ownerOnly)).toBe(false);
-
-    // Opting in applies to later responses only (no retroactive reveal).
-    expect(await share(erin, true)).toEqual({ shareWithTeam: true, teamPolicyAccepted: false });
-    const second = chunk();
-    await ingest(erin, second);
-    await drainAll();
-    const shared = (await own()).find((x) => x.id !== ownerOnly)!;
-    expect((await updates(bob)).items.some((x) => x.id === shared.id)).toBe(true);
-    expect((await updates(bob)).items.some((x) => x.id === ownerOnly)).toBe(false);
+    expect((await updates(erin)).sharing).toEqual({ shareWithTeam: true, teamPolicyAccepted: false });
+    const shared = (await own())[0]!.id;
+    expect((await updates(bob)).items.some((x) => x.id === shared)).toBe(true);
 
     // Opting out unposts: teammates stop seeing every earlier summary; the author still does.
-    await share(erin, false);
-    expect((await updates(bob)).items.some((x) => x.id === shared.id)).toBe(false);
-    expect((await own()).map((x) => x.id)).toEqual(expect.arrayContaining([shared.id, ownerOnly]));
+    expect(await share(erin, false)).toEqual({ shareWithTeam: false, teamPolicyAccepted: false });
+    expect((await updates(bob)).items.some((x) => x.id === shared)).toBe(false);
+    expect((await own()).map((x) => x.id)).toContain(shared);
 
-    // Accepting the team policy also counts as consent.
+    // Opting back in shows them again.
+    await share(erin, true);
+    expect((await updates(bob)).items.some((x) => x.id === shared)).toBe(true);
+
+    // Accepting the team policy keeps sharing on even after an opt-out row.
+    await share(erin, false);
     await db.query(`update public.team_members set policy_accepted_version = 1 where user_id = $1`, [erin.userId]);
-    expect((await updates(bob)).items.some((x) => x.id === shared.id)).toBe(true);
+    expect((await updates(bob)).items.some((x) => x.id === shared)).toBe(true);
     expect((await updates(erin)).sharing).toEqual({ shareWithTeam: false, teamPolicyAccepted: true });
   });
 
