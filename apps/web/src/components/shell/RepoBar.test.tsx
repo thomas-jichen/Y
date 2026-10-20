@@ -151,3 +151,15 @@ describe('team switcher', () => {
     expect(html(link)).toContain('Link your first repo')
   })
 })
+
+describe('new team', () => {
+  it('the switcher shows for a single team too, with a New team option', () => {
+    const one: Me = { ...me('acme'), teams: [{ id: 'tm_1', slug: 'acme', name: 'Acme', role: 'owner' }] as Me['teams'] }
+    const m = repoBarModel(one, status(), null)!
+    expect(m.teams).toEqual([{ slug: 'acme', name: 'Acme' }])
+    const out = html(m)
+    expect(out).toContain('aria-label="Team your agents use"')
+    expect(out).toContain('value="__new__"')
+    expect(out).toContain('New team')
+  })
+})

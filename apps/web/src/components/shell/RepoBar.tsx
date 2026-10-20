@@ -28,7 +28,7 @@ export function repoBarModel(me: Me | undefined, status: TeamReposStatus | undef
   const team = me?.postingTeam
   if (!team || !status || status.team.slug !== team) return null
   const mine = me?.teams ?? []
-  const teams = mine.length > 1 ? { teams: mine.map((t) => ({ slug: t.slug, name: t.name })) } : {}
+  const teams = mine.length > 0 ? { teams: mine.map((t) => ({ slug: t.slug, name: t.name })) } : {}
   if (status.repos.length === 0) {
     const admin = status.viewerRole === 'owner' || status.viewerRole === 'admin'
     return admin ? { kind: 'link', team, ...teams } : { kind: 'notice', team, ...teams }
@@ -48,8 +48,11 @@ export function repoStatusLine(s: Omit<TeamRepoStatus, 'repo'>, now = Date.now()
 
 const ALL = ''
 
-/** "Team: acme" switcher for viewers on several teams: where their agents post (and what Y shows). */
-function TeamSwitch({ team, teams, onSwitchTeam }: { team: string; teams: TeamChoice[]; onSwitchTeam: (slug: string) => void }) {
+/** "Team: acme" switcher: where the viewer's agents post (and what Y shows), plus "New team". */
+/** The switcher's last option: start a team (opens the create form on the Team page). */
+export const NEW_TEAM = '__new__'
+
+function TeamSwitch({ team, teams, onSwitchTeam, onNewTeam }: { team: string; teams: TeamChoice[]; onSwitchTeam: (slug: string) => void; onNewTeam: () => void }) {
   return (
     <>
       <span className="relative inline-flex shrink-0 items-center">
@@ -57,7 +60,11 @@ function TeamSwitch({ team, teams, onSwitchTeam }: { team: string; teams: TeamCh
         <select
           aria-label="Team your agents use"
           value={team}
-          onChange={(e) => e.target.value !== team && onSwitchTeam(e.target.value)}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === NEW_TEAM) onNewTeam()
+            else if (v !== team) onSwitchTeam(v)
+          }}
           className="max-w-[30vw] cursor-pointer appearance-none truncate bg-transparent pr-5 font-medium outline-none md:max-w-[200px] [&>option]:bg-page [&>option]:text-text"
         >
           {teams.map((t) => (
@@ -65,6 +72,7 @@ function TeamSwitch({ team, teams, onSwitchTeam }: { team: string; teams: TeamCh
               {t.slug}
             </option>
           ))}
+          <option value={NEW_TEAM}>+ New team…</option>
         </select>
         <ChevronDown aria-hidden size={14} strokeWidth={1.8} className="pointer-events-none absolute right-0 text-text-2" />
       </span>
@@ -81,15 +89,17 @@ export function RepoBarView({
   onSelect,
   onLinkRepo,
   onSwitchTeam = () => {},
+  onNewTeam = () => {},
   now,
 }: {
   model: RepoBarModel
   onSelect: (repo: string | null) => void
   onLinkRepo: () => void
   onSwitchTeam?: (slug: string) => void
+  onNewTeam?: () => void
   now?: number
 }) {
-  const switcher = model.teams && model.teams.length > 1 ? <TeamSwitch team={model.team} teams={model.teams} onSwitchTeam={onSwitchTeam} /> : null
+  const switcher = model.teams && model.teams.length > 0 ? <TeamSwitch team={model.team} teams={model.teams} onSwitchTeam={onSwitchTeam} onNewTeam={onNewTeam} /> : null
   if (model.kind === 'link' || model.kind === 'notice') {
     return (
       <div className="pointer-events-none fixed inset-x-0 top-[80px] z-30 flex justify-center px-3">
@@ -204,5 +214,6 @@ export function RepoBar({ model }: { model: RepoBarModel }) {
   const linkRepo = () => void nav({ to: '/team', search: { team: model.team } })
   // Repo choices belong to the old team; the new team's bar starts at all repos.
   const switchTeam = (slug: string) => setTeam.mutate(slug, { onSuccess: () => select(null) })
-  return <RepoBarView model={model} onSelect={select} onLinkRepo={linkRepo} onSwitchTeam={switchTeam} />
+  const newTeam = () => void nav({ to: '/team', search: { new: '1' } })
+  return <RepoBarView model={model} onSelect={select} onLinkRepo={linkRepo} onSwitchTeam={switchTeam} onNewTeam={newTeam} />
 }
