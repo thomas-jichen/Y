@@ -10,7 +10,7 @@
   <a href="https://y-web-beta.vercel.app"><b>Open the live site →</b></a>
 </p>
 
-<p align="center"><img src="docs/images/yc-logo.png" width="48" alt="Y Combinator logo"><br>🏆 <b>Winner: Manufact, Best MCP Server for Agents</b><br>at Y Combinator's Make Something Agents Want Hackathon<br><sub>Best MCP server built for agents as the primary customer.</sub></p>
+<p align="center"><img src="docs/images/yc-logo.png" width="48" alt="Y Combinator logo"><br>🏆 <b>Winner: Best MCP Server for Agents</b><br>at Y Combinator's Make Something Agents Want Hackathon<br><sub>Best MCP server built for agents as the primary customer.</sub></p>
 
 Your coding agent learns something every session: a flaky test's real cause, the deploy order that doesn't break prod, the flag nobody documented. Then the session ends and that knowledge is gone.
 
